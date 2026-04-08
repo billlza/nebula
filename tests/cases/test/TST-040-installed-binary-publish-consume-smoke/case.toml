@@ -1,0 +1,35 @@
+id = "TST-040-installed-binary-publish-consume-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/install-root work/release-registry work/release-dep work/release-app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cmake --install \"$NEBULA_REPO_ROOT/build\" --prefix \"$PWD/work/install-root\""
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nreg = Path('work/release-registry')\ndep = Path('work/release-dep')\napp = Path('work/release-app')\n(dep / 'src').mkdir(parents=True, exist_ok=True)\n(app / 'src').mkdir(parents=True, exist_ok=True)\nreg.mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"release_dep\"\\nversion = \"1.0.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nfn release_answer() -> Int {\\n  return 42\\n}\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"release-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nrelease_dep = \"1.0.0\"\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport release_dep::lib\\n\\nfn main() -> Void {\\n  if release_answer() == 42 {\\n    print(\"release-package-ok\")\\n  } else {\\n    print(\"release-package-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/release-registry\" work/install-root/bin/nebula publish work/release-dep"
+expect_rc = 0
+expect_stdout_contains = ["published: release_dep@1.0.0"]
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/release-registry\" work/install-root/bin/nebula fetch work/release-app"
+expect_rc = 0
+must_exist = ["work/release-app/nebula.lock"]
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/release-registry\" work/install-root/bin/nebula run work/release-app --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["release-package-ok"]

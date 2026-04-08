@@ -1,0 +1,11 @@
+struct Foo {
+  a: Int
+}
+
+fn call_escape_unknown_indirect(f: Fn(Foo) -> Int) -> Int {
+  region R {
+    let x = Foo(1)
+    f(x)
+    return 0
+  }
+}

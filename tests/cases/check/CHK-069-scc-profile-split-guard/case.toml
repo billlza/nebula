@@ -1,0 +1,32 @@
+id = "CHK-069-scc-profile-split-guard"
+suite = "check"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/ref_scc_profile_split_guard.nb"
+args = ["--diag-format", "json", "--profile", "fast"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[steps.expect_diag]]
+code = "NBL-T093"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/ref_scc_profile_split_guard.nb"
+args = ["--diag-format", "json", "--profile", "deep"]
+expect_rc = 0
+
+[[steps.forbid_diag]]
+code = "NBL-T093"
+
+[[steps.forbid_diag]]
+code = "NBL-T094"
+
+[[steps.forbid_diag]]
+code = "NBL-T095"

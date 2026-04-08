@@ -1,0 +1,7 @@
+id = "RUN-028-invalid-disk-cache-ttl-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--disk-cache-ttl-sec", "-1"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --disk-cache-ttl-sec value: -1"]

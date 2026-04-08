@@ -1,0 +1,9 @@
+id = "RUN-012-no-build-reuse-conflict"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--no-build", "--reuse"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-CONFLICT"

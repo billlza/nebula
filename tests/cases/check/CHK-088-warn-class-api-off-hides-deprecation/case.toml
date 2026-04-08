@@ -1,0 +1,11 @@
+id = "CHK-088-warn-class-api-off-hides-deprecation"
+suite = "check"
+command = "check"
+source = "fixtures/deprecated_api.nb"
+args = ["--warn-class", "api-deprecation=off", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "warn-class=(api=off",
+  "warning(s) hidden by warning class policy"
+]
+forbid_stdout_contains = ["NBL-A001"]

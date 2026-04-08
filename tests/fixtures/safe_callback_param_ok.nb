@@ -1,0 +1,11 @@
+fn inc(x: Int) -> Int {
+  return x + 1
+}
+
+fn apply(cb: Fn(Int) -> Int, x: Int) -> Int {
+  return cb(x)
+}
+
+fn main() -> Int {
+  return apply(inc, 1)
+}

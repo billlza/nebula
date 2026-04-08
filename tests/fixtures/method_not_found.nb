@@ -1,0 +1,8 @@
+struct Counter {
+  v: Int
+}
+
+fn method_not_found() -> Int {
+  let c = Counter(1)
+  return c.missing(2)
+}

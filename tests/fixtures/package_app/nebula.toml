@@ -1,0 +1,10 @@
+schema_version = 1
+
+[package]
+name = "package-app"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+dep = { path = "../package_dep" }

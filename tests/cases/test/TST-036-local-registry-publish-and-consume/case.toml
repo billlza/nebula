@@ -1,0 +1,34 @@
+id = "TST-036-local-registry-publish-and-consume"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nreg = Path('work/local-registry')\ndep = Path('work/publish_dep')\napp = Path('work/consume_app')\n(dep / 'src').mkdir(parents=True, exist_ok=True)\n(app / 'src').mkdir(parents=True, exist_ok=True)\nreg.mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"1.2.3\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nfn dep_answer() -> Int {\\n  return 42\\n}\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"consume-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = \"1.2.3\"\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if dep_answer() == 42 {\\n    print(\"publish-ok\")\\n  } else {\\n    print(\"publish-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/local-registry\" \"$NEBULA_BINARY\" publish work/publish_dep"
+expect_rc = 0
+expect_stdout_contains = ["published:"]
+
+[[steps]]
+kind = "shell"
+run = "test -f work/local-registry/dep/1.2.3/nebula.toml && test -f work/local-registry/dep/1.2.3/nebula-package.toml"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/local-registry\" \"$NEBULA_BINARY\" fetch work/consume_app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'source_kind = \"registry\"' work/consume_app/nebula.lock && grep -F 'manifest = \"../local-registry/dep/1.2.3/nebula.toml\"' work/consume_app/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/local-registry\" \"$NEBULA_BINARY\" run work/consume_app --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["publish-ok"]

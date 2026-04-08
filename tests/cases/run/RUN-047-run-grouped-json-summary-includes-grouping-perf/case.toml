@@ -1,0 +1,14 @@
+id = "RUN-047-run-grouped-json-summary-includes-grouping-perf"
+suite = "run"
+command = "run"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped", "--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"grouping_total_ms":',
+  '"grouping_index_ms":',
+  '"grouping_rank_ms":',
+  '"grouping_root_cause_v2_ms":',
+  '"grouping_emit_ms":',
+  '"grouping_budget_fallback":false'
+]

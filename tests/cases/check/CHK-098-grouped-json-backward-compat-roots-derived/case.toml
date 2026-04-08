@@ -1,0 +1,14 @@
+id = "CHK-098-grouped-json-backward-compat-roots-derived"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "grouped", "--root-cause-min-covered", "0"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"summary": {',
+  '"roots": [',
+  '"derived": [',
+  '"causal_edges": [',
+  '"top_root_causes": [',
+  '"fix_order": ['
+]

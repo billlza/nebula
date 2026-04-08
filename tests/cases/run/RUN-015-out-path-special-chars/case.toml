@@ -1,0 +1,7 @@
+id = "RUN-015-out-path-special-chars"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "-o", "artifacts/smoke [special] path.out"]
+expect_rc = 0
+must_exist = ["artifacts/smoke [special] path.out", "artifacts/smoke [special] path.out.nebmeta"]

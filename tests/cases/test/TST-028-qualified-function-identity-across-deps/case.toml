@@ -1,0 +1,21 @@
+id = "TST-028-qualified-function-identity-across-deps"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/qualified_app work/qualified_dep_left work/qualified_dep_right && cp -R fixtures/qualified_app work/qualified_app && cp -R fixtures/qualified_dep_left work/qualified_dep_left && cp -R fixtures/qualified_dep_right work/qualified_dep_right"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/qualified_app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/qualified_app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["qualified-ok"]

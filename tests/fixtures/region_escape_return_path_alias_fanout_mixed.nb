@@ -1,0 +1,21 @@
+struct Foo {
+  a: Int
+}
+
+fn passthrough(v: Foo) -> Foo {
+  return v
+}
+
+fn merge_pair(a: Foo, b: Foo) -> Foo {
+  return Foo(a.a + b.a)
+}
+
+fn return_path_alias_fanout_mixed_escape() -> Foo {
+  region R {
+    let x = Foo(1)
+    let y = x
+    let z = x
+    let sink = passthrough(z)
+    return merge_pair(x, y)
+  }
+}

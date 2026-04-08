@@ -1,0 +1,16 @@
+struct Foo {
+  a: Int
+}
+
+fn passthrough(v: Foo) -> Foo {
+  return v
+}
+
+fn mixed_trigger_family_escape() -> Foo {
+  region R {
+    let x = Foo(1)
+    passthrough(x)
+    x.a = 2
+    return x
+  }
+}

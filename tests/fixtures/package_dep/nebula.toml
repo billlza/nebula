@@ -1,0 +1,7 @@
+schema_version = 1
+
+[package]
+name = "package-dep"
+version = "0.1.0"
+entry = "src/math.nb"
+src_dir = "src"

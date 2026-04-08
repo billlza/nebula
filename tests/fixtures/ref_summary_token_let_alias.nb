@@ -1,0 +1,15 @@
+struct Box {
+  v: Int
+}
+
+fn forward_box(ref b: Box) -> Box {
+  return b
+}
+
+fn ref_summary_token_let_alias() -> Int {
+  let x = Box(1)
+  let kept = forward_box(x)
+  let y = x
+  let z = y.v
+  return z + kept.v
+}

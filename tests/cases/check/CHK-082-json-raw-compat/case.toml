@@ -1,0 +1,8 @@
+id = "CHK-082-json-raw-compat"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+expect_stdout_contains = ['"code":"NBL-C001"']
+forbid_stdout_contains = ['"summary": {']

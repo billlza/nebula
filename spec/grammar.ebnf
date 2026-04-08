@@ -1,0 +1,110 @@
+// Nebula-Core v1.0.0 + minimal tooling extensions (modules, extern, bool/control flow, tooling).
+//
+// Notes:
+// - The syntax stays intentionally small to keep the compiler bootstrap fast.
+// - `Ident "(" ... ")"` is parsed uniformly as CallExpr; typecheck rewrites to ConstructExpr
+//   when `Ident` resolves to a type name (Call vs Ctor disambiguation).
+
+Program         ::= ModuleDecl? { ImportDecl } { AnnotatedItem }
+ModuleDecl      ::= "module" ModulePath
+ImportDecl      ::= "import" ImportPath
+ModulePath      ::= Ident { "." Ident }
+ImportPath      ::= Ident [ "::" Ident ] { "." Ident }
+
+AnnotatedItem   ::= { Annotation } Item
+Annotation      ::= "@" Ident
+
+Item            ::= Function | ExternFunction | Struct | Enum
+
+Function        ::= "fn" Ident "(" ParamList? ")" ReturnType? Block
+ExternFunction  ::= "extern" "fn" Ident "(" ParamList? ")" ReturnType?
+
+ParamList       ::= Param { "," Param }
+Param           ::= ("ref")? Ident ":" Type
+ReturnType      ::= "->" Type
+
+Struct          ::= "struct" Ident "{" { Field } "}"
+Field           ::= Ident ":" Type
+
+Enum            ::= "enum" Ident "<" Ident ">" "{" Variant { Variant } "}"
+Variant         ::= Ident "(" Type ")"
+
+Block           ::= "{" { AnnotatedStmt } "}"
+AnnotatedStmt   ::= { Annotation } Stmt
+
+Stmt            ::= LetStmt | AssignStmt | ExprStmt | ReturnStmt | RegionStmt | UnsafeStmt | IfStmt | ForStmt
+
+LetStmt         ::= "let" Ident "=" Expr
+AssignStmt      ::= AssignTarget "=" Expr
+                  | AssignTarget CompoundAssignOp Expr
+AssignTarget    ::= Ident | Ident "." Ident
+CompoundAssignOp ::= "+=" | "-=" | "*=" | "/="
+                  | "%="
+ReturnStmt      ::= "return" Expr
+ExprStmt        ::= Expr
+RegionStmt      ::= "region" Ident Block
+UnsafeStmt      ::= "unsafe" Block
+IfStmt          ::= "if" Expr Block [ "else" (IfStmt | Block) ]
+
+ForStmt         ::= "for" Ident "in" Expr ForRangeOp Expr Block
+ForRangeOp      ::= ".." | "..<" | "..."
+
+Expr            ::= Literal
+                  | Ident
+                  | FieldExpr
+                  | MethodCallExpr
+                  | Call
+                  | Binary
+                  | Unary
+                  | Shared
+                  | Unique
+                  | Heap
+                  | Promote
+
+FieldExpr       ::= Ident "." Ident
+MethodCallExpr  ::= Ident "." Ident "(" ArgList? ")"
+Call            ::= Ident "(" ArgList? ")"
+ArgList         ::= Expr { "," Expr }
+
+Binary          ::= Expr Op Expr
+Op              ::= "+" | "-" | "*" | "/"
+                  | "%"
+Unary           ::= ("+" | "-") Expr
+
+Shared          ::= "shared" Expr
+Unique          ::= "unique" Expr
+Heap            ::= "heap" Expr
+Promote         ::= "promote" Expr
+
+// v0.1 semantic restriction (enforced by typecheck, not grammar):
+// - ownership/representation directives are only defined on constructor sites
+//   (i.e., `shared Foo(...)`, `unique Foo(...)`, `heap Foo(...)`, `promote Foo(...)`)
+// - directive chains are rejected (e.g. `shared unique Foo(...)` is an error)
+// v0.2.x method/field restriction:
+// - field/method base is identifier-only (`x.f`, `x.m(...)`)
+// - chained/temporary base forms are not supported yet (`a.b.c`, `foo().m()`)
+
+Type            ::= Ident
+                  | Ident "<" Type ">"
+                  | FnType
+                  | UnsafeFnType
+
+FnType          ::= "Fn" "(" TypeList? ")" "->" Type
+UnsafeFnType    ::= "UnsafeFn" "(" TypeList? ")" "->" Type
+TypeList        ::= Type { "," Type }
+
+Literal         ::= Int | Float | String
+                  | Bool
+Bool            ::= "true" | "false"
+// Numeric separators:
+// - `_` is allowed between digits in Int/Float literals (e.g. `1_000`, `12_3.4_5`)
+// - `_` cannot be leading/trailing or repeated
+// Float scientific notation:
+// - `e` / `E` exponent is supported (e.g. `1e9`, `6.02e23`, `1_2.3_4e5_6`)
+// - exponent allows optional sign: `e+10`, `e-10`
+// Integer base prefixes:
+// - Binary: `0b` / `0B` (e.g. `0b1010_0110`)
+// - Octal:  `0o` / `0O` (e.g. `0o755`)
+// - Hex:    `0x` / `0X` (e.g. `0xFF_EC_10`)
+
+Ident           ::= /[a-zA-Z_][a-zA-Z0-9_]*/

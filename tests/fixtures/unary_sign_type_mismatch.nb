@@ -1,0 +1,5 @@
+fn main() -> Int {
+  let text = "nebula"
+  let broken = -text
+  return 0
+}

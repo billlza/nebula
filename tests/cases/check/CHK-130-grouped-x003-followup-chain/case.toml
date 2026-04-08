@@ -1,0 +1,13 @@
+id = "CHK-130-grouped-x003-followup-chain"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--mode", "release", "--profile", "deep", "--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"code\":\"NBL-P010\"",
+  "\"code\":\"NBL-X003\"",
+  "\"reason\":\"caused-by-code\"",
+  "\"caused_by_code\":\"NBL-P010\"",
+  "\"machine_subreason\":\"inferred-shared-hot-path\""
+]

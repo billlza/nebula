@@ -1,0 +1,12 @@
+id = "CHK-017-invalid-assignment-target"
+suite = "check"
+command = "check"
+source = "fixtures/assign_invalid_target.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T083"
+severity = "error"
+category = "typecheck"
+risk = "high"

@@ -1,0 +1,11 @@
+id = "CHK-140-grouped-r001-machine-reason-breakdown"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_reason_breakdown.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped", "--root-cause-top-k", "3"]
+expect_rc = 0
+expect_stdout_regex = [
+  "\\\"priority_machine_reason\\\":\\\"return\\\"[^\\n]*\\\"priority_machine_boost\\\":5[^\\n]*\\\"machine_reason_breakdown\\\":\\{\\\"return\\\":1,\\\"call\\\":0,\\\"field\\\":0\\}[^\\n]*\\\"machine_subreason_breakdown\\\":\\[\\{\\\"name\\\":\\\"direct-return\\\",\\\"count\\\":1\\}\\][^\\n]*\\\"machine_detail_breakdown\\\":\\[\\{\\\"name\\\":\\\"return/direct-return\\\",\\\"count\\\":1\\}\\]",
+  "\\\"priority_machine_reason\\\":\\\"call\\\"[^\\n]*\\\"priority_machine_boost\\\":3[^\\n]*\\\"machine_reason_breakdown\\\":\\{\\\"return\\\":0,\\\"call\\\":1,\\\"field\\\":0\\}[^\\n]*\\\"machine_subreason_breakdown\\\":\\[\\{\\\"name\\\":\\\"callee-param-escape\\\",\\\"count\\\":1\\}\\][^\\n]*\\\"machine_detail_breakdown\\\":\\[\\{\\\"name\\\":\\\"call/callee-param-escape\\\",\\\"count\\\":1\\}\\]",
+  "\\\"priority_machine_reason\\\":\\\"field\\\"[^\\n]*\\\"priority_machine_boost\\\":2[^\\n]*\\\"machine_reason_breakdown\\\":\\{\\\"return\\\":0,\\\"call\\\":0,\\\"field\\\":1\\}[^\\n]*\\\"machine_subreason_breakdown\\\":\\[\\{\\\"name\\\":\\\"field-write-base-escape\\\",\\\"count\\\":1\\}\\][^\\n]*\\\"machine_detail_breakdown\\\":\\[\\{\\\"name\\\":\\\"field/field-write-base-escape\\\",\\\"count\\\":1\\}\\]"
+]

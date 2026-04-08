@@ -1,0 +1,11 @@
+fn bump(ref x: Int) -> Int {
+  x = x + 1
+  return 0
+}
+
+fn ref_xstmt_indirect_conflict() -> Int {
+  let x = 1
+  let f = bump
+  let y = f(x)
+  return x + y
+}

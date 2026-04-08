@@ -1,0 +1,5 @@
+[project]
+name = "project-cycle"
+entry = "src/app/main.nb"
+src_dir = "src"
+

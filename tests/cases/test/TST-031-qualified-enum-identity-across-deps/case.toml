@@ -1,0 +1,26 @@
+id = "TST-031-qualified-enum-identity-across-deps"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/qualified_enum_identity')\nfor path in [root / 'dep_a' / 'src', root / 'dep_b' / 'src', root / 'app' / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(root / 'dep_a' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-a\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'dep_b' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-b\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'app' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"app\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\na = { path = \"../dep_a\" }\\nb = { path = \"../dep_b\" }\\n', encoding='utf-8')\n(root / 'dep_a' / 'src' / 'lib.nb').write_text('module lib\\n\\nenum Wrap<T> {\\n  Some(T)\\n}\\n\\nfn make_a(x: Int) -> Wrap<Int> {\\n  return Some(x)\\n}\\n\\nfn keep_a(x: Wrap<Int>) -> Wrap<Int> {\\n  return x\\n}\\n', encoding='utf-8')\n(root / 'dep_b' / 'src' / 'lib.nb').write_text('module lib\\n\\nenum Wrap<T> {\\n  Some(T)\\n}\\n\\nfn make_b(x: Int) -> Wrap<Int> {\\n  return Some(x)\\n}\\n\\nfn keep_b(x: Wrap<Int>) -> Wrap<Int> {\\n  return x\\n}\\n', encoding='utf-8')\n(root / 'app' / 'src' / 'main.nb').write_text('module main\\nimport a::lib\\nimport b::lib\\n\\nfn main() -> Void {\\n  let va = keep_a(make_a(1))\\n  let vb = keep_b(make_b(2))\\n  print(\"ok\")\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/qualified_enum_identity/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/qualified_enum_identity/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["ok"]
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport re\ntext = Path('generated_cpp/main.cpp').read_text(encoding='utf-8')\nassert len(re.findall(r'^template <typename T>$', text, re.M)) >= 2\nassert len(re.findall(r'^struct __nebula_ty_[0-9a-f]+_Wrap \\{$', text, re.M)) == 2\nPY"
+expect_rc = 0

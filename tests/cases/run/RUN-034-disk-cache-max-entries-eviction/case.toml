@@ -1,0 +1,26 @@
+id = "RUN-034-disk-cache-max-entries-eviction"
+suite = "run"
+source = "work/evict/a.nb"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/evict && cp fixtures/smoke.nb work/evict/a.nb && cp fixtures/smoke.nb work/evict/b.nb && echo '//b' >> work/evict/b.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/evict/a.nb"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-max-entries", "1", "--disk-cache-dir", "work/dcache_evict", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_evict_a.out"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/evict/b.nb"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-max-entries", "1", "--disk-cache-dir", "work/dcache_evict", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_evict_b.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_evictions\":1",
+  "\"disk_writes\":1"
+]

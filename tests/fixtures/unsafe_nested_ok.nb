@@ -1,0 +1,12 @@
+@unsafe
+fn raw_op() -> Int {
+  return 1
+}
+
+fn main() -> Int {
+  unsafe {
+    unsafe {
+      return raw_op()
+    }
+  }
+}

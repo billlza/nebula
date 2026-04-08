@@ -1,0 +1,12 @@
+id = "CHK-111-unary-sign-type-mismatch"
+suite = "check"
+command = "check"
+source = "fixtures/unary_sign_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T070"
+severity = "error"
+category = "typecheck"
+risk = "high"

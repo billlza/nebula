@@ -1,0 +1,18 @@
+id = "CHK-096-root-cause-fix-order-stable"
+suite = "check"
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY check fixtures/hot_loop.nb --mode release --diag-view grouped --max-root-causes 1 > work/v2_a.txt 2>&1"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY check fixtures/hot_loop.nb --mode release --diag-view grouped --max-root-causes 1 > work/v2_b.txt 2>&1"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep '^fix-order:' work/v2_a.txt > work/f1.txt && grep '^fix-order:' work/v2_b.txt > work/f2.txt && diff -u work/f1.txt work/f2.txt"
+expect_rc = 0
+must_exist = ["work/f1.txt", "work/f2.txt"]

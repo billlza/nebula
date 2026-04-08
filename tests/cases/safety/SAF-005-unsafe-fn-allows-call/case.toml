@@ -1,0 +1,9 @@
+id = "SAF-005-unsafe-fn-allows-call"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_fn_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-U001"

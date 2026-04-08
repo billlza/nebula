@@ -1,0 +1,14 @@
+struct Counter {
+  value: Int,
+}
+
+fn main() -> Int {
+  let count = Counter(40)
+  count.value += 1
+
+  let total = 1
+  total += 2
+  total *= 3
+
+  return count.value + total
+}

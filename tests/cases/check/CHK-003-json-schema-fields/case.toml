@@ -1,0 +1,12 @@
+id = "CHK-003-json-schema-fields"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+require_diag_keys = ["code", "category", "severity", "risk", "stage", "cause", "impact", "machine_reason", "machine_subreason", "machine_detail", "machine_trigger_family", "machine_trigger_family_detail", "machine_trigger_subreason", "machine_owner", "machine_owner_reason", "machine_owner_reason_detail", "caused_by_code", "suggestions", "predictive", "confidence", "warning_dimension", "warning_reason", "gate_weight"]
+
+[[expect_diag]]
+code = "NBL-R001"
+stage = "build"
+risk = "high"

@@ -1,0 +1,6 @@
+fn main() -> Int {
+  let total = 1_200_030
+  let piece = 12_0 % 7
+  let ratio = 1_2.3_4
+  return total / 1_000 + piece
+}

@@ -1,0 +1,7 @@
+id = "CHK-101-invalid-root-cause-top-k-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--root-cause-top-k", "0"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --root-cause-top-k value: 0"]

@@ -1,0 +1,7 @@
+id = "RUN-019-invalid-warn-policy-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--warn-policy", "aggressive"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --warn-policy value: aggressive"]

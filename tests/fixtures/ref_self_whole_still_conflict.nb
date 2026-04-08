@@ -1,0 +1,13 @@
+struct Counter {
+  v: Int
+}
+
+fn Counter_bump(ref self: Counter, delta: Int) -> Int {
+  self.v = self.v + delta
+  return self.v
+}
+
+fn ref_self_whole_still_conflict() -> Int {
+  let c = Counter(1)
+  return c.bump(1) + c.v
+}

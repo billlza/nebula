@@ -1,0 +1,12 @@
+id = "CHK-008-safe-unsafe-callable-strict-typing"
+suite = "check"
+command = "check"
+source = "fixtures/callable_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T064"
+severity = "error"
+category = "typecheck"
+risk = "high"

@@ -1,0 +1,10 @@
+id = "CHK-141-grouped-r001-transitive-chain-span-scoped"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped", "--root-cause-top-k", "4"]
+expect_rc = 0
+expect_stdout_regex = [
+  '\"code\":\"NBL-R001\"[^\n]*\"followup_count\":0[^\n]*\"followup_codes\":\[\][^\n]*\"priority_chain_summary\":\"\"',
+  '\"code\":\"NBL-R001\"[^\n]*\"followup_codes\":\[\"NBL-P010\",\"NBL-X003\"\][^\n]*\"priority_chain_summary\":\"NBL-R001->NBL-P010->NBL-X003\"'
+]

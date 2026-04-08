@@ -1,0 +1,12 @@
+id = "CHK-095-root-cause-min-covered-filters"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "grouped", "--root-cause-min-covered", "999", "--root-cause-top-k", "8"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"root_cause_v2_enabled":true',
+  '"top_root_cause_count":0',
+  '"top_root_candidate_count":0',
+  '"fix_order": []'
+]

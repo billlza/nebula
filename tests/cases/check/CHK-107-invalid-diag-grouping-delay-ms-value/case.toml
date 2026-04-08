@@ -1,0 +1,7 @@
+id = "CHK-107-invalid-diag-grouping-delay-ms-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--diag-grouping-delay-ms", "-1"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --diag-grouping-delay-ms value: -1"]

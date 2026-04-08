@@ -1,0 +1,9 @@
+id = "CHK-146-grouped-owner-plan-fanout-before-unknown"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_return_path_alias_fanout_unknown_indirect.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_regex = [
+  "\\\"id\\\":\\\"rc1\\\"[^\\n]*\\\"priority_owner_reason\\\":\\\"cross-function-return-path-alias-fanout\\\"[^\\n]*\\\"priority_owner_boost\\\":10[^\\n]*\\\"priority_owner_weight\\\":2[^\\n]*\\\"priority_owner_plan\\\":\\[\\{\\\"reason\\\":\\\"cross-function-return-path-alias-fanout\\\",\\\"boost\\\":10,\\\"count\\\":1,\\\"action\\\":\\\"collapse return-path alias fanout before resolving unknown return paths\\\"\\},\\{\\\"reason\\\":\\\"cross-function-return-path-unknown-indirect-unresolved\\\",\\\"boost\\\":8,\\\"count\\\":1,\\\"action\\\":\\\"resolve indirect call targets for return paths next\\\"\\}\\][^\\n]*\\\"machine_owner_reason_breakdown\\\":\\[\\{\\\"name\\\":\\\"cross-function-return-path-alias-fanout\\\",\\\"count\\\":1\\},\\{\\\"name\\\":\\\"cross-function-return-path-unknown-indirect-unresolved\\\",\\\"count\\\":1\\}\\]"
+]

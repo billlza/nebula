@@ -1,0 +1,14 @@
+struct Box {
+  v: Int
+}
+
+fn rec_mayescape(ref b: Box) -> Box {
+  let inner = rec_mayescape(b)
+  return b
+}
+
+fn ref_scc_recursive_mayescape_read() -> Int {
+  let b = Box(1)
+  let out = rec_mayescape(b)
+  return b.v + out.v
+}

@@ -1,0 +1,9 @@
+id = "CHK-147-grouped-owner-reason-priority-return-path-unknown-no-summary"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_return_path_unknown_no_summary.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped", "--profile", "fast"]
+expect_rc = 0
+expect_stdout_regex = [
+  "\\\"id\\\":\\\"rc1\\\"[^\\n]*\\\"priority_owner_reason\\\":\\\"cross-function-return-path-unknown-no-summary\\\"[^\\n]*\\\"priority_owner_boost\\\":6[^\\n]*\\\"priority_owner_weight\\\":1[^\\n]*\\\"priority_owner_action\\\":\\\"add missing function escape summaries next\\\"[^\\n]*\\\"priority_owner_plan\\\":\\[\\{\\\"reason\\\":\\\"cross-function-return-path-unknown-no-summary\\\",\\\"boost\\\":6,\\\"count\\\":1,\\\"action\\\":\\\"add missing function escape summaries next\\\"\\}\\][^\\n]*\\\"machine_owner_reason_breakdown\\\":\\[\\{\\\"name\\\":\\\"cross-function-return-path-unknown-no-summary\\\",\\\"count\\\":1\\}\\]"
+]

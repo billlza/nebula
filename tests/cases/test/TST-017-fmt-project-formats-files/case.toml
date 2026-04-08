@@ -1,0 +1,19 @@
+id = "TST-017-fmt-project-formats-files"
+suite = "test"
+
+[[steps]]
+kind = "nebula"
+command = "fmt"
+args = ["fixtures/project_demo"]
+expect_rc = 0
+expect_stdout_contains = [
+  "formatted:",
+  "fixtures/project_demo/src/app/main.nb",
+  "fixtures/project_demo/src/app/util.nb",
+]
+
+[[steps]]
+kind = "shell"
+run = "grep -q '^module app.main$' fixtures/project_demo/src/app/main.nb"
+expect_rc = 0
+

@@ -1,0 +1,6 @@
+id = "CHK-073-global-version-exit-zero"
+suite = "check"
+command = "--version"
+expect_rc = 0
+expect_stdout_contains = ["nebula v1.0.0"]
+forbid_stdout_contains = ["USAGE:"]

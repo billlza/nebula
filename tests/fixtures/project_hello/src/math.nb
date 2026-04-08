@@ -1,0 +1,9 @@
+module math
+
+fn choose(x: Int) -> Int {
+  if x >= 10 {
+    return 10
+  } else {
+    return 3
+  }
+}

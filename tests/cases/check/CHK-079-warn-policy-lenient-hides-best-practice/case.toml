@@ -1,0 +1,8 @@
+id = "CHK-079-warn-policy-lenient-hides-best-practice"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--warn-policy", "lenient", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = ["warning(s) hidden by --warn-policy lenient"]
+forbid_stdout_contains = ["NBL-C001"]

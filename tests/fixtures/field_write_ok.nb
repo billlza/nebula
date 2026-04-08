@@ -1,0 +1,9 @@
+struct Box {
+  v: Int
+}
+
+fn field_write_ok() -> Int {
+  let b = Box(1)
+  b.v = 2
+  return b.v
+}

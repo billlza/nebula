@@ -1,0 +1,10 @@
+id = "RUN-009-no-build-out-missing"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--no-build", "-o", "artifacts/missing.out"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-NOBUILD-MISSING"
+stage = "build"

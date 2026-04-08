@@ -1,0 +1,8 @@
+id = "CHK-099-raw-json-hides-root-cause-v2-fields"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "raw"]
+expect_rc = 0
+expect_stdout_contains = ['"code":"NBL-X001"']
+forbid_stdout_contains = ['"root_cause_v2_enabled":', '"top_root_causes":', '"fix_order":']

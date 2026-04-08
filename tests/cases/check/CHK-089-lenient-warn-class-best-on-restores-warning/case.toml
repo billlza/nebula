@@ -1,0 +1,11 @@
+id = "CHK-089-lenient-warn-class-best-on-restores-warning"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--warn-policy", "lenient", "--warn-class", "best-practice-drift=on", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "warn-class=(api=on,perf=on,best=on,safety=on,general=on)",
+  "NBL-C001"
+]
+forbid_stdout_contains = ["warning(s) hidden by --warn-policy lenient"]

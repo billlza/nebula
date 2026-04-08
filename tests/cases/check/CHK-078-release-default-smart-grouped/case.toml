@@ -1,0 +1,7 @@
+id = "CHK-078-release-default-smart-grouped"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--mode", "release"]
+expect_rc = 0
+expect_stdout_contains = ["diag-summary: roots="]

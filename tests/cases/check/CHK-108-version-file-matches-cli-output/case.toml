@@ -1,0 +1,7 @@
+id = "CHK-108-version-file-matches-cli-output"
+suite = "check"
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\") && test \"$(\"$NEBULA_BINARY\" --version | tr -d '\\r\\n')\" = \"nebula v$version\""
+expect_rc = 0

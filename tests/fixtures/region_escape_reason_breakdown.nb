@@ -1,0 +1,30 @@
+struct Foo {
+  a: Int
+}
+
+fn passthrough(v: Foo) -> Foo {
+  return v
+}
+
+fn return_escape_only() -> Foo {
+  region R {
+    let x = Foo(1)
+    return x
+  }
+}
+
+fn call_escape_only() -> Int {
+  region R {
+    let x = Foo(2)
+    passthrough(x)
+    return 0
+  }
+}
+
+fn field_escape_only() -> Int {
+  region R {
+    let x = Foo(3)
+    x.a = 4
+    return 0
+  }
+}

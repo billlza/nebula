@@ -1,0 +1,9 @@
+id = "CHK-002-profile-fast-override"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json", "--profile", "fast"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-C001"

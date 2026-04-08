@@ -1,0 +1,20 @@
+struct Foo {
+  a: Int
+}
+
+fn unknown_return_escape(f: Fn(Foo) -> Foo) -> Foo {
+  region U {
+    let u = Foo(1)
+    return f(u)
+  }
+}
+
+fn alias_fanout_escape(f: Fn(Foo, Foo) -> Int) -> Foo {
+  region R {
+    let x = Foo(2)
+    let y = x
+    let z = x
+    let sink = f(y, z)
+    return y
+  }
+}

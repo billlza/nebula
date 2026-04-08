@@ -1,0 +1,25 @@
+id = "TST-033-fetch-registry-env-override"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\napp = Path('work/registry_env_app')\nregistry = Path('work/custom-registry')\n(app / 'src').mkdir(parents=True, exist_ok=True)\n(registry / 'dep' / '9.9.9' / 'src').mkdir(parents=True, exist_ok=True)\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"registry-env-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = \"9.9.9\"\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if dep_value() == 9 {\\n    print(\"env-registry-ok\")\\n  } else {\\n    print(\"env-registry-bad\")\\n  }\\n}\\n', encoding='utf-8')\n(registry / 'dep' / '9.9.9' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"9.9.9\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(registry / 'dep' / '9.9.9' / 'src' / 'lib.nb').write_text('module lib\\n\\nfn dep_value() -> Int {\\n  return 9\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/custom-registry\" \"$NEBULA_BINARY\" fetch work/registry_env_app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "test -f work/registry_env_app/nebula.lock && grep -F 'manifest = \"../custom-registry/dep/9.9.9/nebula.toml\"' work/registry_env_app/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/registry_env_app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["env-registry-ok"]

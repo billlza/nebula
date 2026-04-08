@@ -1,0 +1,37 @@
+id = "TST-039-install-prefix-binary-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/install-root work/install-app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cmake --install \"$NEBULA_REPO_ROOT/build\" --prefix \"$PWD/work/install-root\""
+expect_rc = 0
+must_exist = [
+  "work/install-root/bin/nebula",
+  "work/install-root/share/doc/nebula/LICENSE",
+  "work/install-root/share/doc/nebula/VERSION",
+  "work/install-root/share/doc/nebula/CHANGELOG.md",
+  "work/install-root/share/doc/nebula/RELEASE_NOTES_v1.0.0.md",
+  "work/install-root/share/doc/nebula/RELEASE_PROCESS.md",
+]
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\") && test \"$(work/install-root/bin/nebula --version | tr -d '\\r\\n')\" = \"nebula v$version\""
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "work/install-root/bin/nebula new work/install-app"
+expect_rc = 0
+must_exist = ["work/install-app/nebula.toml", "work/install-app/src/main.nb"]
+
+[[steps]]
+kind = "shell"
+run = "work/install-root/bin/nebula run work/install-app --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["Hello from Nebula"]

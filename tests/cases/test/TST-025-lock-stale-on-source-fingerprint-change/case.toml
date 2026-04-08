@@ -1,0 +1,28 @@
+id = "TST-025-lock-stale-on-source-fingerprint-change"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/package_app work/package_dep && cp -R fixtures/package_app work/package_app && cp -R fixtures/package_dep work/package_dep"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/package_app"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport os\nlock = Path('work/package_app/nebula.lock')\ndep = Path('work/package_dep/src/math.nb')\ndep.write_text(dep.read_text() + '\\n// fingerprint drift\\n', encoding='utf-8')\nlock_mtime = lock.stat().st_mtime\nos.utime(dep, (lock_mtime - 60, lock_mtime - 60))\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY check work/package_app --diag-format json > work/stale-lock.json 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-CLI-LOCK-STALE\"' work/stale-lock.json"
+expect_rc = 0

@@ -1,0 +1,6 @@
+id = "CHK-114-modulo-ok"
+suite = "check"
+command = "check"
+source = "fixtures/modulo_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

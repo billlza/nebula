@@ -1,0 +1,8 @@
+id = "RUN-026-build-rejects-disk-cache-option"
+suite = "run"
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" build fixtures/smoke.nb --disk-cache on"
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --disk-cache"]

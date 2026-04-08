@@ -1,0 +1,21 @@
+id = "RUN-013-out-reuse-interaction"
+suite = "run"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "-o", "artifacts/custom_priority.out"]
+expect_rc = 0
+must_exist = ["artifacts/custom_priority.out", "artifacts/custom_priority.out.nebmeta"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "--mode", "release", "-o", "artifacts/custom_priority.out"]
+expect_rc = 0
+forbid_stdout_contains = ["NBL-CLI-REUSE"]
+expect_stdout_contains = ['-o "artifacts/custom_priority.out"']
+must_exist = ["artifacts/custom_priority.out"]
+must_not_exist = ["generated_cpp/smoke.out"]

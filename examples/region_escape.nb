@@ -1,0 +1,13 @@
+struct Foo {
+  a: Int
+}
+
+fn bad() -> Foo {
+  region R {
+    let x = Foo(1)
+    // Returning a would-be region allocation triggers NBL-R001 (or error under --strict-region).
+    return x
+  }
+}
+
+

@@ -1,0 +1,11 @@
+id = "CHK-156-project-import-cycle-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/project_cycle"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-MOD-CYCLE"
+stage = "build"
+category = "cli"

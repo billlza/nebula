@@ -1,0 +1,305 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      repository: ${{ steps.meta.outputs.repository }}
+      notes: ${{ steps.meta.outputs.notes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: meta
+        name: Read Release Metadata
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          repository="$(tr -d '\r\n' < RELEASE_REPOSITORY)"
+          notes="RELEASE_NOTES_v${version}.md"
+          test -f "$notes"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Tag Matches VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          expected="v${{ steps.meta.outputs.version }}"
+          test "${GITHUB_REF_NAME}" = "$expected"
+
+  build-assets:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            asset_suffix: linux-x86_64.tar.gz
+            stage_suffix: linux-x86_64
+            binary: build/nebula
+            shell_kind: unix
+          - os: macos-13
+            target: darwin-x86_64
+            asset_suffix: darwin-x86_64.tar.gz
+            stage_suffix: darwin-x86_64
+            binary: build/nebula
+            shell_kind: unix
+          - os: macos-14
+            target: darwin-arm64
+            asset_suffix: darwin-arm64.tar.gz
+            stage_suffix: darwin-arm64
+            binary: build/nebula
+            shell_kind: unix
+          - os: windows-2022
+            target: windows-x86_64
+            asset_suffix: windows-x86_64.zip
+            stage_suffix: windows-x86_64
+            binary: build/nebula.exe
+            shell_kind: msys2
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        if: matrix.shell_kind == 'unix'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup MSYS2
+        if: matrix.shell_kind == 'msys2'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-python
+
+      - name: Configure
+        if: matrix.shell_kind == 'unix'
+        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build
+        if: matrix.shell_kind == 'unix'
+        run: cmake --build build -j
+
+      - name: Run Contract Tests
+        if: matrix.shell_kind == 'unix'
+        run: python3 tests/run.py --suite all --binary ${{ matrix.binary }}
+
+      - name: Package Release Asset
+        if: matrix.shell_kind == 'unix'
+        run: |
+          python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
+          asset="dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}"
+          mkdir -p smoke
+          tar -xzf "$asset" -C smoke
+          smoke_bin="smoke/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}/bin/nebula"
+          "$smoke_bin" --version
+          "$smoke_bin" new smoke-app
+          "$smoke_bin" run smoke-app --run-gate none
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          asset = Path("${{ github.workspace }}") / "dist" / "nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}"
+          h = hashlib.sha256()
+          with asset.open("rb") as fh:
+              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                  h.update(chunk)
+          (asset.parent / "SHA256SUMS.txt").write_text(f"{h.hexdigest()}  {asset.name}\n", encoding="utf-8")
+          PY
+          bash scripts/install.sh --version ${{ needs.meta.outputs.version }} --prefix "$PWD/install-root" --base-url "$PWD/dist"
+          "$PWD/install-root/bin/nebula" --version
+
+      - name: Configure (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: cmake -S . -B build -G Ninja -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: cmake --build build -j
+
+      - name: Run Contract Tests (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: python3 tests/run.py --suite all --binary ${{ matrix.binary }}
+
+      - name: Package Release Asset (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: |
+          python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
+          python3 - <<'PY'
+          import shutil
+          from pathlib import Path
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          archive = Path(f"dist/nebula-v{version}-windows-x86_64.zip")
+          extract = Path("smoke")
+          shutil.unpack_archive(str(archive), str(extract), "zip")
+          binary = extract / f"nebula-v{version}-windows-x86_64" / "bin" / "nebula.exe"
+          print(binary)
+          PY
+
+      - name: Windows Release Smoke
+        if: matrix.shell_kind == 'msys2'
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Path VERSION -Raw).Trim()
+          $asset = "dist/nebula-v${version}-windows-x86_64.zip"
+          Expand-Archive -Path $asset -DestinationPath smoke -Force
+          $binary = "smoke/nebula-v${version}-windows-x86_64/bin/nebula.exe"
+          & $binary --version
+          & $binary new smoke-app
+          & $binary run smoke-app --run-gate none
+          $sha = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path dist/SHA256SUMS.txt -Value "$sha  nebula-v${version}-windows-x86_64.zip"
+          ./scripts/install.ps1 -Version $version -InstallPrefix "$PWD/install-root" -BaseUrl "$PWD/dist"
+          & "$PWD/install-root/bin/nebula.exe" --version
+
+      - name: Upload Release Asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-${{ matrix.target }}
+          path: dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}
+
+  assemble-release:
+    needs: [meta, build-assets]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download Platform Assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          merge-multiple: true
+          path: dist
+
+      - name: Stage Release Metadata
+        run: cp "${{ needs.meta.outputs.notes }}" "dist/${{ needs.meta.outputs.notes }}"
+
+      - name: Render Homebrew Formula
+        run: |
+          python3 scripts/render_homebrew_formula.py \
+            --artifact-dir dist \
+            --output dist/nebula.rb \
+            --url-base "https://github.com/${{ github.repository }}/releases/download/v${{ needs.meta.outputs.version }}"
+
+      - name: Generate Checksums and Release Manifest
+        run: |
+          python3 scripts/generate_release_manifest.py \
+            --artifact-dir dist \
+            --checksums-out dist/SHA256SUMS.txt \
+            --manifest-out dist/release-manifest.json \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/v${{ needs.meta.outputs.version }}" \
+            --require-all on
+
+      - name: Validate Required Release Files
+        run: |
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.tar.gz"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.tar.gz"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.zip"
+          test -f dist/SHA256SUMS.txt
+          test -f dist/release-manifest.json
+          test -f dist/nebula.rb
+          test -f "dist/${{ needs.meta.outputs.notes }}"
+
+      - name: Upload Release Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: dist
+
+  homebrew-smoke:
+    needs: [meta, assemble-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download Release Bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: release-bundle
+
+      - name: Install Homebrew (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+          echo "/home/linuxbrew/.linuxbrew/sbin" >> "$GITHUB_PATH"
+
+      - name: Render Local Formula For Smoke
+        run: |
+          python3 scripts/render_homebrew_formula.py \
+            --artifact-dir release-bundle \
+            --output release-bundle/nebula-local.rb \
+            --url-base "file://$PWD/release-bundle"
+
+      - name: Brew Install Smoke
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          brew install --formula "$PWD/release-bundle/nebula-local.rb"
+          brew test nebula
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [meta, assemble-release, homebrew-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Release Bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.meta.outputs.version }}
+          name: Nebula v${{ needs.meta.outputs.version }}
+          body_path: dist/${{ needs.meta.outputs.notes }}
+          files: |
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.tar.gz
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.tar.gz
+            dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz
+            dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.zip
+            dist/SHA256SUMS.txt
+            dist/release-manifest.json
+            dist/nebula.rb

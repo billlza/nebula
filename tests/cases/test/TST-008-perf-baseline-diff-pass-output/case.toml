@@ -1,0 +1,18 @@
+id = "TST-008-perf-baseline-diff-pass-output"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/scripts/perf_baseline_diff.py\" --current fixtures/perf/current_perf.json --baseline fixtures/perf/baseline_perf.json --out-json work/perf_diff/pass.json --out-md work/perf_diff/pass.md"
+expect_rc = 0
+expect_stdout_contains = [
+  "perf-baseline-diff: status=pass fail_on_regression=off shared_cases=4",
+  "summary: baseline_total_ms=1000 current_total_ms=1090 delta_ms=90 delta_pct=9.000%",
+  "regression-reasons: none",
+  "wrote-json: work/perf_diff/pass.json",
+  "wrote-md: work/perf_diff/pass.md"
+]
+must_exist = [
+  "work/perf_diff/pass.json",
+  "work/perf_diff/pass.md"
+]

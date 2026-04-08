@@ -1,0 +1,6 @@
+id = "CHK-118-base-integer-literals-ok"
+suite = "check"
+command = "check"
+source = "fixtures/base_integer_literals_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

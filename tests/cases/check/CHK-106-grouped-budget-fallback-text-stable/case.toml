@@ -1,0 +1,16 @@
+id = "CHK-106-grouped-budget-fallback-text-stable"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = [
+  "--mode", "release",
+  "--diag-view", "grouped",
+  "--diag-grouping-delay-ms", "20",
+  "--diag-budget-ms", "1"
+]
+expect_rc = 0
+expect_stdout_contains = [
+  "note: diagnostic grouping budget exceeded (1ms); falling back to raw diagnostics",
+  "grouping-perf: total-ms=",
+  "budget-fallback=on"
+]

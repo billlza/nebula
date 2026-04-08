@@ -1,0 +1,6 @@
+id = "CHK-110-unary-sign-ok"
+suite = "check"
+command = "check"
+source = "fixtures/unary_sign_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

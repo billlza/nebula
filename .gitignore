@@ -1,0 +1,23 @@
+# Build outputs
+/build/
+/build-strict/
+/generated_cpp/
+/benchmark_results/
+/tests/artifacts/
+/dist/
+/work/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS debug symbols
+*.dSYM/
+
+# Local metadata and tool files
+*.nebmeta
+CMakeUserPresets.json
+/perf_tmp.json
+/gate_report_v0.3.0.txt
+/gate_report_v0.3.1.txt
+.DS_Store

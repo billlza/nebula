@@ -1,0 +1,25 @@
+id = "RUN-030-disk-cache-hit-second-run"
+suite = "run"
+source = "fixtures/smoke.nb"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_hit", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_hit.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":0",
+  "\"disk_misses\":2",
+  "\"disk_writes\":2"
+]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_hit", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_hit.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":2",
+  "\"disk_misses\":0",
+  "\"disk_writes\":0"
+]

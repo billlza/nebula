@@ -1,0 +1,40 @@
+id = "TST-037-publish-idempotent-and-immutable"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\npkg = Path('work/publish_pkg')\nreg = Path('work/publish-registry')\n(pkg / 'src').mkdir(parents=True, exist_ok=True)\nreg.mkdir(parents=True, exist_ok=True)\n(pkg / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"immutable-pkg\"\\nversion = \"1.0.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(pkg / 'src' / 'lib.nb').write_text('module lib\\n\\nfn value() -> Int {\\n  return 1\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/publish-registry\" \"$NEBULA_BINARY\" publish work/publish_pkg"
+expect_rc = 0
+expect_stdout_contains = ["published:"]
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/publish-registry\" \"$NEBULA_BINARY\" publish work/publish_pkg"
+expect_rc = 0
+expect_stdout_contains = ["already published:"]
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\npath = Path('work/publish_pkg/src/lib.nb')\npath.write_text('module lib\\n\\nfn value() -> Int {\\n  return 2\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/publish-registry\" \"$NEBULA_BINARY\" publish work/publish_pkg > work/publish-immutable.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-PUBLISH-IMMUTABLE' work/publish-immutable.out"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/publish-registry\" \"$NEBULA_BINARY\" publish work/publish_pkg --force"
+expect_rc = 0
+expect_stdout_contains = ["replaced:"]

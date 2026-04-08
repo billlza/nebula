@@ -1,0 +1,16 @@
+id = "RUN-014-no-build-exit-code-propagation"
+suite = "run"
+
+[[steps]]
+kind = "shell"
+run = "printf '#!/bin/sh\\nexit 1\\n' > artifacts/exit1.sh && chmod +x artifacts/exit1.sh"
+expect_rc = 0
+must_exist = ["artifacts/exit1.sh"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--no-build", "-o", "artifacts/exit1.sh"]
+expect_rc = 1
+forbid_diag = [{ code = "NBL-CLI-NOBUILD-MISSING" }]

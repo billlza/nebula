@@ -1,0 +1,7 @@
+id = "RUN-039-invalid-gate-profile-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--gate-profile", "turbo"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --gate-profile value: turbo"]

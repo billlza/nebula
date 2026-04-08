@@ -1,0 +1,7 @@
+id = "CHK-075-invalid-diag-format"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "yaml"]
+expect_rc = 2
+expect_stdout_contains = ["invalid --diag-format value: yaml"]

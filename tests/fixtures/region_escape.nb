@@ -1,0 +1,10 @@
+struct Foo {
+  a: Int
+}
+
+fn bad() -> Foo {
+  region R {
+    let x = Foo(1)
+    return x
+  }
+}

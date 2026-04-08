@@ -1,0 +1,18 @@
+id = "TST-014-perf-baseline-diff-grouped-signal-regression-warn"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/scripts/perf_baseline_diff.py\" --current fixtures/perf/current_perf_grouped_signals_regressed.json --baseline fixtures/perf/baseline_perf_grouped_signals.json --fail-on-regression off --max-total-regression-pct 100 --max-suite-regression-pct 100 --max-case-regression-ms 1000 --max-cross-stage-reused-drop 100 --max-cross-stage-saved-ms-drop 1000 --max-disk-hit-drop 100 --max-disk-miss-increase 100 --max-disk-eviction-increase 100 --max-grouping-total-ms-increase 100 --max-grouping-budget-fallback-increase 1 --out-json work/perf_diff/grouped_warn.json"
+expect_rc = 0
+expect_stdout_contains = [
+  "perf-baseline-diff: status=warn fail_on_regression=off shared_cases=3",
+  "grouped-diag: baseline_total_ms=120 current_total_ms=360 baseline_budget_fallbacks=0 current_budget_fallbacks=3",
+  "regression-reasons:",
+  "- grouping_total_ms_increase 240 exceeds threshold 100",
+  "- grouping_budget_fallback_increase 3 exceeds threshold 1",
+  "wrote-json: work/perf_diff/grouped_warn.json"
+]
+must_exist = [
+  "work/perf_diff/grouped_warn.json"
+]

@@ -1,0 +1,7 @@
+id = "RUN-023-invalid-cross-stage-reuse-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--cross-stage-reuse", "on"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --cross-stage-reuse value: on"]

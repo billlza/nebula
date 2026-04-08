@@ -1,0 +1,6 @@
+id = "BEN-003-unknown-option-rejected"
+suite = "bench"
+command = "bench"
+args = ["--bogus"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --bogus"]

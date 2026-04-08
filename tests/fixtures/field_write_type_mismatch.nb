@@ -1,0 +1,9 @@
+struct Box {
+  v: Int
+}
+
+fn field_write_type_mismatch() -> Int {
+  let b = Box(1)
+  b.v = "oops"
+  return 0
+}

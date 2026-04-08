@@ -1,0 +1,10 @@
+fn rec_noescape(ref x: Int) -> Int {
+  return rec_noescape(x)
+}
+
+fn ref_scc_resolved_indirect_noescape() -> Int {
+  let x = 1
+  let f = rec_noescape
+  let y = f(x)
+  return x + y
+}

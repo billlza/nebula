@@ -1,0 +1,7 @@
+id = "RUN-018-invalid-preflight-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--preflight", "slow"]
+expect_rc = 2
+expect_stdout_contains = ["invalid --preflight value: slow"]

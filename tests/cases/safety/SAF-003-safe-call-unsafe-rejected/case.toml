@@ -1,0 +1,13 @@
+id = "SAF-003-safe-call-unsafe-rejected"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_call.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-U001"
+severity = "error"
+category = "unsafe-boundary"
+risk = "high"

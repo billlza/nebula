@@ -1,0 +1,13 @@
+id = "RUN-041-gate-dimension-perf-off-allows-high"
+suite = "run"
+command = "run"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--run-gate", "high", "--gate-dimension", "perf-runtime=off"]
+expect_rc = 0
+forbid_stdout_contains = ["run blocked by preflight gate"]
+
+[[expect_diag]]
+code = "NBL-P010"
+stage = "preflight"
+warning_dimension = "perf-runtime"
+warning_reason = "shared-hot-path"

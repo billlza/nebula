@@ -1,0 +1,18 @@
+id = "RUN-048-run-grouped-budget-fallback-json-stable"
+suite = "run"
+command = "run"
+source = "fixtures/hot_loop.nb"
+args = [
+  "--diag-format", "json",
+  "--diag-view", "grouped",
+  "--diag-grouping-delay-ms", "20",
+  "--diag-budget-ms", "1",
+  "--run-gate", "none"
+]
+expect_rc = 0
+expect_stdout_contains = [
+  '"budget_exceeded": true',
+  '"grouping_budget_fallback":true',
+  '"grouping_total_ms":',
+  '"all": ['
+]

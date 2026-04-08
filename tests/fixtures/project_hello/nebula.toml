@@ -1,0 +1,2 @@
+name = "project-hello"
+entry = "src/main.nb"

@@ -1,0 +1,12 @@
+id = "SAF-011-unsafe-method-call-blocked"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_method_call_blocked.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-U001"
+severity = "error"
+category = "unsafe-boundary"
+risk = "high"

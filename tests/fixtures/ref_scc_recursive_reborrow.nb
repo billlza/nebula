@@ -1,0 +1,20 @@
+struct Box {
+  v: Int
+}
+
+fn rec_mayescape(ref b: Box) -> Box {
+  let inner = rec_mayescape(b)
+  return b
+}
+
+fn touch(ref b: Box) -> Int {
+  b.v = b.v + 1
+  return b.v
+}
+
+fn ref_scc_recursive_reborrow() -> Int {
+  let b = Box(1)
+  let out = rec_mayescape(b)
+  let z = touch(b)
+  return out.v + z
+}

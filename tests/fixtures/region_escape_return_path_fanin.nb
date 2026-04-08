@@ -1,0 +1,15 @@
+struct Foo {
+  a: Int
+}
+
+fn merge_pair(a: Foo, b: Foo) -> Foo {
+  return Foo(a.a + b.a)
+}
+
+fn return_path_fanin_escape() -> Foo {
+  region R {
+    let x = Foo(1)
+    let y = Foo(2)
+    return merge_pair(x, y)
+  }
+}

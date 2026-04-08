@@ -1,0 +1,24 @@
+id = "RUN-038-disk-cache-corrupt-entry-fallback"
+suite = "run"
+source = "fixtures/smoke.nb"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_corrupt", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_corrupt.out"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "for f in work/dcache_corrupt/v2/entries/*.bin; do printf 'corrupt' > \"$f\"; break; done"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_corrupt", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_corrupt.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "NBL-CLI-CACHE-READ",
+  "\"disk_misses\":1"
+]

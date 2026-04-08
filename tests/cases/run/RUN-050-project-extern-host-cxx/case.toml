@@ -1,0 +1,6 @@
+id = "RUN-050-project-extern-host-cxx"
+suite = "run"
+command = "run"
+source = "fixtures/project_extern"
+args = ["--run-gate", "none"]
+expect_rc = 0

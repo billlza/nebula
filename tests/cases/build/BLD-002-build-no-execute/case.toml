@@ -1,0 +1,8 @@
+id = "BLD-002-build-no-execute"
+suite = "build"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+must_exist = ["generated_cpp/smoke.out"]
+forbid_stdout_contains = ['[cmd] "generated_cpp/smoke.out"']

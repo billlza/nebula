@@ -1,0 +1,18 @@
+fn inc(x: Int) -> Int {
+  return x + 1
+}
+
+@unsafe
+fn raw_unsafe(x: Int) -> Int {
+  return x + 1
+}
+
+fn takes_safe(cb: Fn(Int) -> Int, x: Int) -> Int {
+  return cb(x)
+}
+
+fn main() -> Int {
+  let a = takes_safe(inc, 1)
+  let b = takes_safe(raw_unsafe, 2)
+  return a + b
+}

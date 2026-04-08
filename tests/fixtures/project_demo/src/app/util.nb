@@ -1,0 +1,10 @@
+module app.util
+
+fn greet(flag: Bool) -> String {
+  if flag {
+    return "ok"
+  } else {
+    return "bad"
+  }
+}
+

@@ -1,0 +1,4 @@
+fn main() -> Int {
+  let broken = 0b102
+  return broken
+}

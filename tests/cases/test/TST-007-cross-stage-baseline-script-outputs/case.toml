@@ -1,0 +1,19 @@
+id = "TST-007-cross-stage-baseline-script-outputs"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_REPO_ROOT/scripts/run_cross_stage_baseline.sh\" \"$NEBULA_BINARY\" fixtures/smoke.nb work/baseline_script"
+expect_rc = 0
+expect_stdout_contains = [
+  "baseline-csv: work/baseline_script/cross_stage_reuse_baseline.csv",
+  "baseline-json: work/baseline_script/cross_stage_reuse_baseline.json",
+  "mode,cross_stage_candidates,cross_stage_reused,cross_stage_saved_ms_estimate",
+  "off,1,0,",
+  "safe,1,1,",
+  "\"delta\": {"
+]
+must_exist = [
+  "work/baseline_script/cross_stage_reuse_baseline.csv",
+  "work/baseline_script/cross_stage_reuse_baseline.json"
+]

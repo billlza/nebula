@@ -1,0 +1,12 @@
+id = "SAF-007-unsafe-indirect-call-rejected"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_indirect_call.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-U001"
+severity = "error"
+category = "unsafe-boundary"
+risk = "high"

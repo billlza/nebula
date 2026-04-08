@@ -1,0 +1,16 @@
+id = "BLD-007-build-run-rejected-exit-code-not-forwarded"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = "printf '#!/bin/sh\\nexit 137\\n' > artifacts/exit137.sh && chmod +x artifacts/exit137.sh"
+expect_rc = 0
+must_exist = ["artifacts/exit137.sh"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--run", "--diag-format", "json", "--no-build", "-o", "artifacts/exit137.sh"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --run"]

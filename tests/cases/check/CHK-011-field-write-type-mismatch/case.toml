@@ -1,0 +1,12 @@
+id = "CHK-011-field-write-type-mismatch"
+suite = "check"
+command = "check"
+source = "fixtures/field_write_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T082"
+severity = "error"
+category = "typecheck"
+risk = "high"

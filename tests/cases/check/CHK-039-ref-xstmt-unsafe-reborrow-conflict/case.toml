@@ -1,0 +1,13 @@
+id = "CHK-039-ref-xstmt-unsafe-reborrow-conflict"
+suite = "check"
+command = "check"
+source = "fixtures/ref_xstmt_unsafe_reborrow_conflict.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T095"
+severity = "error"
+category = "typecheck"
+risk = "high"

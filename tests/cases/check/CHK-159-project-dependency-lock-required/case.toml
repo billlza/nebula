@@ -1,0 +1,11 @@
+id = "CHK-159-project-dependency-lock-required"
+suite = "check"
+command = "check"
+source = "fixtures/package_app"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-LOCK-MISSING"
+stage = "build"
+category = "cli"

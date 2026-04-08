@@ -1,0 +1,18 @@
+fn choose(x: Int) -> Int {
+  if x >= 10 {
+    return 10
+  } else if x == 3 {
+    return 3
+  } else {
+    return 0
+  }
+}
+
+fn main() -> Void {
+  let ok = (choose(12) == 10) && true
+  if ok {
+    expect_eq(1, 1)
+  } else {
+    expect_eq(1, 2)
+  }
+}

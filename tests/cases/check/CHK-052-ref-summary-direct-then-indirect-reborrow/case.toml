@@ -1,0 +1,13 @@
+id = "CHK-052-ref-summary-direct-then-indirect-reborrow"
+suite = "check"
+command = "check"
+source = "fixtures/ref_summary_direct_then_indirect_reborrow.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T095"
+severity = "error"
+category = "typecheck"
+risk = "high"

@@ -1,0 +1,6 @@
+id = "CHK-009-field-read-ok"
+suite = "check"
+command = "check"
+source = "fixtures/field_read_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

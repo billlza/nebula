@@ -1,0 +1,24 @@
+struct Foo {
+  a: Int
+}
+
+fn add(x: Int, y: Int) -> Int {
+  return x + y
+}
+
+@test
+fn test_add() -> Void {
+  let z = add(1, 2)
+  expect_eq(z, 3)
+}
+
+@bench
+fn bench_region_alloc() -> Void {
+  region R {
+    for i in 0..100000 {
+      let x = Foo(i)
+    }
+  }
+}
+
+

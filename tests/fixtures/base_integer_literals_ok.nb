@@ -1,0 +1,5 @@
+fn main() -> Int {
+  let mask = 0b1010_0110
+  let color = 0xFF_EC_10
+  return mask + color
+}

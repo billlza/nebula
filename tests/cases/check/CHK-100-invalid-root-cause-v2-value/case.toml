@@ -1,0 +1,7 @@
+id = "CHK-100-invalid-root-cause-v2-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--root-cause-v2", "maybe"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --root-cause-v2 value: maybe"]

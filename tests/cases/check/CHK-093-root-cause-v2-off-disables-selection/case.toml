@@ -1,0 +1,13 @@
+id = "CHK-093-root-cause-v2-off-disables-selection"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "grouped", "--max-root-causes", "1", "--root-cause-v2", "off"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"root_cause_v2_enabled":false',
+  '"top_root_cause_count":0',
+  '"top_root_candidate_count":0',
+  '"top_root_causes": [',
+  '"fix_order": []'
+]

@@ -1,0 +1,13 @@
+@unsafe
+fn raw_touch(ref x: Int) -> Int {
+  x = x + 1
+  return x
+}
+
+@unsafe
+fn ref_summary_resolved_indirect_unsafe() -> Int {
+  let x = 1
+  let f = raw_touch
+  let y = f(x)
+  return x + y
+}

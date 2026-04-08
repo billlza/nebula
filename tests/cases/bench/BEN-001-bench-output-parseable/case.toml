@@ -1,0 +1,14 @@
+id = "BEN-001-bench-output-parseable"
+suite = "bench"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/benchdir && cp fixtures/smoke.nb work/benchdir/smoke.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "bench"
+args = ["--diag-format", "json", "--dir", "work/benchdir"]
+expect_rc = 0
+expect_stdout_regex = ["NEBULA_BENCH warmup_iterations=.* measure_iterations=.* samples=.* p50_ms=.* p90_ms=.* p99_ms=.* mean_ms=.* stddev_ms=.* throughput_ops_s=.* clock=.* platform=.* perf_capability=.* perf_counters=.* perf_reason=.*"]

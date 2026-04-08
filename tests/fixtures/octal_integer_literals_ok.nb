@@ -1,0 +1,5 @@
+fn main() -> Int {
+  let perms = 0o755
+  let mask = 0O7_7
+  return perms + mask
+}

@@ -1,0 +1,13 @@
+id = "TST-010-perf-baseline-diff-invalid-schema"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/scripts/perf_baseline_diff.py\" --current fixtures/perf/current_perf.json --baseline fixtures/perf/invalid_perf_missing_summary.json --out-json work/perf_diff/invalid.json"
+expect_rc = 2
+expect_stdout_contains = [
+  "error: invalid perf report: baseline.summary: expected object"
+]
+must_not_exist = [
+  "work/perf_diff/invalid.json"
+]

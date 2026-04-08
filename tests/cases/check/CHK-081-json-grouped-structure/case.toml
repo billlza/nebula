@@ -1,0 +1,18 @@
+id = "CHK-081-json-grouped-structure"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"summary": {',
+  '"warning_dimension_counts":{',
+  '"gating_warning_counts":{',
+  '"roots": [',
+  '"derived": [',
+  '"is_root":true',
+  '"warning_class":"best-practice-drift"',
+  '"warning_dimension":"best-practice-drift"',
+  '"warning_reason":"style-drift"',
+  '"gate_weight":'
+]

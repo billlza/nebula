@@ -1,0 +1,25 @@
+id = "CHK-150-epistemic-owner-reason-detail-mixed-unknown"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_return_path_unknown_mixed_hot.nb"
+args = ["--diag-format", "json", "--profile", "fast"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-X003"
+severity = "note"
+stage = "build"
+machine_trigger_family = "return"
+machine_trigger_family_detail = "return|call"
+machine_trigger_subreason = "cross-function-return-path-unknown-indirect-unresolved"
+machine_owner = "heap-shared"
+machine_owner_reason = "cross-function-return-path-unknown-indirect-unresolved"
+machine_owner_reason_detail = "cross-function-return-path-unknown-indirect-unresolved|cross-function-return-path-unknown-no-summary"
+
+[[expect_diag]]
+code = "NBL-R001"
+severity = "warning"
+stage = "build"
+machine_trigger_family = "return"
+machine_trigger_family_detail = "return|call"
+machine_trigger_subreason = "cross-function-return-path-unknown-indirect-unresolved"

@@ -1,0 +1,13 @@
+struct Raw {
+  v: Int
+}
+
+@unsafe
+fn Raw_touch(self: Raw) -> Int {
+  return self.v
+}
+
+fn unsafe_method_call_blocked() -> Int {
+  let r = Raw(1)
+  return r.touch()
+}

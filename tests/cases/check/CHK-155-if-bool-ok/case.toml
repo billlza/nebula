@@ -1,0 +1,13 @@
+id = "CHK-155-if-bool-ok"
+suite = "check"
+command = "check"
+source = "fixtures/if_bool_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T042"
+
+[[forbid_diag]]
+code = "NBL-T043"
+

@@ -1,0 +1,31 @@
+id = "RUN-025-cross-stage-baseline-off-vs-safe"
+suite = "run"
+source = "fixtures/smoke.nb"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--run-gate", "none", "--profile", "fast", "--cross-stage-reuse", "off", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/run_cross_stage_pair_off.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"cross_stage_candidates\":1",
+  "\"cross_stage_breakdown\":{\"preflight_to_build\":1,\"build_to_preflight\":0,\"other\":0}",
+  "\"cross_stage_reused\":0",
+  "\"cross_stage_reused_breakdown\":{\"preflight_to_build\":0,\"build_to_preflight\":0,\"other\":0}",
+  "\"cross_stage_saved_ms_estimate\":0"
+]
+expect_stdout_regex = ['\{"cache_report":\{.*"disk_entries":[0-9]+\}\}$']
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--run-gate", "none", "--profile", "fast", "--cross-stage-reuse", "safe", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/run_cross_stage_pair_safe.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"cross_stage_candidates\":1",
+  "\"cross_stage_breakdown\":{\"preflight_to_build\":1,\"build_to_preflight\":0,\"other\":0}",
+  "\"cross_stage_reused\":1",
+  "\"cross_stage_reused_breakdown\":{\"preflight_to_build\":1,\"build_to_preflight\":0,\"other\":0}",
+  "\"cross_stage_saved_ms_estimate\":"
+]
+expect_stdout_regex = ['\{"cache_report":\{.*"disk_entries":[0-9]+\}\}$']

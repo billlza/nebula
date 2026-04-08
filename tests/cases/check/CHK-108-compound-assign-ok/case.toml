@@ -1,0 +1,6 @@
+id = "CHK-108-compound-assign-ok"
+suite = "check"
+command = "check"
+source = "fixtures/compound_assign_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

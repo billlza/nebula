@@ -1,0 +1,7 @@
+id = "CHK-070-unknown-option-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--bogus"]
+expect_rc = 2
+expect_stdout_contains = ["error: unknown option: --bogus"]

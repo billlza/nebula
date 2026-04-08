@@ -1,0 +1,20 @@
+id = "TST-030-enum-variant-run-opaque"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\npath = Path('work/enum_variant_run.nb')\npath.write_text('enum Option<T> {\\n  Some(T)\\n}\\n\\nfn wrap(x: Int) -> Option<Int> {\\n  return Some(x)\\n}\\n\\nfn keep(x: Option<Int>) -> Option<Int> {\\n  return x\\n}\\n\\nfn main() -> Void {\\n  let v = keep(wrap(1))\\n  print(\"ok\")\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/enum_variant_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["ok"]
+
+[[steps]]
+kind = "shell"
+run = "grep -E '^template <typename T>$' generated_cpp/enum_variant_run.cpp && grep -E '^struct __nebula_ty_[0-9a-f]+_Option \\{$' generated_cpp/enum_variant_run.cpp && grep -F 'std::variant<Some> data;' generated_cpp/enum_variant_run.cpp"
+expect_rc = 0

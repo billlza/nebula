@@ -1,0 +1,7 @@
+id = "RUN-021-invalid-warn-class-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--warn-class", "unknown=off"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --warn-class value: unknown=off"]

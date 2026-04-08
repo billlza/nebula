@@ -1,0 +1,17 @@
+fn bump(ref x: Int) -> Int {
+  x = x + 1
+  return 0
+}
+
+fn bump2(ref x: Int) -> Int {
+  x = x + 2
+  return 0
+}
+
+fn ref_summary_indirect_fallback_guard() -> Int {
+  let x = 1
+  let f = bump
+  f = bump2
+  let y = f(x)
+  return x + y
+}

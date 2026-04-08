@@ -1,0 +1,11 @@
+id = "CHK-004-warnings-as-errors-risk-unchanged"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--warnings-as-errors"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-P010"
+severity = "error"
+risk = "high"

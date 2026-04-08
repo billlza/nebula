@@ -1,0 +1,16 @@
+id = "TST-009-perf-baseline-diff-fail-on-regression"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/scripts/perf_baseline_diff.py\" --current fixtures/perf/current_perf.json --baseline fixtures/perf/baseline_perf.json --fail-on-regression on --max-total-regression-pct 5 --out-json work/perf_diff/fail.json"
+expect_rc = 1
+expect_stdout_contains = [
+  "perf-baseline-diff: status=fail fail_on_regression=on shared_cases=4",
+  "regression-reasons:",
+  "- total_duration_regression_pct 9.000% exceeds threshold 5.000%",
+  "wrote-json: work/perf_diff/fail.json"
+]
+must_exist = [
+  "work/perf_diff/fail.json"
+]

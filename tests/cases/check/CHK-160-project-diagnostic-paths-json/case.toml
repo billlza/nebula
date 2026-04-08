@@ -1,0 +1,10 @@
+id = "CHK-160-project-diagnostic-paths-json"
+suite = "check"
+command = "check"
+source = "fixtures/project_diag_paths"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_regex = ["\\\"path\\\":\\\".*/fixtures/project_diag_paths/src/util\\.nb\\\""]
+
+[[expect_diag]]
+code = "NBL-T032"

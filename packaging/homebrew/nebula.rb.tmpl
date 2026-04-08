@@ -1,0 +1,18 @@
+class Nebula < Formula
+  desc "Nebula compiler and CLI"
+  homepage "https://github.com/{{REPO}}"
+  version "{{VERSION}}"
+
+{{MACOS_BLOCK}}
+
+{{LINUX_BLOCK}}
+
+  def install
+    bin.install Dir["bin/nebula*"]
+    doc.install "README.md"
+  end
+
+  test do
+    assert_match "nebula v", shell_output("#{bin}/nebula --version")
+  end
+end

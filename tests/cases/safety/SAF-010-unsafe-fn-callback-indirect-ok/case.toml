@@ -1,0 +1,9 @@
+id = "SAF-010-unsafe-fn-callback-indirect-ok"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_callback_param.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-U001"

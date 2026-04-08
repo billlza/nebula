@@ -1,0 +1,6 @@
+id = "TST-004-missing-dir-value"
+suite = "test"
+command = "test"
+args = ["--dir"]
+expect_rc = 2
+expect_stdout_contains = ["missing value for --dir"]

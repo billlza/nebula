@@ -1,0 +1,9 @@
+id = "CHK-013-method-call-sugar-ok"
+suite = "check"
+command = "check"
+source = "fixtures/method_call_sugar_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T084"

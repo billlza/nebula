@@ -1,0 +1,12 @@
+id = "CHK-012-field-access-non-struct"
+suite = "check"
+command = "check"
+source = "fixtures/field_access_non_struct.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T081"
+severity = "error"
+category = "typecheck"
+risk = "high"

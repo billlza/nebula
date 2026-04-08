@@ -1,0 +1,11 @@
+id = "CHK-132-region-escape-machine-subreason-return-via-alias"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_reason = "return"
+machine_subreason = "return-via-alias-chain"

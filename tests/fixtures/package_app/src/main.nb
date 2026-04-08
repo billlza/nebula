@@ -1,0 +1,11 @@
+module main
+import dep::math
+
+fn main() -> Void {
+  let v = dep_answer()
+  if v == 42 {
+    print("pkg-ok")
+  } else {
+    print("pkg-bad")
+  }
+}

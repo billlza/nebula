@@ -1,0 +1,24 @@
+id = "RUN-032-disk-cache-stage-separation"
+suite = "run"
+source = "fixtures/smoke.nb"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_stage", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_stage.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":0",
+  "\"disk_misses\":1",
+  "\"disk_writes\":1"
+]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--preflight", "fast", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_stage", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_stage.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":1",
+  "\"disk_misses\":1"
+]

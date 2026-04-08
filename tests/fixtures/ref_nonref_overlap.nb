@@ -1,0 +1,9 @@
+fn read_then_mut(ref a: Int, b: Int) -> Int {
+  a = a + b
+  return a
+}
+
+fn ref_nonref_overlap() -> Int {
+  let x = 1
+  return read_then_mut(x, x)
+}

@@ -1,0 +1,15 @@
+id = "CHK-033-ref-field-refref-distinct-ok"
+suite = "check"
+command = "check"
+source = "fixtures/ref_field_refref_distinct_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T090"
+
+[[forbid_diag]]
+code = "NBL-T091"
+
+[[forbid_diag]]
+code = "NBL-T092"

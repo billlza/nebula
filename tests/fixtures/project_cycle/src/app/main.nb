@@ -1,0 +1,7 @@
+module app.main
+import app.a
+
+fn main() -> Void {
+  let x = run()
+}
+

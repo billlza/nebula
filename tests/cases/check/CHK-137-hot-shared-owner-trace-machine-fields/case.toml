@@ -1,0 +1,15 @@
+id = "CHK-137-hot-shared-owner-trace-machine-fields"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--diag-format", "json", "--profile", "deep"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-P010"
+severity = "warning"
+stage = "build"
+machine_reason = "caused-by-owner-inference"
+machine_owner = "heap-shared"
+machine_owner_reason = "alias-fanout"
+caused_by_code = "NBL-R001"

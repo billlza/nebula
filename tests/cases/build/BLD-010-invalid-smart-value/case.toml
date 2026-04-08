@@ -1,0 +1,7 @@
+id = "BLD-010-invalid-smart-value"
+suite = "build"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--smart", "maybe"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --smart value: maybe"]

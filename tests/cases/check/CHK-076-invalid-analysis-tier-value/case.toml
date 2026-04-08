@@ -1,0 +1,7 @@
+id = "CHK-076-invalid-analysis-tier-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--analysis-tier", "hyper"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --analysis-tier value: hyper"]

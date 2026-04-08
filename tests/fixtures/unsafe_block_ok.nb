@@ -1,0 +1,10 @@
+@unsafe
+fn raw_add(x: Int, y: Int) -> Int {
+  return x + y
+}
+
+fn main() -> Int {
+  unsafe {
+    return raw_add(1, 2)
+  }
+}

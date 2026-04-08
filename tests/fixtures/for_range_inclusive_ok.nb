@@ -1,0 +1,9 @@
+fn main() -> Int {
+  let lo = 1
+  let hi = 3
+  let acc = 0
+  for i in lo...hi {
+    acc += i
+  }
+  return acc
+}

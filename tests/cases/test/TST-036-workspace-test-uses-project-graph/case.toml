@@ -1,0 +1,27 @@
+id = "TST-036-workspace-test-uses-project-graph"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/wstest')\n(root / 'app' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'lib' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[workspace]\\nmembers = [\"app\", \"lib\"]\\n', encoding='utf-8')\n(root / 'app' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nlib = \"0.1.0\"\\n', encoding='utf-8')\n(root / 'lib' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"lib\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'app' / 'src' / 'main.nb').write_text('module main\\nimport lib::lib\\n\\nfn main() -> Void {\\n  print(\"app\")\\n}\\n\\nfn check_answer() -> Int {\\n  return lib_answer()\\n}\\n', encoding='utf-8')\n(root / 'lib' / 'src' / 'lib.nb').write_text('module lib\\n\\nfn lib_answer() -> Int {\\n  return 42\\n}\\n\\n@test\\nfn lib_test() -> Void {\\n  expect_eq(lib_answer(), 42)\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/wstest"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--diag-format", "json", "--dir", "work/wstest"]
+expect_rc = 0
+expect_stdout_contains = ["[test] lib_test", "[test] ok"]
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--diag-format", "json", "--dir", "work/wstest/app"]
+expect_rc = 0
+expect_stdout_contains = ["[test] lib_test", "[test] ok"]

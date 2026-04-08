@@ -1,0 +1,11 @@
+struct Node {
+  value: Int
+}
+
+@hot
+fn owner_hot_path() -> Void {
+  for i in 0..1000 {
+    let node = unique Node(i)
+    expect_eq(node.value, i)
+  }
+}

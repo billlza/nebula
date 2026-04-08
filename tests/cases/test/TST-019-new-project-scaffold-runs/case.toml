@@ -1,0 +1,18 @@
+id = "TST-019-new-project-scaffold-runs"
+suite = "test"
+
+[[steps]]
+kind = "nebula"
+command = "new"
+args = ["work/newproj"]
+expect_rc = 0
+expect_stdout_contains = ["newproj"]
+must_exist = ["work/newproj/nebula.toml", "work/newproj/src/main.nb"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/newproj"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["Hello from Nebula"]

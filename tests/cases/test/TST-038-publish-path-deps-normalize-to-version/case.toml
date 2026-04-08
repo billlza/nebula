@@ -1,0 +1,33 @@
+id = "TST-038-publish-path-deps-normalize-to-version"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nreg = Path('work/path-registry')\ndep_b = Path('work/dep_b')\ndep_a = Path('work/dep_a')\napp = Path('work/path-consumer')\nfor pkg in [dep_a, dep_b, app]:\n    (pkg / 'src').mkdir(parents=True, exist_ok=True)\nreg.mkdir(parents=True, exist_ok=True)\n(dep_b / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"depb\"\\nversion = \"0.5.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(dep_b / 'src' / 'lib.nb').write_text('module lib\\n\\nfn dep_b_answer() -> Int {\\n  return 40\\n}\\n', encoding='utf-8')\n(dep_a / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"depa\"\\nversion = \"1.0.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndepb = { path = \"../dep_b\" }\\n', encoding='utf-8')\n(dep_a / 'src' / 'lib.nb').write_text('module lib\\nimport depb::lib\\n\\nfn dep_a_answer() -> Int {\\n  return dep_b_answer() + 2\\n}\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"path-consumer\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndepa = \"1.0.0\"\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport depa::lib\\n\\nfn main() -> Void {\\n  if dep_a_answer() == 42 {\\n    print(\"normalized-ok\")\\n  } else {\\n    print(\"normalized-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/path-registry\" \"$NEBULA_BINARY\" publish work/dep_b && NEBULA_REGISTRY_ROOT=\"$PWD/work/path-registry\" \"$NEBULA_BINARY\" publish work/dep_a"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'depb = \"0.5.0\"' work/path-registry/depa/1.0.0/nebula.toml && ! grep -F 'path =' work/path-registry/depa/1.0.0/nebula.toml"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/path-registry\" \"$NEBULA_BINARY\" fetch work/path-consumer"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'name = \"depa\"' work/path-consumer/nebula.lock && grep -F 'name = \"depb\"' work/path-consumer/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_REGISTRY_ROOT=\"$PWD/work/path-registry\" \"$NEBULA_BINARY\" run work/path-consumer --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["normalized-ok"]

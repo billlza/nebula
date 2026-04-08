@@ -1,0 +1,14 @@
+id = "CHK-127-region-escape-machine-reason-call"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_call.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_reason = "call"
+machine_subreason = "callee-param-escape"
+machine_detail = "call/callee-param-escape"
+machine_owner = "heap-unique"
+machine_owner_reason = "single-owner-flow"

@@ -1,0 +1,9 @@
+module foo
+
+fn collide() -> Int {
+  return 1
+}
+
+fn left_value() -> Int {
+  return collide()
+}

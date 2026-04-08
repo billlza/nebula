@@ -1,0 +1,24 @@
+id = "CHK-007-callable-arity-type-mismatch"
+suite = "check"
+command = "check"
+source = "fixtures/callable_arity_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T066"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[expect_diag]]
+code = "NBL-T067"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[expect_diag]]
+code = "NBL-T065"
+severity = "error"
+category = "typecheck"
+risk = "high"

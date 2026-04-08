@@ -1,0 +1,40 @@
+id = "TST-021-add-path-dependency-and-fetch"
+suite = "test"
+
+[[steps]]
+kind = "nebula"
+command = "new"
+args = ["work/app"]
+expect_rc = 0
+must_exist = ["work/app/nebula.toml", "work/app/src/main.nb"]
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nPath('work/app/src/main.nb').write_text('module main\\nimport dep::math\\n\\nfn main() -> Void {\\n  let v = dep_answer()\\n  if v == 42 {\\n    print(\"pkg-ok\")\\n  } else {\\n    print(\"pkg-bad\")\\n  }\\n}\\n')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "add"
+args = ["work/app", "dep", "--path", "../../fixtures/package_dep"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'dep = { path = \"../../fixtures/package_dep\" }' work/app/nebula.toml"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/app"]
+expect_rc = 0
+must_exist = ["work/app/nebula.lock"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["pkg-ok"]

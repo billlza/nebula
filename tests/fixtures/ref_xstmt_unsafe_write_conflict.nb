@@ -1,0 +1,13 @@
+@unsafe
+fn raw_touch(ref x: Int) -> Int {
+  x = x + 1
+  return x
+}
+
+@unsafe
+fn ref_xstmt_unsafe_write_conflict() -> Int {
+  let x = 1
+  let y = raw_touch(x)
+  x = y + 1
+  return x
+}

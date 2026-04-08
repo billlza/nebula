@@ -1,0 +1,6 @@
+fn main() -> Int {
+  let total = 20
+  total %= 6
+  let extra = 17 % 5
+  return total + extra
+}

@@ -1,0 +1,6 @@
+schema_version = 1
+
+[package]
+name = "qualified-dep-left"
+entry = "src/foo.nb"
+src_dir = "src"

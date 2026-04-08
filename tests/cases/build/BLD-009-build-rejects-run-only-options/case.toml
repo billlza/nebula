@@ -1,0 +1,66 @@
+id = "BLD-009-build-rejects-run-only-options"
+suite = "build"
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--no-build"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --no-build"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--reuse"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --reuse"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "high"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --run-gate"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--preflight", "off"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --preflight"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--disk-cache", "on"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --disk-cache"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--disk-cache-prune"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --disk-cache-prune"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--gate-profile", "strict"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --gate-profile"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--gate-dimension", "perf-runtime=off"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --gate-dimension"]

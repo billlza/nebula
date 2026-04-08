@@ -1,0 +1,6 @@
+id = "CHK-120-octal-integer-literals-ok"
+suite = "check"
+command = "check"
+source = "fixtures/octal_integer_literals_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

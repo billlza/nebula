@@ -1,0 +1,4 @@
+fn assign_invalid_target() -> Int {
+  x = 1
+  return 0
+}

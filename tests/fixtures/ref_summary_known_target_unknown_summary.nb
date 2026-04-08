@@ -1,0 +1,20 @@
+struct Box {
+  v: Int
+}
+
+fn sink(ref b: Box) -> Box {
+  return b
+}
+
+fn summary_unknown(ref b: Box) -> Box {
+  let g = sink
+  g = sink
+  return g(b)
+}
+
+fn ref_summary_known_target_unknown_summary() -> Int {
+  let b = Box(1)
+  let f = summary_unknown
+  let y = f(b)
+  return b.v + y.v
+}

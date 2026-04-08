@@ -1,0 +1,24 @@
+struct Foo {
+  a: Int
+}
+
+fn escaped_alias(f: Fn(Foo, Foo) -> Int) -> Foo {
+  region R {
+    let x = Foo(1)
+    let y = x
+    let z = x
+    let sink = f(y, z)
+    return y
+  }
+}
+
+@hot
+fn escaped_alias_hot(f: Fn(Foo, Foo) -> Int) -> Foo {
+  region R {
+    let x = Foo(2)
+    let y = x
+    let z = x
+    let sink = f(y, z)
+    return y
+  }
+}

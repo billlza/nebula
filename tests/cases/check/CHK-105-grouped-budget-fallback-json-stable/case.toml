@@ -1,0 +1,24 @@
+id = "CHK-105-grouped-budget-fallback-json-stable"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = [
+  "--mode", "release",
+  "--diag-format", "json",
+  "--diag-view", "grouped",
+  "--diag-grouping-delay-ms", "20",
+  "--diag-budget-ms", "1"
+]
+expect_rc = 0
+expect_stdout_contains = [
+  '"budget_exceeded": true',
+  '"budget_ms": 1',
+  '"grouping_total_ms":',
+  '"grouping_index_ms":',
+  '"grouping_rank_ms":',
+  '"grouping_root_cause_v2_ms":',
+  '"grouping_emit_ms":',
+  '"grouping_budget_fallback":true',
+  '"all": ['
+]
+forbid_stdout_contains = ['"roots": [', '"derived": [', '"causal_edges": [']

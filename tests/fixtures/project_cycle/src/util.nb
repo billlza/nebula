@@ -1,0 +1,6 @@
+module util
+import main
+
+fn helper() -> Int {
+  return 1
+}

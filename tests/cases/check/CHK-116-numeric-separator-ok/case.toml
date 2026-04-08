@@ -1,0 +1,6 @@
+id = "CHK-116-numeric-separator-ok"
+suite = "check"
+command = "check"
+source = "fixtures/numeric_separator_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

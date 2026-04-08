@@ -1,0 +1,28 @@
+id = "RUN-033-disk-cache-ttl-expiry"
+suite = "run"
+source = "fixtures/smoke.nb"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-ttl-sec", "1", "--disk-cache-dir", "work/dcache_ttl", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_ttl.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_misses\":1",
+  "\"disk_writes\":1"
+]
+
+[[steps]]
+kind = "shell"
+run = "sleep 2"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-ttl-sec", "1", "--disk-cache-dir", "work/dcache_ttl", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_ttl.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_expired\":1",
+  "\"disk_misses\":1"
+]

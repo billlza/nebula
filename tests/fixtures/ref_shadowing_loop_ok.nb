@@ -1,0 +1,14 @@
+fn bump(ref x: Int) -> Int {
+  x = x + 1
+  return x
+}
+
+fn ref_shadowing_loop_ok() -> Int {
+  let x = 1
+  let f = bump
+  for i in 0..1 {
+    let x = 2
+    let y = f(x)
+  }
+  return x
+}

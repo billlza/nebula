@@ -1,0 +1,7 @@
+fn main() -> Int { // keep-signature
+// before sum
+let x=(1+2)
+/* block
+   keep */
+return x
+}

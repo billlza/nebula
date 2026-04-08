@@ -1,0 +1,11 @@
+id = "CHK-154-region-escape-machine-trigger-family-detail-mixed"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_mixed_trigger_family.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_trigger_family = "return"
+machine_trigger_family_detail = "return|call|field"

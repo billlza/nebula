@@ -1,0 +1,11 @@
+id = "CHK-151-grouped-priority-fix-plan"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_regex = [
+  "\\\"priority_fix_plan\\\":\\[\\{\\\"category\\\":\\\"owner\\\",\\\"reason\\\":\\\"alias-fanout\\\",\\\"boost\\\":11,\\\"count\\\":1",
+  "\\\"category\\\":\\\"machine\\\",\\\"reason\\\":\\\"return\\\",\\\"boost\\\":5,\\\"count\\\":1",
+  "\\\"category\\\":\\\"epistemic\\\",\\\"reason\\\":\\\"owner-inference-min-loop\\\",\\\"boost\\\":4,\\\"count\\\":2"
+]

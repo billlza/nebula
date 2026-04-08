@@ -1,0 +1,12 @@
+id = "CHK-026-ref-stmt-method-binary"
+suite = "check"
+command = "check"
+source = "fixtures/ref_stmt_method_binary.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T092"
+severity = "error"
+category = "typecheck"
+risk = "high"

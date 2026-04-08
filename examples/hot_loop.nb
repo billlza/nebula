@@ -1,0 +1,12 @@
+struct Foo {
+  a: Int
+}
+
+@hot
+fn bad_hot_loop() -> Void {
+  for i in 0..1000 {
+    let x = shared Foo(i)
+  }
+}
+
+

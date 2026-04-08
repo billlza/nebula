@@ -1,0 +1,9 @@
+fn offset(v: Int) -> Int {
+  return -v
+}
+
+fn main() -> Int {
+  let base = +3
+  let delta = offset(5)
+  return base + delta
+}

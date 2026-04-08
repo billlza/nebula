@@ -1,0 +1,14 @@
+struct Pair {
+  a: Int
+  b: Int
+}
+
+fn return_pair(ref p: Pair) -> Pair {
+  return p
+}
+
+fn ref_summary_return_path_mayescape() -> Int {
+  let p = Pair(1, 2)
+  let q = return_pair(p)
+  return p.a + q.b
+}

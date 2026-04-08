@@ -1,0 +1,5 @@
+id = "CHK-072-global-help-exit-zero"
+suite = "check"
+command = "--help"
+expect_rc = 0
+expect_stdout_contains = ["nebula v1.0.0", "USAGE:"]

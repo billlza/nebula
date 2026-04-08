@@ -1,0 +1,13 @@
+fn main() -> Int {
+  let sum = 0
+  for i in 0..<3 {
+    sum += i
+  }
+  for j in 0...2 {
+    sum += j
+  }
+  for k in 0..1 {
+    sum += k
+  }
+  return sum
+}

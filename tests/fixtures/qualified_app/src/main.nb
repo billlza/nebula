@@ -1,0 +1,12 @@
+module main
+import left::foo
+import right::foo
+
+fn main() -> Void {
+  let sum = left_value() + right_value()
+  if sum == 3 {
+    print("qualified-ok")
+  } else {
+    print("qualified-bad")
+  }
+}

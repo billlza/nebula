@@ -1,0 +1,11 @@
+id = "CHK-104-grouped-text-summary-includes-grouping-perf"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "diag-summary: roots=",
+  "grouping-perf: total-ms=",
+  "budget-fallback=off"
+]

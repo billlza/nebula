@@ -1,0 +1,16 @@
+struct Box {
+  v: Int
+}
+
+fn keep(ref b: Box) -> Box {
+  return b
+}
+
+fn ref_xstmt_loop_propagate() -> Int {
+  let b = Box(1)
+  let f = keep
+  for i in 0..1 {
+    let y = f(b)
+  }
+  return b.v
+}

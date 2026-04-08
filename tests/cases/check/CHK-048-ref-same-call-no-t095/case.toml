@@ -1,0 +1,21 @@
+id = "CHK-048-ref-same-call-no-t095"
+suite = "check"
+command = "check"
+source = "fixtures/ref_same_call_no_t095.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T090"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[forbid_diag]]
+code = "NBL-T093"
+
+[[forbid_diag]]
+code = "NBL-T094"
+
+[[forbid_diag]]
+code = "NBL-T095"

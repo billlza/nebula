@@ -1,0 +1,19 @@
+id = "RUN-007-reuse-hit"
+suite = "run"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "-o", "artifacts/reuse_hit.out"]
+expect_rc = 0
+must_exist = ["artifacts/reuse_hit.out", "artifacts/reuse_hit.out.nebmeta"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "artifacts/reuse_hit.out"]
+expect_rc = 0
+expect_stdout_contains = ["NBL-CLI-REUSE"]
+forbid_stdout_contains = ["wrote: generated_cpp/smoke.cpp"]

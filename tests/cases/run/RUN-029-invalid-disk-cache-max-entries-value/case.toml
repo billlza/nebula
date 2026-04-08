@@ -1,0 +1,7 @@
+id = "RUN-029-invalid-disk-cache-max-entries-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--disk-cache-max-entries", "0"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --disk-cache-max-entries value: 0"]

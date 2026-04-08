@@ -1,0 +1,6 @@
+id = "CHK-155-bool-if-comparisons-ok"
+suite = "check"
+command = "check"
+source = "fixtures/bool_if_ok.nb"
+expect_rc = 0
+forbid_stdout_contains = ["error:"]

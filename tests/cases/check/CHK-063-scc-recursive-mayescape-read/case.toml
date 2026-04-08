@@ -1,0 +1,13 @@
+id = "CHK-063-scc-recursive-mayescape-read"
+suite = "check"
+command = "check"
+source = "fixtures/ref_scc_recursive_mayescape_read.nb"
+args = ["--diag-format", "json", "--profile", "deep"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T093"
+severity = "error"
+category = "typecheck"
+risk = "high"

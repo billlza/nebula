@@ -1,0 +1,7 @@
+id = "CHK-074-missing-mode-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--mode"]
+expect_rc = 2
+expect_stdout_contains = ["missing value for --mode"]

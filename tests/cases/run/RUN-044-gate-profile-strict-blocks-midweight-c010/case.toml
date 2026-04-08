@@ -1,0 +1,14 @@
+id = "RUN-044-gate-profile-strict-blocks-midweight-c010"
+suite = "run"
+command = "run"
+source = "fixtures/style_drift.nb"
+args = ["--diag-format", "json", "--run-gate", "high", "--gate-profile", "strict"]
+expect_rc = 1
+expect_stdout_contains = ["run blocked by preflight gate"]
+
+[[expect_diag]]
+code = "NBL-C010"
+stage = "preflight"
+warning_dimension = "best-practice-drift"
+warning_reason = "explicit-style-drift-marker"
+gate_weight = 55

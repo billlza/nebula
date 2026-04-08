@@ -1,0 +1,3 @@
+fn main() -> Void {
+  expect_eq(1, 2)
+}

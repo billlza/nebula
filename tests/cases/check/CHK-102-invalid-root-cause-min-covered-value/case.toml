@@ -1,0 +1,7 @@
+id = "CHK-102-invalid-root-cause-min-covered-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--root-cause-min-covered", "abc"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --root-cause-min-covered value: abc"]

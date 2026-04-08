@@ -1,0 +1,7 @@
+id = "CHK-071-san-flag-removed"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--san"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --san"]

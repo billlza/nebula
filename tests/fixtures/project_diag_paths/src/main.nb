@@ -1,0 +1,6 @@
+module main
+import util
+
+fn main() -> Int {
+  return bad()
+}

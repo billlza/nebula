@@ -1,0 +1,15 @@
+id = "CHK-043-ref-xstmt-region-no-propagate"
+suite = "check"
+command = "check"
+source = "fixtures/ref_xstmt_region_no_propagate.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T093"
+
+[[forbid_diag]]
+code = "NBL-T094"
+
+[[forbid_diag]]
+code = "NBL-T095"

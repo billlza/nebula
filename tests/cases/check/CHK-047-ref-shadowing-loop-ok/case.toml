@@ -1,0 +1,15 @@
+id = "CHK-047-ref-shadowing-loop-ok"
+suite = "check"
+command = "check"
+source = "fixtures/ref_shadowing_loop_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T093"
+
+[[forbid_diag]]
+code = "NBL-T094"
+
+[[forbid_diag]]
+code = "NBL-T095"

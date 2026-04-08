@@ -1,0 +1,16 @@
+struct Box {
+  v: Int
+}
+
+fn mixed_escape(b: Box, ref x: Int) -> Box {
+  x = x + 1
+  return b
+}
+
+fn ref_summary_ref_subset_guard() -> Int {
+  let x = 1
+  let b = Box(2)
+  let f = mixed_escape
+  let out = f(b, x)
+  return x + out.v
+}

@@ -1,0 +1,7 @@
+id = "CHK-083-invalid-cache-report-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--cache-report", "maybe"]
+expect_rc = 2
+expect_stdout_contains = ["invalid --cache-report value: maybe"]

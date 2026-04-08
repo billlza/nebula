@@ -1,0 +1,11 @@
+id = "CHK-090-warn-class-all-off-suppresses-warnings"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--warn-class", "all=off", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "diag-summary: roots=0 derived=0",
+  "warning(s) hidden by warning class policy"
+]
+forbid_stdout_contains = ["NBL-P001", "NBL-P010", "NBL-X001"]

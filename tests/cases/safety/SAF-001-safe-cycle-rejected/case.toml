@@ -1,0 +1,11 @@
+id = "SAF-001-safe-cycle-rejected"
+suite = "safety"
+command = "check"
+source = "fixtures/cycle_struct.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-S101"
+severity = "error"
+risk = "high"

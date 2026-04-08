@@ -1,0 +1,20 @@
+id = "TST-012-perf-baseline-diff-signal-regression-fail"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/scripts/perf_baseline_diff.py\" --current fixtures/perf/current_perf_signals_regressed.json --baseline fixtures/perf/baseline_perf_signals.json --fail-on-regression on --max-total-regression-pct 100 --max-suite-regression-pct 100 --max-case-regression-ms 1000 --max-cross-stage-reused-drop 2 --max-cross-stage-saved-ms-drop 200 --max-disk-hit-drop 5 --max-disk-miss-increase 5 --max-disk-eviction-increase 2 --out-json work/perf_diff/signals_fail.json"
+expect_rc = 1
+expect_stdout_contains = [
+  "perf-baseline-diff: status=fail fail_on_regression=on shared_cases=3",
+  "regression-reasons:",
+  "- cross_stage_reused_drop 5 exceeds threshold 2",
+  "- cross_stage_saved_ms_drop 380 exceeds threshold 200",
+  "- disk_hit_drop 10 exceeds threshold 5",
+  "- disk_miss_increase 10 exceeds threshold 5",
+  "- disk_eviction_increase 6 exceeds threshold 2",
+  "wrote-json: work/perf_diff/signals_fail.json"
+]
+must_exist = [
+  "work/perf_diff/signals_fail.json"
+]

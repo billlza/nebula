@@ -1,0 +1,12 @@
+id = "CHK-115-modulo-type-mismatch"
+suite = "check"
+command = "check"
+source = "fixtures/modulo_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T071"
+severity = "error"
+category = "typecheck"
+risk = "high"

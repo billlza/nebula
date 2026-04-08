@@ -1,0 +1,22 @@
+id = "TST-020-fetch-locks-path-dependency-and-run"
+suite = "test"
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["fixtures/package_app"]
+expect_rc = 0
+must_exist = ["fixtures/package_app/nebula.lock"]
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'name = \"package-dep\"' fixtures/package_app/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/package_app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["pkg-ok"]

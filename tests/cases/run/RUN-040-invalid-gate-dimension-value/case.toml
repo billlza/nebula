@@ -1,0 +1,7 @@
+id = "RUN-040-invalid-gate-dimension-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--gate-dimension", "perf=maybe"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --gate-dimension value: perf=maybe"]

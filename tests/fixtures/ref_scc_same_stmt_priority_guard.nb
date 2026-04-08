@@ -1,0 +1,12 @@
+fn id(v: Int) -> Int {
+  return v
+}
+
+fn rec_noescape(ref x: Int) -> Int {
+  return rec_noescape(x)
+}
+
+fn ref_scc_same_stmt_priority_guard() -> Int {
+  let x = 1
+  return rec_noescape(x) + id(x)
+}

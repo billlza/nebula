@@ -1,0 +1,7 @@
+id = "CHK-097-check-grouped-auto-enables-root-cause-v2"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = ['"root_cause_v2_enabled":true']

@@ -1,0 +1,14 @@
+struct Box {
+  v: Int
+}
+
+fn forward_box(ref b: Box) -> Box {
+  return b
+}
+
+fn ref_summary_resolved_indirect_mayescape() -> Int {
+  let b = Box(1)
+  let f = forward_box
+  let kept = f(b)
+  return b.v + kept.v
+}

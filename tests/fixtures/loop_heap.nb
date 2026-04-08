@@ -1,0 +1,9 @@
+struct Foo {
+  a: Int
+}
+
+fn loop_heap() -> Void {
+  for i in 0..100 {
+    let x = heap Foo(i)
+  }
+}

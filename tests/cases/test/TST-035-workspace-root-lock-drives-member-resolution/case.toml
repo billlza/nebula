@@ -1,0 +1,55 @@
+id = "TST-035-workspace-root-lock-drives-member-resolution"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/ws')\n(root / 'app' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'lib' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[workspace]\\nmembers = [\"app\", \"lib\"]\\n', encoding='utf-8')\n(root / 'app' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"ws-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nlib = \"0.1.0\"\\n', encoding='utf-8')\n(root / 'lib' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"lib\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'app' / 'src' / 'main.nb').write_text('module main\\nimport lib::lib\\n\\n@test\\nfn test_lib_answer() -> Void {\\n  expect_eq(lib_answer(), 42)\\n}\\n\\n@bench\\nfn bench_lib_answer() -> Void {\\n  let value = lib_answer()\\n  expect_eq(value, 42)\\n}\\n\\nfn main() -> Void {\\n  if lib_answer() == 42 {\\n    print(\"workspace-ok\")\\n  } else {\\n    print(\"workspace-bad\")\\n  }\\n}\\n', encoding='utf-8')\n(root / 'lib' / 'src' / 'lib.nb').write_text('module lib\\n\\nfn lib_answer() -> Int {\\n  return 42\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/ws"]
+expect_rc = 0
+must_exist = ["work/ws/nebula.lock"]
+must_not_exist = ["work/ws/app/nebula.lock", "work/ws/lib/nebula.lock"]
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'source_kind = \"workspace\"' work/ws/nebula.lock && grep -F 'source_hint = \"lib\"' work/ws/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "work/ws"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "work/ws"
+expect_rc = 0
+must_exist = ["generated_cpp/main.out"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/ws"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["workspace-ok"]
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--dir", "work/ws"]
+expect_rc = 0
+expect_stdout_contains = ["[test] test_lib_answer", "[test] ok"]
+
+[[steps]]
+kind = "nebula"
+command = "bench"
+args = ["--dir", "work/ws", "--diag-format", "json"]
+expect_rc = 0
+expect_stdout_contains = ["NEBULA_BENCH", "platform=", "perf_capability="]

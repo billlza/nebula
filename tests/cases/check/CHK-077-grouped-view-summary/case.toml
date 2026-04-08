@@ -1,0 +1,14 @@
+id = "CHK-077-grouped-view-summary"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "diag-summary: roots=",
+  "gate-profile=",
+  "warning-summary:",
+  "warning-dimension-summary:",
+  "gate-warning-summary:",
+  "hint: NBL-C001 warning-class=best-practice-drift"
+]

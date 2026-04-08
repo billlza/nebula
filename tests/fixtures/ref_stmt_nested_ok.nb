@@ -1,0 +1,13 @@
+fn id(v: Int) -> Int {
+  return v
+}
+
+fn use(ref a: Int, b: Int) -> Int {
+  return a + b
+}
+
+fn ref_stmt_nested_ok() -> Int {
+  let x = 1
+  let y = 2
+  return use(x, id(y))
+}

@@ -1,0 +1,15 @@
+fn inc(x: Int) -> Int {
+  return x + 1
+}
+
+fn probe(cb: Fn(Int) -> Int) -> Int {
+  let a = cb()
+  let b = cb("oops")
+  let c = 7
+  let z = c(1)
+  return a + b + z
+}
+
+fn main() -> Int {
+  return probe(inc)
+}

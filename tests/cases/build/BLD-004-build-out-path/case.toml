@@ -1,0 +1,8 @@
+id = "BLD-004-build-out-path"
+suite = "build"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "-o", "artifacts/smoke_custom.out"]
+expect_rc = 0
+must_exist = ["artifacts/smoke_custom.out", "artifacts/smoke_custom.out.nebmeta"]
+must_not_exist = ["generated_cpp/smoke.out"]

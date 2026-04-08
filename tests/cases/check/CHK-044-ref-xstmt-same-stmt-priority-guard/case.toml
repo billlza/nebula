@@ -1,0 +1,48 @@
+id = "CHK-044-ref-xstmt-same-stmt-priority-guard"
+suite = "check"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/ref_xstmt_same_stmt_still_t092.nb"
+args = ["--diag-format", "json", "--profile", "fast"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[steps.expect_diag]]
+code = "NBL-T092"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[steps.forbid_diag]]
+code = "NBL-T093"
+
+[[steps.forbid_diag]]
+code = "NBL-T094"
+
+[[steps.forbid_diag]]
+code = "NBL-T095"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/ref_xstmt_same_stmt_still_t092.nb"
+args = ["--diag-format", "json", "--profile", "deep"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[steps.expect_diag]]
+code = "NBL-T092"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[steps.forbid_diag]]
+code = "NBL-T093"
+
+[[steps.forbid_diag]]
+code = "NBL-T094"
+
+[[steps.forbid_diag]]
+code = "NBL-T095"

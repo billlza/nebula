@@ -1,0 +1,24 @@
+id = "RUN-011-no-build-ambiguous"
+suite = "run"
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cp generated_cpp/smoke.out smoke.out && cp generated_cpp/smoke.out.nebmeta smoke.out.nebmeta"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--no-build"]
+expect_rc = 1
+
+[[steps.expect_diag]]
+code = "NBL-CLI-AMBIGUOUS-ARTIFACT"

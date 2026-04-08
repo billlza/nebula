@@ -1,0 +1,11 @@
+id = "CHK-001-profile-auto-deep"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-C001"
+stage = "build"
+severity = "warning"

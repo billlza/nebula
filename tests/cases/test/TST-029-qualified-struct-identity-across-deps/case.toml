@@ -1,0 +1,25 @@
+id = "TST-029-qualified-struct-identity-across-deps"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/qualified_struct_identity')\nfor path in [root / 'dep_a' / 'src', root / 'dep_b' / 'src', root / 'app' / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(root / 'dep_a' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-a\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'dep_b' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-b\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'app' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"app\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\na = { path = \"../dep_a\" }\\nb = { path = \"../dep_b\" }\\n', encoding='utf-8')\n(root / 'dep_a' / 'src' / 'lib.nb').write_text('module lib\\n\\nstruct Foo {\\n  value: Int\\n}\\n\\nstruct Box {\\n  inner: Foo\\n}\\n\\nfn make_a() -> Box {\\n  let inner = Foo(1)\\n  return Box(inner)\\n}\\n\\nfn read_a(box: Box) -> Int {\\n  let inner = box.inner\\n  return inner.value\\n}\\n', encoding='utf-8')\n(root / 'dep_b' / 'src' / 'lib.nb').write_text('module lib\\n\\nstruct Foo {\\n  value: Int\\n}\\n\\nstruct Box {\\n  inner: Foo\\n}\\n\\nfn make_b() -> Box {\\n  let inner = Foo(2)\\n  return Box(inner)\\n}\\n\\nfn read_b(box: Box) -> Int {\\n  let inner = box.inner\\n  return inner.value\\n}\\n', encoding='utf-8')\n(root / 'app' / 'src' / 'main.nb').write_text('module main\\nimport a::lib\\nimport b::lib\\n\\nfn main() -> Void {\\n  expect_eq(read_a(make_a()) + read_b(make_b()), 3)\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/qualified_struct_identity/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/qualified_struct_identity/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport re\ntext = Path('generated_cpp/main.cpp').read_text(encoding='utf-8')\nassert len(re.findall(r'^struct __nebula_ty_[0-9a-f]+_Foo \\{$', text, re.M)) == 2\nassert len(re.findall(r'^struct __nebula_ty_[0-9a-f]+_Box \\{$', text, re.M)) == 2\nassert 'struct Foo {' not in text\nassert 'struct Box {' not in text\nPY"
+expect_rc = 0

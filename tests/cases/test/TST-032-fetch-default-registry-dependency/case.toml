@@ -1,0 +1,24 @@
+id = "TST-032-fetch-default-registry-dependency"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/registry_default_app')\n(root / '.nebula' / 'registry' / 'dep' / '1.2.3' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"registry-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = \"1.2.3\"\\n', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if dep_answer() == 42 {\\n    print(\"registry-ok\")\\n  } else {\\n    print(\"registry-bad\")\\n  }\\n}\\n', encoding='utf-8')\n(root / '.nebula' / 'registry' / 'dep' / '1.2.3' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"1.2.3\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / '.nebula' / 'registry' / 'dep' / '1.2.3' / 'src' / 'lib.nb').write_text('module lib\\n\\nfn dep_answer() -> Int {\\n  return 42\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "env -u NEBULA_REGISTRY_ROOT \"$NEBULA_BINARY\" fetch work/registry_default_app"
+expect_rc = 0
+must_exist = ["work/registry_default_app/nebula.lock"]
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'source_kind = \"registry\"' work/registry_default_app/nebula.lock && grep -F 'manifest = \".nebula/registry/dep/1.2.3/nebula.toml\"' work/registry_default_app/nebula.lock && grep -F 'integrity_fingerprint = \"' work/registry_default_app/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "env -u NEBULA_REGISTRY_ROOT \"$NEBULA_BINARY\" run work/registry_default_app --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["registry-ok"]

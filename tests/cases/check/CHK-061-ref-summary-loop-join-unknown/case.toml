@@ -1,0 +1,13 @@
+id = "CHK-061-ref-summary-loop-join-unknown"
+suite = "check"
+command = "check"
+source = "fixtures/ref_summary_loop_join_unknown.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T093"
+severity = "error"
+category = "typecheck"
+risk = "high"

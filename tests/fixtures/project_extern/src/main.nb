@@ -1,0 +1,10 @@
+module main
+
+extern fn host_answer() -> Int
+
+fn main() -> Int {
+  if host_answer() == 42 {
+    return 0
+  }
+  return 1
+}

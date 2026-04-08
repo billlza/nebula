@@ -1,0 +1,13 @@
+id = "CHK-087-grouped-json-causal-graph"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped", "--max-root-causes", "2"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"causal_edges\": [",
+  "\"rank_score\":",
+  "\"derived_count\":",
+  "\"derivation_reason\":\"truncated-root-overflow\"",
+  "\"caused_by\":\"r"
+]

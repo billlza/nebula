@@ -1,0 +1,11 @@
+struct Foo {
+  a: Int
+}
+
+fn field_escape_only() -> Int {
+  region R {
+    let x = Foo(1)
+    x.a = 2
+    return 0
+  }
+}

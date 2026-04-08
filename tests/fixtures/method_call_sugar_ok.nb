@@ -1,0 +1,12 @@
+struct Counter {
+  v: Int
+}
+
+fn Counter_inc(self: Counter, delta: Int) -> Int {
+  return self.v + delta
+}
+
+fn method_call_sugar_ok() -> Int {
+  let c = Counter(1)
+  return c.inc(2)
+}

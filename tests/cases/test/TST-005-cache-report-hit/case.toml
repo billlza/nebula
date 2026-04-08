@@ -1,0 +1,14 @@
+id = "TST-005-cache-report-hit"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/cache_hit && cp fixtures/smoke.nb work/cache_hit/a.nb && cp fixtures/smoke.nb work/cache_hit/b.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--diag-format", "json", "--dir", "work/cache_hit", "--cache-report", "on"]
+expect_rc = 0
+expect_stdout_contains = ["cache-report: hits=0 misses=2"]

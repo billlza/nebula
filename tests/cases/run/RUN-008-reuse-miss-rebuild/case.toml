@@ -1,0 +1,24 @@
+id = "RUN-008-reuse-miss-rebuild"
+suite = "run"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "-o", "artifacts/reuse_miss.out"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "echo '//touch-reuse-miss' >> fixtures/smoke.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "artifacts/reuse_miss.out"]
+expect_rc = 0
+forbid_stdout_contains = ["NBL-CLI-REUSE"]
+expect_stdout_contains = ["wrote: generated_cpp/smoke.cpp"]
+must_exist = ["artifacts/reuse_miss.out", "artifacts/reuse_miss.out.nebmeta"]

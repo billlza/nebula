@@ -1,0 +1,34 @@
+id = "RUN-031-disk-cache-source-change-miss"
+suite = "run"
+source = "work/change_src.nb"
+
+[[steps]]
+kind = "shell"
+run = "cp fixtures/smoke.nb work/change_src.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_change", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_change.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":0",
+  "\"disk_misses\":2",
+  "\"disk_writes\":2"
+]
+
+[[steps]]
+kind = "shell"
+run = "echo '// mutate' >> work/change_src.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+args = ["--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_change", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_change.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":0",
+  "\"disk_misses\":2"
+]

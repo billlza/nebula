@@ -1,0 +1,10 @@
+module main
+import math
+
+fn main() -> Void {
+  if choose(12) == 10 {
+    print("Hello from Project")
+  } else {
+    print("Bad")
+  }
+}

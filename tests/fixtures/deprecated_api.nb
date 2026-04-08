@@ -1,0 +1,12 @@
+fn legacy_hash(x: Int) -> Int {
+  return x + 1
+}
+
+fn use_legacy(x: Int) -> Int {
+  return legacy_hash(x)
+}
+
+fn main() -> Void {
+  let y = use_legacy(7)
+  expect_eq(y, 8)
+}

@@ -1,0 +1,14 @@
+struct Pair {
+  a: Int
+  b: Int
+}
+
+fn bump(ref v: Int) -> Int {
+  v = v + 1
+  return v
+}
+
+fn ref_field_same_conflict() -> Int {
+  let p = Pair(1, 2)
+  return bump(p.a) + p.a
+}

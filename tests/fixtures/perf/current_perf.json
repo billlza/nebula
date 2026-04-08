@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-02-15T00:10:00Z",
+  "non_gating": true,
+  "summary": {
+    "cases": 5,
+    "passed": 5,
+    "failed": 0,
+    "total_duration_ms": 1090,
+    "mean_duration_ms": 218.0
+  },
+  "by_suite": [
+    {
+      "suite": "check",
+      "cases": 2,
+      "passed": 2,
+      "failed": 0,
+      "total_duration_ms": 410,
+      "mean_duration_ms": 205.0
+    },
+    {
+      "suite": "run",
+      "cases": 3,
+      "passed": 3,
+      "failed": 0,
+      "total_duration_ms": 680,
+      "mean_duration_ms": 226.666
+    }
+  ],
+  "slowest_cases": [
+    {
+      "id": "CHK-AAA",
+      "suite": "check",
+      "status": "passed",
+      "duration_ms": 240
+    },
+    {
+      "id": "RUN-BBB",
+      "suite": "run",
+      "status": "passed",
+      "duration_ms": 340
+    },
+    {
+      "id": "RUN-CCC",
+      "suite": "run",
+      "status": "passed",
+      "duration_ms": 185
+    },
+    {
+      "id": "CHK-DDD",
+      "suite": "check",
+      "status": "passed",
+      "duration_ms": 250
+    }
+  ],
+  "cross_stage_signals": {
+    "cases_with_cache_report": 2,
+    "cross_stage_candidates_total": 4,
+    "cross_stage_reused_total": 3,
+    "cross_stage_saved_ms_estimate_total": 240,
+    "cases": []
+  },
+  "disk_cache_signals": {
+    "cases_with_cache_report": 2,
+    "disk_hits_total": 12,
+    "disk_misses_total": 3,
+    "disk_writes_total": 4,
+    "disk_expired_total": 0,
+    "disk_evictions_total": 1,
+    "disk_entries_peak": 6,
+    "cases": []
+  }
+}

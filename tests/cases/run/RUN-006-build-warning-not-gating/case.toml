@@ -1,0 +1,14 @@
+id = "RUN-006-build-warning-not-gating"
+suite = "run"
+command = "run"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json", "--profile", "deep", "--run-gate", "high"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-C001"
+stage = "build"
+
+[[forbid_diag]]
+code = "NBL-C001"
+stage = "preflight"

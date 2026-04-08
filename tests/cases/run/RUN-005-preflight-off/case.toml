@@ -1,0 +1,9 @@
+id = "RUN-005-preflight-off"
+suite = "run"
+command = "run"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--preflight", "off", "--run-gate", "high"]
+expect_rc = 0
+
+[[forbid_diag]]
+stage = "preflight"

@@ -1,0 +1,16 @@
+id = "CHK-031-ref-field-same-conflict"
+suite = "check"
+command = "check"
+source = "fixtures/ref_field_same_conflict.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T092"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[forbid_diag]]
+code = "NBL-T090"

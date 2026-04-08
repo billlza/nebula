@@ -1,0 +1,14 @@
+id = "RUN-001-preflight-fixed-fast"
+suite = "run"
+command = "run"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json", "--profile", "deep", "--run-gate", "none"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-C001"
+stage = "build"
+
+[[forbid_diag]]
+code = "NBL-C001"
+stage = "preflight"

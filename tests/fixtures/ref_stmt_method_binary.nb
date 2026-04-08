@@ -1,0 +1,17 @@
+struct Counter {
+  v: Int
+}
+
+fn id(v: Int) -> Int {
+  return v
+}
+
+fn Counter_touch(ref self: Counter, delta: Int) -> Int {
+  self.v = self.v + delta
+  return self.v
+}
+
+fn ref_stmt_method_binary() -> Int {
+  let c = Counter(1)
+  return c.touch(id(c.v))
+}

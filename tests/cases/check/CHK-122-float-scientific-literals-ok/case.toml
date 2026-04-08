@@ -1,0 +1,6 @@
+id = "CHK-122-float-scientific-literals-ok"
+suite = "check"
+command = "check"
+source = "fixtures/float_scientific_literals_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

@@ -1,0 +1,6 @@
+id = "BEN-004-invalid-profile-value"
+suite = "bench"
+command = "bench"
+args = ["--profile", "slow"]
+expect_rc = 2
+expect_stdout_contains = ["invalid --profile value: slow"]

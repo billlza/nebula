@@ -1,0 +1,12 @@
+id = "CHK-094-root-cause-top-k-limits-selection"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "grouped", "--root-cause-min-covered", "0", "--root-cause-top-k", "1"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"root_cause_v2_enabled":true',
+  '"top_root_cause_count":1',
+  '"top_root_candidate_count":3',
+  '"fix_order": ["rc1"]'
+]

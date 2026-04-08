@@ -1,0 +1,16 @@
+struct Pair {
+  a: Int
+  b: Int
+}
+
+fn touch(ref p: Pair) -> Int {
+  p.a = p.a + 1
+  return p.a
+}
+
+fn ref_xstmt_whole_field_conflict() -> Int {
+  let p = Pair(1, 2)
+  let f = touch
+  let y = f(p)
+  return p.a + y
+}

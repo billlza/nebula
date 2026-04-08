@@ -1,0 +1,14 @@
+id = "CHK-080-budget-skips-lint"
+suite = "check"
+command = "check"
+source = "fixtures/complex_fn.nb"
+args = ["--diag-format", "json", "--diag-budget-ms", "1"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-PR002"
+stage = "build"
+severity = "note"
+
+[[forbid_diag]]
+code = "NBL-C001"

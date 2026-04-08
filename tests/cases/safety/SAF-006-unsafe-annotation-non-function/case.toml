@@ -1,0 +1,13 @@
+id = "SAF-006-unsafe-annotation-non-function"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_bad_annotation.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-U002"
+severity = "error"
+category = "unsafe-boundary"
+risk = "high"

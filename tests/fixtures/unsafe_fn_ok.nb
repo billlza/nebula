@@ -1,0 +1,9 @@
+@unsafe
+fn raw_add(x: Int, y: Int) -> Int {
+  return x + y
+}
+
+@unsafe
+fn wrapper() -> Int {
+  return raw_add(1, 2)
+}

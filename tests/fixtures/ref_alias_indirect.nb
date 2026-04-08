@@ -1,0 +1,11 @@
+fn twin(ref a: Int, ref b: Int) -> Int {
+  a = a + 1
+  b = b + 1
+  return a + b
+}
+
+fn ref_alias_indirect() -> Int {
+  let x = 1
+  let f = twin
+  return f(x, x)
+}

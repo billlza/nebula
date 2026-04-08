@@ -1,0 +1,98 @@
+name: contract-tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  contract-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            binary: build/nebula
+            shell_kind: unix
+          - os: macos-13
+            target: darwin-x86_64
+            binary: build/nebula
+            shell_kind: unix
+          - os: macos-14
+            target: darwin-arm64
+            binary: build/nebula
+            shell_kind: unix
+          - os: windows-2022
+            target: windows-x86_64
+            binary: build/nebula.exe
+            shell_kind: msys2
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        if: matrix.shell_kind == 'unix'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup MSYS2
+        if: matrix.shell_kind == 'msys2'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-python
+
+      - name: Configure
+        if: matrix.shell_kind == 'unix'
+        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build
+        if: matrix.shell_kind == 'unix'
+        run: cmake --build build -j
+
+      - name: Run Contract Tests
+        if: matrix.shell_kind == 'unix'
+        run: |
+          python3 tests/run.py --suite all --report text --binary ${{ matrix.binary }} \
+            --text-out contract-tests.txt \
+            --junit-out contract-tests.junit.xml \
+            --json-out contract-tests.json
+
+      - name: Configure (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: cmake -S . -B build -G Ninja -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: cmake --build build -j
+
+      - name: Run Contract Tests (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: |
+          python3 tests/run.py --suite all --report text --binary ${{ matrix.binary }} \
+            --text-out contract-tests.txt \
+            --junit-out contract-tests.junit.xml \
+            --json-out contract-tests.json
+
+      - name: Upload Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-test-reports-${{ matrix.target }}
+          path: |
+            contract-tests.txt
+            contract-tests.junit.xml
+            contract-tests.json

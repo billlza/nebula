@@ -1,0 +1,9 @@
+@unsafe
+fn raw_unsafe(x: Int) -> Int {
+  return x + 1
+}
+
+fn main() -> Int {
+  let f = raw_unsafe
+  return f(1)
+}

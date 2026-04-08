@@ -1,0 +1,16 @@
+id = "BLD-005-build-run-rejected-no-build-flag-irrelevant"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = "printf '#!/bin/sh\\nexit 1\\n' > artifacts/exit1.sh && chmod +x artifacts/exit1.sh"
+expect_rc = 0
+must_exist = ["artifacts/exit1.sh"]
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--run", "--diag-format", "json", "--no-build", "-o", "artifacts/exit1.sh"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --run"]

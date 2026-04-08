@@ -1,0 +1,14 @@
+id = "RUN-036-cache-report-text-includes-disk-fields"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_text", "--cache-report", "on", "--cache-report-format", "text", "-o", "artifacts/dcache_text.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "disk-hits=",
+  "disk-misses=",
+  "disk-writes=",
+  "disk-expired=",
+  "disk-evictions=",
+  "disk-entries="
+]

@@ -1,0 +1,18 @@
+id = "RUN-043-gate-profile-lenient-allows-p001"
+suite = "run"
+command = "run"
+source = "fixtures/loop_heap.nb"
+args = ["--diag-format", "json", "--run-gate", "high", "--gate-profile", "lenient"]
+expect_rc = 0
+forbid_stdout_contains = ["run blocked by preflight gate"]
+
+[[expect_diag]]
+code = "NBL-P001"
+stage = "preflight"
+warning_dimension = "perf-runtime"
+warning_reason = "hot-loop-alloc"
+gate_weight = 85
+
+[[forbid_diag]]
+code = "NBL-P010"
+stage = "preflight"

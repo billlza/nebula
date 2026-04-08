@@ -1,0 +1,17 @@
+id = "TST-019-explain-json-outputs-diagnostics"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY explain fixtures/hot_loop.nb --format json > work/explain.json"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-P010\"' work/explain.json"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"first_fix\":\"prefer unique ownership in hot path and share only at boundaries\"' work/explain.json"
+expect_rc = 0

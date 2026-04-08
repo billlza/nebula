@@ -1,0 +1,7 @@
+id = "RUN-027-invalid-disk-cache-value"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--disk-cache", "maybe"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --disk-cache value: maybe"]

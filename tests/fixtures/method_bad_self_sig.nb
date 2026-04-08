@@ -1,0 +1,12 @@
+struct Counter {
+  v: Int
+}
+
+fn Counter_inc(this: Counter, delta: Int) -> Int {
+  return this.v + delta
+}
+
+fn method_bad_self_sig() -> Int {
+  let c = Counter(1)
+  return c.inc(2)
+}

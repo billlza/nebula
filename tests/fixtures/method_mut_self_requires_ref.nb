@@ -1,0 +1,8 @@
+struct Counter {
+  v: Int
+}
+
+fn Counter_bump(self: Counter) -> Int {
+  self.v = self.v + 1
+  return self.v
+}

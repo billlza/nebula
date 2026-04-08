@@ -1,0 +1,15 @@
+id = "RUN-037-cache-report-json-includes-disk-fields"
+suite = "run"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-dir", "work/dcache_json", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_json.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_hits\":",
+  "\"disk_misses\":",
+  "\"disk_writes\":",
+  "\"disk_expired\":",
+  "\"disk_evictions\":",
+  "\"disk_entries\":"
+]
+expect_stdout_regex = ['\{"cache_report":\{.*"disk_entries":[0-9]+\}\}$']

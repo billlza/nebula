@@ -1,0 +1,9 @@
+id = "CHK-153-grouped-owner-reason-priority-return-path-alias-fanout-mixed"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_return_path_alias_fanout_mixed.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_regex = [
+  '"id":"rc1"[^\n]*"priority_owner_reason":"cross-function-return-path-alias-fanout-mixed"[^\n]*"priority_owner_boost":9[^\n]*"priority_owner_plan":\[\{"reason":"cross-function-return-path-alias-fanout-mixed","boost":9,"count":1,"action":"collapse mixed return-path/non-return fanout before resolving unknown return paths"\}\][^\n]*"machine_owner_reason_breakdown":\[\{"name":"cross-function-return-path-alias-fanout-mixed","count":1\}\]'
+]

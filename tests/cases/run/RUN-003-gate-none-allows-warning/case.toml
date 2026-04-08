@@ -1,0 +1,14 @@
+id = "RUN-003-gate-none-allows-warning"
+suite = "run"
+command = "run"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--run-gate", "none"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-P010"
+stage = "preflight"
+
+[[forbid_diag]]
+code = "NBL-P010"
+stage = "build"

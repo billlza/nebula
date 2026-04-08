@@ -1,0 +1,7 @@
+id = "BLD-003-build-run-rejected"
+suite = "build"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--run", "--diag-format", "json", "--run-gate", "none"]
+expect_rc = 2
+expect_stdout_contains = ["unknown option: --run"]

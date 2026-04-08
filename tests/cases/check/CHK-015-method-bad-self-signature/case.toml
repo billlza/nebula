@@ -1,0 +1,12 @@
+id = "CHK-015-method-bad-self-signature"
+suite = "check"
+command = "check"
+source = "fixtures/method_bad_self_sig.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T086"
+severity = "error"
+category = "typecheck"
+risk = "high"

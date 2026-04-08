@@ -1,0 +1,12 @@
+id = "CHK-022-ref-alias-ok"
+suite = "check"
+command = "check"
+source = "fixtures/ref_alias_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T090"
+
+[[forbid_diag]]
+code = "NBL-T091"

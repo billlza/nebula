@@ -1,0 +1,12 @@
+id = "SAF-002-region-escape-diagnostic-shape"
+suite = "safety"
+command = "check"
+source = "fixtures/region_escape.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+require_diag_keys = ["code", "stage", "risk", "cause", "impact", "suggestions"]
+
+[[expect_diag]]
+code = "NBL-R001"
+stage = "build"
+risk = "high"

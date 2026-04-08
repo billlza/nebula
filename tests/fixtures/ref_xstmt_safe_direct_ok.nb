@@ -1,0 +1,10 @@
+fn bump(ref x: Int) -> Int {
+  x = x + 1
+  return x
+}
+
+fn ref_xstmt_safe_direct_ok() -> Int {
+  let x = 1
+  let y = bump(x)
+  return x + y
+}

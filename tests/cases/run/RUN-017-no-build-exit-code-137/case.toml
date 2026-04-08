@@ -1,0 +1,16 @@
+id = "RUN-017-no-build-exit-code-137"
+suite = "run"
+
+[[steps]]
+kind = "shell"
+run = "printf '#!/bin/sh\\nexit 137\\n' > artifacts/exit137.sh && chmod +x artifacts/exit137.sh"
+expect_rc = 0
+must_exist = ["artifacts/exit137.sh"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--no-build", "-o", "artifacts/exit137.sh"]
+expect_rc = 137
+forbid_diag = [{ code = "NBL-CLI-NOBUILD-MISSING" }]

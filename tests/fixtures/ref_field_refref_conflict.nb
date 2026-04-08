@@ -1,0 +1,15 @@
+struct Pair {
+  a: Int
+  b: Int
+}
+
+fn touch_two(ref x: Int, ref y: Int) -> Int {
+  x = x + 1
+  y = y + 1
+  return x + y
+}
+
+fn ref_field_refref_conflict() -> Int {
+  let p = Pair(1, 2)
+  return touch_two(p.a, p.a)
+}

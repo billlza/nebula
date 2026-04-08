@@ -1,0 +1,30 @@
+id = "RUN-035-disk-cache-prune-expired"
+suite = "run"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/prune && cp fixtures/smoke.nb work/prune/a.nb && cp fixtures/smoke.nb work/prune/b.nb && echo '//b' >> work/prune/b.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/prune/a.nb"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-ttl-sec", "1", "--disk-cache-dir", "work/dcache_prune", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_prune_a.out"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "sleep 2"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/prune/b.nb"
+args = ["--preflight", "off", "--run-gate", "none", "--profile", "fast", "--disk-cache", "on", "--disk-cache-ttl-sec", "1", "--disk-cache-prune", "--disk-cache-dir", "work/dcache_prune", "--cache-report", "on", "--cache-report-format", "json", "-o", "artifacts/dcache_prune_b.out"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"disk_expired\":1",
+  "\"disk_misses\":1"
+]

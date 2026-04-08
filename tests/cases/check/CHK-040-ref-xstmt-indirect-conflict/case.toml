@@ -1,0 +1,15 @@
+id = "CHK-040-ref-xstmt-indirect-conflict"
+suite = "check"
+command = "check"
+source = "fixtures/ref_xstmt_indirect_conflict.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T093"
+
+[[forbid_diag]]
+code = "NBL-T094"
+
+[[forbid_diag]]
+code = "NBL-T095"

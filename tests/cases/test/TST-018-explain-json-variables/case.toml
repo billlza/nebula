@@ -1,0 +1,7 @@
+id = "TST-018-explain-json-variables"
+suite = "test"
+command = "explain"
+source = "fixtures/project_demo"
+args = ["--format", "json", "--file", "fixtures/project_demo/src/main.nb", "--symbol", "msg"]
+expect_rc = 0
+expect_stdout_contains = ['"variables":[', '"function":"project-demo::app.main::main"', '"name":"msg"']

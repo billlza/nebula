@@ -1,0 +1,6 @@
+id = "CHK-010-field-write-ok"
+suite = "check"
+command = "check"
+source = "fixtures/field_write_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

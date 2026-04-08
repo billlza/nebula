@@ -1,0 +1,13 @@
+struct Counter {
+  v: Int
+}
+
+fn Counter_merge(ref self: Counter, ref other: Counter) -> Int {
+  self.v = self.v + other.v
+  return self.v
+}
+
+fn ref_alias_method_self() -> Int {
+  let c = Counter(1)
+  return c.merge(c)
+}

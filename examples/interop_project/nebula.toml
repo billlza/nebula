@@ -1,0 +1,3 @@
+name = "interop-project"
+entry = "src/main.nb"
+host_cxx = ["host.cpp"]

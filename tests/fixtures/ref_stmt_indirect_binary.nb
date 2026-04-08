@@ -1,0 +1,13 @@
+fn id(v: Int) -> Int {
+  return v
+}
+
+fn use(ref a: Int, b: Int) -> Int {
+  return a + b
+}
+
+fn ref_stmt_indirect_binary() -> Int {
+  let x = 1
+  let f = use
+  return f(x, id(x))
+}

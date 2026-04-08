@@ -1,0 +1,7 @@
+id = "CHK-086-invalid-cache-report-format-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--cache-report-format", "yaml"]
+expect_rc = 2
+expect_stdout_contains = ["invalid --cache-report-format value: yaml"]

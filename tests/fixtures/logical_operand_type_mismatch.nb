@@ -1,0 +1,4 @@
+fn bad() -> Bool {
+  return 1 && true
+}
+

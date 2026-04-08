@@ -1,0 +1,7 @@
+id = "CHK-121-octal-integer-literals-invalid-digit"
+suite = "check"
+command = "check"
+source = "fixtures/octal_integer_literals_invalid_digit.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_substrings = ["invalid digit in numeric literal"]

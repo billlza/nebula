@@ -1,0 +1,10 @@
+id = "CHK-156-if-condition-bool-required"
+suite = "check"
+command = "check"
+source = "fixtures/if_condition_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T042"
+

@@ -1,0 +1,15 @@
+id = "CHK-092-json-grouped-root-cause-v2-structure"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--mode", "release", "--diag-format", "json", "--diag-view", "grouped", "--max-root-causes", "1"]
+expect_rc = 0
+expect_stdout_contains = [
+  '"root_cause_v2_enabled":true',
+  '"top_root_cause_count":1',
+  '"top_root_candidate_count":1',
+  '"covered_derived_total":0',
+  '"top_root_causes": [',
+  '"fix_order": ["rc1"]',
+  '"why_selected":"risk-priority-and-causal-coverage"'
+]

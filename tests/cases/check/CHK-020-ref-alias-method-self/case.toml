@@ -1,0 +1,21 @@
+id = "CHK-020-ref-alias-method-self"
+suite = "check"
+command = "check"
+source = "fixtures/ref_alias_method_self.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T090"
+severity = "error"
+category = "typecheck"
+risk = "high"
+
+[[forbid_diag]]
+code = "NBL-T093"
+
+[[forbid_diag]]
+code = "NBL-T094"
+
+[[forbid_diag]]
+code = "NBL-T095"

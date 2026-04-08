@@ -1,0 +1,6 @@
+id = "CHK-112-for-range-operators-ok"
+suite = "check"
+command = "check"
+source = "fixtures/for_range_operators_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0

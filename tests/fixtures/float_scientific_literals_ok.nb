@@ -1,0 +1,7 @@
+fn main() -> Float {
+  let a = 1e3
+  let b = 6.02e2
+  let c = 1_2.5_0e1_1
+  let d = 1e-2
+  return a + b + c + d
+}

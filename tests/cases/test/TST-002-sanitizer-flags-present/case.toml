@@ -1,0 +1,14 @@
+id = "TST-002-sanitizer-flags-present"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/testdir && cp fixtures/smoke.nb work/testdir/smoke.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--diag-format", "json", "--dir", "work/testdir"]
+expect_rc = 0
+expect_stdout_contains = ["-fsanitize=address,undefined"]

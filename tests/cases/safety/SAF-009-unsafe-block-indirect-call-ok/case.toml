@@ -1,0 +1,9 @@
+id = "SAF-009-unsafe-block-indirect-call-ok"
+suite = "safety"
+command = "check"
+source = "fixtures/unsafe_indirect_call_in_block.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-U001"

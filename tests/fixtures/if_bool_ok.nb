@@ -1,0 +1,8 @@
+fn decide(x: Int) -> Bool {
+  if (x < 10) && !false {
+    return true
+  } else {
+    return false
+  }
+}
+

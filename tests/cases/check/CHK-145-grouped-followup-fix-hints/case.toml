@@ -1,0 +1,9 @@
+id = "CHK-145-grouped-followup-fix-hints"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_regex = [
+  '"code":"NBL-R001"[^\n]*"followup_fix_hints":\[\{"code":"NBL-P010","hint":"prefer unique ownership in hot path and share only at boundaries"\},\{"code":"NBL-X003","hint":"if ownership is truly shared, keep as-is and document boundary intent"\}\]'
+]

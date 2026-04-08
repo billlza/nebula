@@ -1,0 +1,9 @@
+struct Box {
+  v: Int
+}
+
+fn field_read_ok() -> Int {
+  let b = Box(7)
+  let x = b.v
+  return x
+}

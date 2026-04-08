@@ -1,0 +1,5 @@
+module util
+
+fn bad() -> Int {
+  return true
+}

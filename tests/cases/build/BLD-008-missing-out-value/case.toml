@@ -1,0 +1,7 @@
+id = "BLD-008-missing-out-value"
+suite = "build"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["-o"]
+expect_rc = 2
+expect_stdout_contains = ["missing value for -o/--out"]

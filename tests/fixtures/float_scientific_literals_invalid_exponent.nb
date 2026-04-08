@@ -1,0 +1,4 @@
+fn main() -> Float {
+  let broken = 1e+
+  return broken
+}

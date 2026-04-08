@@ -1,0 +1,32 @@
+id = "BEN-007-workspace-bench-uses-project-graph"
+suite = "bench"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/wsbench')\n(root / 'app' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'lib' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[workspace]\\nmembers = [\"app\", \"lib\"]\\n', encoding='utf-8')\n(root / 'app' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nlib = \"0.1.0\"\\n', encoding='utf-8')\n(root / 'lib' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"lib\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'app' / 'src' / 'main.nb').write_text('module main\\nimport lib::lib\\n\\nfn main() -> Void {\\n  ping()\\n}\\n', encoding='utf-8')\n(root / 'lib' / 'src' / 'lib.nb').write_text('module lib\\n\\nfn ping() -> Void {\\n  let x = 1 + 2\\n}\\n\\n@bench\\nfn bench_lib() -> Void {\\n  ping()\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/wsbench"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "bench"
+args = ["--diag-format", "json", "--dir", "work/wsbench"]
+expect_rc = 0
+expect_stdout_regex = ["NEBULA_BENCH warmup_iterations=.* measure_iterations=.* samples=.* p50_ms=.* p90_ms=.* p99_ms=.* mean_ms=.* stddev_ms=.* throughput_ops_s=.* clock=.* platform=.* perf_capability=.* perf_counters=.* perf_reason=.*"]
+
+[[steps]]
+kind = "nebula"
+command = "bench"
+args = ["--diag-format", "json", "--dir", "work/wsbench/app"]
+expect_rc = 0
+expect_stdout_regex = ["NEBULA_BENCH warmup_iterations=.* measure_iterations=.* samples=.* p50_ms=.* p90_ms=.* p99_ms=.* mean_ms=.* stddev_ms=.* throughput_ops_s=.* clock=.* platform=.* perf_capability=.* perf_counters=.* perf_reason=.*"]
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'file,warmup_iterations,measure_iterations,samples,p50_ms,p90_ms,p99_ms,mean_ms,stddev_ms,throughput_ops_s,clock,platform,perf_capability,perf_counters,perf_reason' benchmark_results/latency.csv && tail -n 1 benchmark_results/latency.csv | grep -E ',steady_clock,[^,]+-[^,]+,unsupported,unsupported,not_implemented$'"
+expect_rc = 0

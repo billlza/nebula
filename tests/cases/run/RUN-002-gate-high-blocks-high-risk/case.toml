@@ -1,0 +1,12 @@
+id = "RUN-002-gate-high-blocks-high-risk"
+suite = "run"
+command = "run"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-format", "json", "--run-gate", "high"]
+expect_rc = 1
+expect_stdout_contains = ["run blocked by preflight gate"]
+
+[[expect_diag]]
+code = "NBL-P010"
+stage = "preflight"
+risk = "high"

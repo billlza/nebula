@@ -1,0 +1,13 @@
+id = "CHK-035-ref-self-whole-still-conflict"
+suite = "check"
+command = "check"
+source = "fixtures/ref_self_whole_still_conflict.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T092"
+severity = "error"
+category = "typecheck"
+risk = "high"

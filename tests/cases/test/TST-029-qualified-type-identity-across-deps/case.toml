@@ -1,0 +1,20 @@
+id = "TST-029-qualified-type-identity-across-deps"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/qualified_types')\nfor path in [root / 'dep_a' / 'src', root / 'dep_b' / 'src', root / 'app' / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(root / 'dep_a' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-a\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'dep_b' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-b\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'app' / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"app\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\na = { path = \"../dep_a\" }\\nb = { path = \"../dep_b\" }\\n', encoding='utf-8')\n(root / 'dep_a' / 'src' / 'lib.nb').write_text('module lib\\n\\nstruct Foo {\\n  value: Int\\n}\\n\\nfn make_a() -> Foo {\\n  return Foo(1)\\n}\\n\\nfn read_a(x: Foo) -> Int {\\n  return x.value\\n}\\n', encoding='utf-8')\n(root / 'dep_b' / 'src' / 'lib.nb').write_text('module lib\\n\\nstruct Foo {\\n  value: Int\\n}\\n\\nfn make_b() -> Foo {\\n  return Foo(2)\\n}\\n\\nfn read_b(x: Foo) -> Int {\\n  return x.value\\n}\\n', encoding='utf-8')\n(root / 'app' / 'src' / 'main.nb').write_text('module main\\nimport a::lib\\nimport b::lib\\n\\nfn main() -> Void {\\n  expect_eq(read_a(make_a()) + read_b(make_b()), 3)\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/qualified_types/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/qualified_types/app"
+args = ["--run-gate", "none"]
+expect_rc = 0

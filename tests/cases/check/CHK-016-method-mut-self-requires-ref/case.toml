@@ -1,0 +1,12 @@
+id = "CHK-016-method-mut-self-requires-ref"
+suite = "check"
+command = "check"
+source = "fixtures/method_mut_self_requires_ref.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T085"
+severity = "error"
+category = "typecheck"
+risk = "high"

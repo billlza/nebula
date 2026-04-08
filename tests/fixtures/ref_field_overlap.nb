@@ -1,0 +1,13 @@
+struct Box {
+  v: Int
+}
+
+fn touch(ref b: Box, x: Int) -> Int {
+  b.v = b.v + x
+  return b.v
+}
+
+fn ref_field_overlap() -> Int {
+  let b = Box(1)
+  return touch(b, b.v)
+}

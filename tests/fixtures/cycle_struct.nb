@@ -1,0 +1,7 @@
+struct Node {
+  next: Node
+}
+
+fn noop() -> Void {
+  let x = 1
+}

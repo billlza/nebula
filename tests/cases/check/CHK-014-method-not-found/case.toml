@@ -1,0 +1,12 @@
+id = "CHK-014-method-not-found"
+suite = "check"
+command = "check"
+source = "fixtures/method_not_found.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T084"
+severity = "error"
+category = "typecheck"
+risk = "high"

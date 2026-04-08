@@ -1,0 +1,15 @@
+struct Foo {
+  a: Int
+}
+
+fn passthrough(v: Foo) -> Foo {
+  return v
+}
+
+fn call_escape_only() -> Int {
+  region R {
+    let x = Foo(1)
+    passthrough(x)
+    return 0
+  }
+}

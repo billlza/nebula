@@ -1,0 +1,11 @@
+struct Foo {
+  a: Int
+}
+
+fn escaped_alias_chain_unique() -> Foo {
+  region R {
+    let x = Foo(1)
+    let y = x
+    return y
+  }
+}

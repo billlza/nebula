@@ -1,0 +1,9 @@
+module app.main
+import app.util
+extern fn print(msg: String) -> Void
+
+fn main() -> Void {
+  let msg = greet(1 < 2)
+  print(msg)
+}
+

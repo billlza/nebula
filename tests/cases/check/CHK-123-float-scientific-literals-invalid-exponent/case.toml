@@ -1,0 +1,7 @@
+id = "CHK-123-float-scientific-literals-invalid-exponent"
+suite = "check"
+command = "check"
+source = "fixtures/float_scientific_literals_invalid_exponent.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["expected digit in numeric literal"]

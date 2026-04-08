@@ -1,0 +1,9 @@
+id = "CHK-148-grouped-epistemic-priority-chain"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_regex = [
+  "\\\"code\\\":\\\"NBL-R001\\\"[^\\n]*\\\"followup_codes\\\":\\[\\\"NBL-P010\\\",\\\"NBL-X003\\\"\\][^\\n]*\\\"priority_epistemic_reason\\\":\\\"owner-inference-min-loop\\\"[^\\n]*\\\"priority_epistemic_boost\\\":4[^\\n]*\\\"priority_epistemic_action\\\":\\\"close owner root cause first, then validate P010/X003 hot-path evidence in order\\\"[^\\n]*\\\"machine_owner_reason_breakdown\\\":\\[\\{\\\"name\\\":\\\"alias-fanout\\\",\\\"count\\\":1\\}\\]"
+]

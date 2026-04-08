@@ -1,0 +1,14 @@
+id = "CHK-128-region-escape-machine-reason-field"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_field.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_reason = "field"
+machine_subreason = "field-write-base-escape"
+machine_detail = "field/field-write-base-escape"
+machine_owner = "heap-unique"
+machine_owner_reason = "single-owner-flow"

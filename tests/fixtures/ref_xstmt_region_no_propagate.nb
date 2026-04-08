@@ -1,0 +1,13 @@
+fn bump(ref x: Int) -> Int {
+  x = x + 1
+  return x
+}
+
+fn ref_xstmt_region_no_propagate() -> Int {
+  let x = 1
+  let f = bump
+  region R {
+    let y = f(x)
+  }
+  return x
+}

@@ -1,0 +1,9 @@
+id = "CHK-006-callable-type-parse-json"
+suite = "check"
+command = "check"
+source = "fixtures/safe_callback_param_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T050"

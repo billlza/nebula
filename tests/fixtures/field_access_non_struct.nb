@@ -1,0 +1,4 @@
+fn field_access_non_struct() -> Int {
+  let x = 1
+  return x.v
+}

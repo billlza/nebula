@@ -1,0 +1,21 @@
+id = "TST-015-cross-stage-baseline-grouped-threshold-fail"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_REPO_ROOT/scripts/run_cross_stage_baseline.sh\" \"$NEBULA_BINARY\" fixtures/smoke.nb work/baseline_grouped_fail --perf-current fixtures/perf/current_perf_grouped_signals_regressed.json --perf-baseline fixtures/perf/baseline_perf_grouped_signals.json --perf-diff-json work/baseline_grouped_fail/perf_diff.json --perf-diff-md work/baseline_grouped_fail/perf_diff.md --perf-fail-on-regression on --max-total-regression-pct 100 --max-suite-regression-pct 100 --max-case-regression-ms 1000 --max-cross-stage-reused-drop 100 --max-cross-stage-saved-ms-drop 1000 --max-disk-hit-drop 100 --max-disk-miss-increase 100 --max-disk-eviction-increase 100 --max-grouping-total-ms-increase 100 --max-grouping-budget-fallback-increase 1"
+expect_rc = 1
+expect_stdout_contains = [
+  "perf-baseline-diff: status=fail fail_on_regression=on shared_cases=3",
+  "regression-reasons:",
+  "- grouping_total_ms_increase 240 exceeds threshold 100",
+  "- grouping_budget_fallback_increase 3 exceeds threshold 1",
+  "wrote-json: work/baseline_grouped_fail/perf_diff.json",
+  "wrote-md: work/baseline_grouped_fail/perf_diff.md"
+]
+must_exist = [
+  "work/baseline_grouped_fail/cross_stage_reuse_baseline.csv",
+  "work/baseline_grouped_fail/cross_stage_reuse_baseline.json",
+  "work/baseline_grouped_fail/perf_diff.json",
+  "work/baseline_grouped_fail/perf_diff.md"
+]

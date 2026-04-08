@@ -1,0 +1,25 @@
+struct Box {
+  v: Int
+}
+
+fn sink(ref b: Box) -> Int {
+  b.v = b.v + 1
+  return b.v
+}
+
+fn a(ref b: Box) -> Box {
+  return b_step(b)
+}
+
+fn b_step(ref b: Box) -> Box {
+  let f = sink
+  f = sink
+  let t = f(b)
+  return a(b)
+}
+
+fn ref_scc_mutual_summary_unknown() -> Int {
+  let b = Box(1)
+  let out = a(b)
+  return b.v + out.v
+}

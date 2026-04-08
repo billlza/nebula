@@ -1,0 +1,7 @@
+module app.a
+import app.b
+
+fn run() -> Int {
+  return bounce()
+}
+

@@ -1,0 +1,13 @@
+id = "CHK-119-base-integer-literals-invalid-digit"
+suite = "check"
+command = "check"
+source = "fixtures/base_integer_literals_invalid_digit.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["invalid digit in numeric literal"]
+
+[[expect_diag]]
+code = "NBL-PAR900"
+severity = "error"
+category = "parser"
+risk = "high"

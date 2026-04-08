@@ -1,0 +1,7 @@
+id = "BLD-001-build-produces-artifact"
+suite = "build"
+command = "build"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+must_exist = ["generated_cpp/smoke.out", "generated_cpp/smoke.out.nebmeta"]

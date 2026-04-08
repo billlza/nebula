@@ -1,0 +1,13 @@
+id = "CHK-133-grouped-fix-priority-chain-summary"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_alias.nb"
+args = ["--mode", "release", "--profile", "deep", "--diag-format", "json", "--diag-view", "grouped"]
+expect_rc = 0
+expect_stdout_contains = [
+  "\"code\":\"NBL-P010\"",
+  "\"code\":\"NBL-X003\"",
+  "\"followup_count\":1",
+  "\"followup_codes\":[\"NBL-X003\"]",
+  "\"priority_chain_summary\":\"NBL-P010->NBL-X003\""
+]

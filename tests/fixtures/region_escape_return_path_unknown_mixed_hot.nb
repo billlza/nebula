@@ -1,0 +1,20 @@
+struct Foo {
+  a: Int
+}
+
+fn relay_a(x: Foo) -> Foo {
+  return relay_b(x)
+}
+
+fn relay_b(x: Foo) -> Foo {
+  return relay_a(x)
+}
+
+@hot
+fn region_escape_return_path_unknown_mixed_hot(f: Fn(Foo) -> Foo) -> Foo {
+  region R {
+    let x = Foo(1)
+    return relay_a(x)
+    return f(x)
+  }
+}

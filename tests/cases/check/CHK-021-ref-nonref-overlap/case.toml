@@ -1,0 +1,12 @@
+id = "CHK-021-ref-nonref-overlap"
+suite = "check"
+command = "check"
+source = "fixtures/ref_nonref_overlap.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T091"
+severity = "error"
+category = "typecheck"
+risk = "high"

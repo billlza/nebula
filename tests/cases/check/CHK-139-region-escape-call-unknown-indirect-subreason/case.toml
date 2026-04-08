@@ -1,0 +1,14 @@
+id = "CHK-139-region-escape-call-unknown-indirect-subreason"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape_call_unknown_indirect.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_reason = "call"
+machine_subreason = "callee-param-escape-unknown-indirect-unresolved"
+machine_detail = "call/callee-param-escape-unknown-indirect-unresolved"
+machine_owner = "heap-unique"
+machine_owner_reason = "single-owner-flow"

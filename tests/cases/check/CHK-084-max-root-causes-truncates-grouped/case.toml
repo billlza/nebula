@@ -1,0 +1,11 @@
+id = "CHK-084-max-root-causes-truncates-grouped"
+suite = "check"
+command = "check"
+source = "fixtures/hot_loop.nb"
+args = ["--diag-view", "grouped", "--max-root-causes", "2"]
+expect_rc = 0
+expect_stdout_contains = [
+  "diag-summary: roots=2 derived=1",
+  "max-root-causes=2 truncated-roots=1",
+  "note: root-cause list truncated by --max-root-causes=2"
+]

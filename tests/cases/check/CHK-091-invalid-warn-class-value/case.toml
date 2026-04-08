@@ -1,0 +1,7 @@
+id = "CHK-091-invalid-warn-class-value"
+suite = "check"
+command = "check"
+source = "fixtures/smoke.nb"
+args = ["--warn-class", "api=maybe"]
+expect_rc = 2
+expect_stdout_contains = ["invalid --warn-class value: api=maybe"]
