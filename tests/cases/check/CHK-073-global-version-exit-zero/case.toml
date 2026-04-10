@@ -1,6 +1,7 @@
 id = "CHK-073-global-version-exit-zero"
 suite = "check"
-command = "--version"
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\") && out=\"$($NEBULA_BINARY --version 2>&1)\" && printf '%s\n' \"$out\" && test \"$(printf '%s' \"$out\" | tr -d '\\r\\n')\" = \"nebula v$version\" && ! printf '%s\n' \"$out\" | grep -F 'USAGE:' >/dev/null"
 expect_rc = 0
-expect_stdout_contains = ["nebula v1.0.0"]
-forbid_stdout_contains = ["USAGE:"]

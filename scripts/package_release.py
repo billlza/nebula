@@ -4,11 +4,20 @@ from __future__ import annotations
 import argparse
 import shutil
 import stat
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
 
-from release_lib import archive_name, ensure_supported_target, read_repo_version, repo_root_from, staging_dir_name
+from release_lib import (
+    archive_name,
+    bundle_windows_runtime_deps,
+    ensure_supported_target,
+    find_cmake_build_dir,
+    read_repo_version,
+    repo_root_from,
+    staging_dir_name,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,21 +40,22 @@ def main() -> int:
     version = read_repo_version(repo_root)
     target = ensure_supported_target(args.target)
     binary = Path(args.binary).resolve()
+    build_dir = find_cmake_build_dir(binary)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     stage_root = output_dir / staging_dir_name(version, target)
     if stage_root.exists():
         shutil.rmtree(stage_root)
-    (stage_root / "bin").mkdir(parents=True, exist_ok=True)
+    subprocess.run(["cmake", "--install", str(build_dir), "--prefix", str(stage_root)], check=True)
 
     staged_binary = stage_root / "bin" / target.binary_name
-    shutil.copy2(binary, staged_binary)
+    if not staged_binary.exists():
+        raise SystemExit(f"installed release tree missing binary: {staged_binary}")
     if target.platform != "windows":
         make_executable(staged_binary)
-
-    for rel_path in ["LICENSE", "README.md", "CHANGELOG.md", "VERSION"]:
-        shutil.copy2(repo_root / rel_path, stage_root / rel_path)
+    else:
+        bundle_windows_runtime_deps(binary, stage_root / "bin")
 
     archive_path = output_dir / archive_name(version, target)
     if archive_path.exists():

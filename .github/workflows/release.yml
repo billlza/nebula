@@ -104,15 +104,20 @@ jobs:
 
       - name: Package Release Asset
         if: matrix.shell_kind == 'unix'
+        run: python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
+
+      - name: Unix Release Smoke
+        if: matrix.shell_kind == 'unix'
         run: |
-          python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
-          asset="dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}"
-          mkdir -p smoke
-          tar -xzf "$asset" -C smoke
-          smoke_bin="smoke/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}/bin/nebula"
-          "$smoke_bin" --version
-          "$smoke_bin" new smoke-app
-          "$smoke_bin" run smoke-app --run-gate none
+          asset="$PWD/dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}"
+          smoke_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nebula-release-smoke.XXXXXX")"
+          install_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nebula-install-smoke.XXXXXX")"
+          tar -xzf "$asset" -C "$smoke_root"
+          bundle_root="$smoke_root/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}"
+          archive_project="$smoke_root/archive-project"
+          "$bundle_root/bin/nebula" --version
+          "$bundle_root/bin/nebula" new "$archive_project"
+          (cd "$smoke_root" && "$bundle_root/bin/nebula" run "$archive_project" --run-gate none)
           python3 - <<'PY'
           import hashlib
           from pathlib import Path
@@ -123,8 +128,12 @@ jobs:
                   h.update(chunk)
           (asset.parent / "SHA256SUMS.txt").write_text(f"{h.hexdigest()}  {asset.name}\n", encoding="utf-8")
           PY
-          bash scripts/install.sh --version ${{ needs.meta.outputs.version }} --prefix "$PWD/install-root" --base-url "$PWD/dist"
-          "$PWD/install-root/bin/nebula" --version
+          bash scripts/install.sh --version ${{ needs.meta.outputs.version }} --prefix "$install_root/prefix" --base-url "$PWD/dist"
+          installed_bin="$install_root/prefix/bin/nebula"
+          install_project="$install_root/install-project"
+          "$installed_bin" --version
+          "$installed_bin" new "$install_project"
+          (cd "$install_root" && "$installed_bin" run "$install_project" --run-gate none)
 
       - name: Configure (MSYS2)
         if: matrix.shell_kind == 'msys2'
@@ -144,34 +153,50 @@ jobs:
       - name: Package Release Asset (MSYS2)
         if: matrix.shell_kind == 'msys2'
         shell: msys2 {0}
-        run: |
-          python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
-          python3 - <<'PY'
-          import shutil
-          from pathlib import Path
-          version = Path("VERSION").read_text(encoding="utf-8").strip()
-          archive = Path(f"dist/nebula-v{version}-windows-x86_64.zip")
-          extract = Path("smoke")
-          shutil.unpack_archive(str(archive), str(extract), "zip")
-          binary = extract / f"nebula-v{version}-windows-x86_64" / "bin" / "nebula.exe"
-          print(binary)
-          PY
+        run: python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
 
       - name: Windows Release Smoke
         if: matrix.shell_kind == 'msys2'
         shell: pwsh
         run: |
           $version = (Get-Content -Path VERSION -Raw).Trim()
-          $asset = "dist/nebula-v${version}-windows-x86_64.zip"
-          Expand-Archive -Path $asset -DestinationPath smoke -Force
-          $binary = "smoke/nebula-v${version}-windows-x86_64/bin/nebula.exe"
+          $asset = Join-Path $PWD "dist/nebula-v${version}-windows-x86_64.zip"
+          $clang = (Get-Command clang++.exe).Source
+          $clangDir = Split-Path -Parent $clang
+          $systemPaths = @(
+            (Join-Path $env:SystemRoot "System32"),
+            (Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0"),
+            $env:SystemRoot
+          )
+          $smokeRoot = Join-Path $env:RUNNER_TEMP ("nebula-release-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+          $installRoot = Join-Path $env:RUNNER_TEMP ("nebula-install-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
+          Expand-Archive -Path $asset -DestinationPath $smokeRoot -Force
+          $bundleRoot = Join-Path $smokeRoot "nebula-v${version}-windows-x86_64"
+          $bundleBin = Join-Path $bundleRoot "bin"
+          $binary = Join-Path $bundleBin "nebula.exe"
+          $env:PATH = (($systemPaths + $bundleBin) | Where-Object { $_ }) -join ';'
           & $binary --version
-          & $binary new smoke-app
-          & $binary run smoke-app --run-gate none
+          $archiveProject = Join-Path $smokeRoot "archive-project"
+          & $binary new $archiveProject
+          $env:CXX = $clang
+          $env:PATH = (($systemPaths + $bundleBin + $clangDir) | Where-Object { $_ }) -join ';'
+          Push-Location $smokeRoot
+          & $binary run $archiveProject --run-gate none
+          Pop-Location
           $sha = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -Path dist/SHA256SUMS.txt -Value "$sha  nebula-v${version}-windows-x86_64.zip"
-          ./scripts/install.ps1 -Version $version -InstallPrefix "$PWD/install-root" -BaseUrl "$PWD/dist"
-          & "$PWD/install-root/bin/nebula.exe" --version
+          Set-Content -Path (Join-Path $PWD "dist/SHA256SUMS.txt") -Value "$sha  nebula-v${version}-windows-x86_64.zip"
+          ./scripts/install.ps1 -Version $version -InstallPrefix (Join-Path $installRoot "prefix") -BaseUrl (Join-Path $PWD "dist")
+          $installedBin = Join-Path $installRoot "prefix/bin/nebula.exe"
+          $env:PATH = (($systemPaths + (Join-Path $installRoot "prefix/bin")) | Where-Object { $_ }) -join ';'
+          & $installedBin --version
+          $installProject = Join-Path $installRoot "install-project"
+          & $installedBin new $installProject
+          $env:CXX = $clang
+          $env:PATH = (($systemPaths + (Join-Path $installRoot "prefix/bin") + $clangDir) | Where-Object { $_ }) -join ';'
+          Push-Location $installRoot
+          & $installedBin run $installProject --run-gate none
+          Pop-Location
 
       - name: Upload Release Asset
         uses: actions/upload-artifact@v4
@@ -206,7 +231,7 @@ jobs:
           python3 scripts/render_homebrew_formula.py \
             --artifact-dir dist \
             --output dist/nebula.rb \
-            --url-base "https://github.com/${{ github.repository }}/releases/download/v${{ needs.meta.outputs.version }}"
+            --url-base "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}"
 
       - name: Generate Checksums and Release Manifest
         run: |
@@ -214,7 +239,7 @@ jobs:
             --artifact-dir dist \
             --checksums-out dist/SHA256SUMS.txt \
             --manifest-out dist/release-manifest.json \
-            --base-url "https://github.com/${{ github.repository }}/releases/download/v${{ needs.meta.outputs.version }}" \
+            --base-url "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}" \
             --require-all on
 
       - name: Validate Required Release Files

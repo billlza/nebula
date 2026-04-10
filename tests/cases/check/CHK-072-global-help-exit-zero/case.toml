@@ -1,5 +1,7 @@
 id = "CHK-072-global-help-exit-zero"
 suite = "check"
-command = "--help"
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\") && out=\"$($NEBULA_BINARY --help 2>&1)\" && printf '%s\n' \"$out\" && printf '%s\n' \"$out\" | grep -F \"nebula v$version\" >/dev/null && printf '%s\n' \"$out\" | grep -F 'USAGE:' >/dev/null"
 expect_rc = 0
-expect_stdout_contains = ["nebula v1.0.0", "USAGE:"]

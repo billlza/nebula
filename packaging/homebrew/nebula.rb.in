@@ -18,14 +18,15 @@ class Nebula < Formula
   end
 
   def install
-    bin.install "bin/nebula"
-    prefix.install "LICENSE"
-    prefix.install "README.md"
-    prefix.install "CHANGELOG.md"
-    prefix.install "VERSION"
+    bin.install Dir["bin/*"]
+    include.install Dir["include/*"] if Dir.exist?("include")
+    share.install Dir["share/*"] if Dir.exist?("share")
   end
 
   test do
     assert_match "nebula v@VERSION@", shell_output("#{bin}/nebula --version")
+    system "#{bin}/nebula", "new", "homebrew-smoke"
+    output = shell_output("#{bin}/nebula run homebrew-smoke --run-gate none")
+    assert_match "Hello from Nebula", output
   end
 end

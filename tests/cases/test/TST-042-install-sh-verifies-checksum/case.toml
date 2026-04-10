@@ -13,7 +13,7 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "if [ -f work/install-checksum-skip.txt ]; then exit 0; fi\nbash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --version 1.0.0 --prefix \"$PWD/work/install-checksum-prefix\" --base-url \"$PWD/work/install_checksum\" > work/install-checksum.out 2>&1"
+run = "if [ -f work/install-checksum-skip.txt ]; then exit 0; fi\nversion=$(cat \"$NEBULA_REPO_ROOT/VERSION\")\nbash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --version \"$version\" --prefix \"$PWD/work/install-checksum-prefix\" --base-url \"$PWD/work/install_checksum\" > work/install-checksum.out 2>&1"
 expect_rc = 1
 
 [[steps]]

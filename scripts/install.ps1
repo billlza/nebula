@@ -88,14 +88,32 @@ try {
   Expand-Archive -Path $assetPath -DestinationPath $extractRoot -Force
   $payloadDir = Join-Path $extractRoot "nebula-v$Version-windows-x86_64"
   $binarySource = Join-Path $payloadDir "bin\nebula.exe"
+  $runtimeHeader = Join-Path $payloadDir "include\runtime\nebula_runtime.hpp"
   if (-not (Test-Path $binarySource)) {
     throw "extracted archive missing executable: $binarySource"
   }
+  if (-not (Test-Path $runtimeHeader)) {
+    throw "extracted archive missing runtime headers: $runtimeHeader"
+  }
 
+  New-Item -ItemType Directory -Path $InstallPrefix -Force | Out-Null
   $installBinDir = Join-Path $InstallPrefix "bin"
   New-Item -ItemType Directory -Path $installBinDir -Force | Out-Null
+  Copy-Item -Path (Join-Path $payloadDir "bin\*") -Destination $installBinDir -Recurse -Force
+
+  $installIncludeDir = Join-Path $InstallPrefix "include"
+  if (Test-Path (Join-Path $payloadDir "include")) {
+    New-Item -ItemType Directory -Path $installIncludeDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $payloadDir "include\*") -Destination $installIncludeDir -Recurse -Force
+  }
+
+  $installShareDir = Join-Path $InstallPrefix "share"
+  if (Test-Path (Join-Path $payloadDir "share")) {
+    New-Item -ItemType Directory -Path $installShareDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $payloadDir "share\*") -Destination $installShareDir -Recurse -Force
+  }
+
   $binaryDest = Join-Path $installBinDir "nebula.exe"
-  Copy-Item -Path $binarySource -Destination $binaryDest -Force
 
   Write-Host "Installed Nebula to $binaryDest"
   & $binaryDest --version

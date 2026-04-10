@@ -5,8 +5,8 @@ This document defines the release procedure for Nebula `1.0.x`.
 ## 1. Release branches
 
 - `release/1.0` is the stable patch line for `1.0.0`, `1.0.1`, and later `1.0.x` releases.
-- `main` carries forward-looking work and is bumped to `v1.1.0-dev` immediately after the
-  `v1.0.0` release is cut.
+- `main` carries forward-looking work and is bumped to the next planned version after each GA cut.
+  Prerelease values such as `1.1.0-dev` are allowed in `VERSION`.
 
 ## 2. Pre-release gates
 
@@ -22,20 +22,20 @@ Before tagging a release:
    - `nebula.rb`
 5. Release notes for the target version exist.
 
-## 3. 1.0.0 GA cut
+## 3. GA cut
 
-1. Branch from the release candidate state to `release/1.0`.
-2. Ensure `VERSION` is `1.0.0`.
-3. Tag the release commit as `v1.0.0`.
+1. Branch from the release candidate state to the matching release branch, for example `release/1.0`.
+2. Ensure `VERSION` matches the GA version being cut, for example `1.0.0`.
+3. Tag the release commit as `v<VERSION>`.
 4. Run the release workflow from the tag.
-5. Publish GitHub Release assets and notes from `RELEASE_NOTES_v1.0.0.md`.
+5. Publish GitHub Release assets and notes from `RELEASE_NOTES_v<VERSION>.md`.
 
-## 4. Post-1.0.0 step
+## 4. Post-GA step
 
-After `v1.0.0` is published:
+After `v<VERSION>` is published:
 
-1. Bump `main` version markers to `v1.1.0-dev`.
-2. Keep `release/1.0` at `1.0.0` until patch work is needed.
+1. Bump `main` version markers to the next planned version, for example `1.1.0-dev`.
+2. Keep the release branch at the released GA version until patch work is needed.
 
 ## 5. Patch releases (`1.0.1+`)
 

@@ -141,15 +141,34 @@ tar -xzf "$asset_path" -C "$extract_root"
 
 payload_dir="$extract_root/nebula-v${version}-${target}"
 binary_src="$payload_dir/bin/nebula"
+runtime_header="$payload_dir/include/runtime/nebula_runtime.hpp"
 if [[ ! -x "$binary_src" ]]; then
   echo "error: extracted archive missing executable: $binary_src" >&2
   exit 1
 fi
+if [[ ! -f "$runtime_header" ]]; then
+  echo "error: extracted archive missing runtime headers: $runtime_header" >&2
+  exit 1
+fi
+
+mkdir -p "$prefix"
 
 install_bin_dir="$prefix/bin"
 mkdir -p "$install_bin_dir"
-cp "$binary_src" "$install_bin_dir/nebula"
+cp -R "$payload_dir/bin/." "$install_bin_dir/"
 chmod +x "$install_bin_dir/nebula"
+
+if [[ -d "$payload_dir/include" ]]; then
+  install_include_dir="$prefix/include"
+  mkdir -p "$install_include_dir"
+  cp -R "$payload_dir/include/." "$install_include_dir/"
+fi
+
+if [[ -d "$payload_dir/share" ]]; then
+  install_share_dir="$prefix/share"
+  mkdir -p "$install_share_dir"
+  cp -R "$payload_dir/share/." "$install_share_dir/"
+fi
 
 echo "Installed Nebula to $install_bin_dir/nebula"
 "$install_bin_dir/nebula" --version

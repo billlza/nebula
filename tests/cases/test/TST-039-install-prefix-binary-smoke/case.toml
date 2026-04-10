@@ -3,35 +3,37 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "rm -rf work/install-root work/install-app"
+run = "rm -rf work/release_asset work/install-root work/install-app"
 expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "cmake --install \"$NEBULA_REPO_ROOT/build\" --prefix \"$PWD/work/install-root\""
-expect_rc = 0
-must_exist = [
-  "work/install-root/bin/nebula",
-  "work/install-root/share/doc/nebula/LICENSE",
-  "work/install-root/share/doc/nebula/VERSION",
-  "work/install-root/share/doc/nebula/CHANGELOG.md",
-  "work/install-root/share/doc/nebula/RELEASE_NOTES_v1.0.0.md",
-  "work/install-root/share/doc/nebula/RELEASE_PROCESS.md",
-]
-
-[[steps]]
-kind = "shell"
-run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\") && test \"$(work/install-root/bin/nebula --version | tr -d '\\r\\n')\" = \"nebula v$version\""
+run = "python3 - <<'PY'\nimport hashlib\nimport os\nimport platform\nimport subprocess\nfrom pathlib import Path\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nroot = Path('work/release_asset')\nroot.mkdir(parents=True, exist_ok=True)\nversion = (repo_root / 'VERSION').read_text(encoding='utf-8').strip()\nsystem = platform.system()\nmachine = platform.machine().lower()\nif system == 'Darwin' and machine in ('arm64', 'aarch64'):\n    target = 'darwin-arm64'\n    host_kind = 'unix'\n    binary_name = 'nebula'\nelif system == 'Darwin' and machine == 'x86_64':\n    target = 'darwin-x86_64'\n    host_kind = 'unix'\n    binary_name = 'nebula'\nelif system == 'Linux' and machine == 'x86_64':\n    target = 'linux-x86_64'\n    host_kind = 'unix'\n    binary_name = 'nebula'\nelif system.startswith('MSYS') or system.startswith('MINGW') or system == 'Windows':\n    target = 'windows-x86_64'\n    host_kind = 'windows'\n    binary_name = 'nebula.exe'\nelse:\n    raise SystemExit(f'unsupported host for install smoke test: {system}/{machine}')\nsubprocess.run([\n    'python3', str(repo_root / 'scripts' / 'package_release.py'),\n    '--binary', os.environ['NEBULA_BINARY'],\n    '--target', target,\n    '--output-dir', str(root),\n], check=True)\nasset = next(root.glob('nebula-v*.zip' if host_kind == 'windows' else 'nebula-v*.tar.gz'))\nh = hashlib.sha256()\nwith asset.open('rb') as fh:\n    for chunk in iter(lambda: fh.read(1024 * 1024), b''):\n        h.update(chunk)\n(root / 'SHA256SUMS.txt').write_text(f'{h.hexdigest()}  {asset.name}\\n', encoding='utf-8')\n(root / 'VERSION.txt').write_text(version + '\\n', encoding='utf-8')\n(root / 'HOST_KIND').write_text(host_kind + '\\n', encoding='utf-8')\n(root / 'BINARY_NAME').write_text(binary_name + '\\n', encoding='utf-8')\nPY"
 expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "work/install-root/bin/nebula new work/install-app"
+run = "version=$(cat work/release_asset/VERSION.txt) && kind=$(cat work/release_asset/HOST_KIND) && if [ \"$kind\" = windows ]; then prefix=$(cygpath -w \"$PWD/work/install-root\") && base=$(cygpath -w \"$PWD/work/release_asset\") && script=$(cygpath -w \"$NEBULA_REPO_ROOT/scripts/install.ps1\") && pwsh -File \"$script\" -Version \"$version\" -InstallPrefix \"$prefix\" -BaseUrl \"$base\"; else bash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --version \"$version\" --prefix \"$PWD/work/install-root\" --base-url \"$PWD/work/release_asset\"; fi"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat work/release_asset/VERSION.txt) && test -f work/install-root/include/runtime/nebula_runtime.hpp && test -f work/install-root/include/runtime/region_allocator.hpp && test -f work/install-root/share/doc/nebula/LICENSE && test -f work/install-root/share/doc/nebula/VERSION && test -f work/install-root/share/doc/nebula/CHANGELOG.md && test -f work/install-root/share/doc/nebula/RELEASE_PROCESS.md && notes=\"RELEASE_NOTES_v${version}.md\" && if [ -f \"$NEBULA_REPO_ROOT/$notes\" ]; then test -f \"work/install-root/share/doc/nebula/$notes\"; fi"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat work/release_asset/VERSION.txt) && bin=$(cat work/release_asset/BINARY_NAME) && test \"$(work/install-root/bin/$bin --version | tr -d '\\r\\n')\" = \"nebula v$version\""
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "bin=$(cat work/release_asset/BINARY_NAME) && work/install-root/bin/$bin new work/install-app"
 expect_rc = 0
 must_exist = ["work/install-app/nebula.toml", "work/install-app/src/main.nb"]
 
 [[steps]]
 kind = "shell"
-run = "work/install-root/bin/nebula run work/install-app --run-gate none"
+run = "bin=$(cat work/release_asset/BINARY_NAME) && (cd work && install-root/bin/$bin run install-app --run-gate none)"
 expect_rc = 0
 expect_stdout_contains = ["Hello from Nebula"]
