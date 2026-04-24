@@ -1,0 +1,11 @@
+id = "CHK-207-profile-system-forbids-std"
+suite = "check"
+command = "check"
+source = "fixtures/system_forbidden_std.nb"
+args = ["--profile", "system", "--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+severity = "error"
+stage = "build"

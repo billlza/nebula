@@ -1,0 +1,15 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn main() -> Int {
+  match missing {
+    Some(value) => {
+      return value
+    }
+    None => {
+      return 0
+    }
+  }
+}

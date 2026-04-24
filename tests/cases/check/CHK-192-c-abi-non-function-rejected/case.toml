@@ -1,0 +1,10 @@
+id = "CHK-192-c-abi-non-function-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_non_function.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T128"
+severity = "error"

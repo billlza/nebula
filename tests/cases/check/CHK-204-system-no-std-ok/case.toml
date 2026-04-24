@@ -1,0 +1,7 @@
+id = "CHK-204-system-no-std-ok"
+suite = "check"
+command = "check"
+source = "fixtures/system_no_std_ok.nb"
+args = ["--target", "system", "--diag-format", "json"]
+expect_rc = 0
+forbid_stdout_contains = ["NBL-CLI-SYSTEM-STD"]

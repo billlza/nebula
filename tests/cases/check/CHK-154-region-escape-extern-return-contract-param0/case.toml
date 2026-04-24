@@ -1,0 +1,15 @@
+id = "CHK-154-region-escape-extern-return-contract-param0"
+suite = "check"
+command = "check"
+source = "fixtures/extern_return_contract_param0.nb"
+args = ["--diag-format", "json", "--dump-ownership", "--profile", "fast"]
+expect_rc = 0
+expect_stdout_regex = ["v[0-9]+ x -> rep=Heap owner=Unique region=-"]
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_reason = "return"
+machine_subreason = "cross-function-return-path"
+machine_detail = "return/cross-function-return-path"
+machine_owner = "heap-unique"
+machine_owner_reason = "single-owner-flow"

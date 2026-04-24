@@ -1,5 +1,6 @@
 #include "passes/escape_analysis.hpp"
 
+#include "frontend/external_contract.hpp"
 #include "nir/cfg.hpp"
 
 #include <algorithm>
@@ -158,6 +159,12 @@ static DepSet eval_expr(const Expr& e,
           auto it = env.find(n.base_var);
           if (it == env.end()) return dep_none(nparams);
           return it->second;
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          return eval_expr(*n.base, env, summaries, call_resolution, escaped_params, nparams);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          return eval_expr(*n.subject, env, summaries, call_resolution, escaped_params, nparams);
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          return eval_expr(*n.subject, env, summaries, call_resolution, escaped_params, nparams);
         } else if constexpr (std::is_same_v<N, Expr::Construct>) {
           DepSet out = dep_none(nparams);
           for (const auto& a : n.args) {
@@ -173,6 +180,12 @@ static DepSet eval_expr(const Expr& e,
           return eval_expr(*n.inner, env, summaries, call_resolution, escaped_params, nparams);
         } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
           return eval_expr(*n.inner, env, summaries, call_resolution, escaped_params, nparams);
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          DepSet out = eval_expr(*n.subject, env, summaries, call_resolution, escaped_params, nparams);
+          for (const auto& arm : n.arms) {
+            out.join(eval_expr(*arm->value, env, summaries, call_resolution, escaped_params, nparams));
+          }
+          return out;
         } else if constexpr (std::is_same_v<N, Expr::Call>) {
           std::vector<DepSet> arg_deps;
           arg_deps.reserve(n.args.size());
@@ -255,7 +268,9 @@ static InternalFuncSummary analyze_function(
       std::visit(
           [&](auto&& st) {
             using S = std::decay_t<decltype(st)>;
-            if constexpr (std::is_same_v<S, Stmt::Let>) {
+            if constexpr (std::is_same_v<S, Stmt::Declare>) {
+              env_out.insert_or_assign(st.var, DepSet(nparams));
+            } else if constexpr (std::is_same_v<S, Stmt::Let>) {
               DepSet d =
                   eval_expr(*st.value, env_in, summaries, call_resolution, escaped_states, nparams);
               env_out.insert_or_assign(st.var, d);
@@ -279,6 +294,11 @@ static InternalFuncSummary analyze_function(
             } else if constexpr (std::is_same_v<S, Stmt::For>) {
               (void)eval_expr(*st.start, env_in, summaries, call_resolution, escaped_states, nparams);
               (void)eval_expr(*st.end, env_in, summaries, call_resolution, escaped_states, nparams);
+            } else if constexpr (std::is_same_v<S, Stmt::While>) {
+              (void)eval_expr(*st.cond, env_in, summaries, call_resolution, escaped_states, nparams);
+            } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                                 std::is_same_v<S, Stmt::Continue>) {
+              // no-op
             } else if constexpr (std::is_same_v<S, Stmt::Region> ||
                                  std::is_same_v<S, Stmt::Unsafe>) {
               // No explicit node in CFG for wrapper blocks.
@@ -355,6 +375,13 @@ static void collect_call_edges_expr(const Expr& e,
                                   index_by_name,
                                   out_edges,
                                   self_edge);
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          collect_call_edges_expr(*n.base,
+                                  caller_index,
+                                  resolution,
+                                  index_by_name,
+                                  out_edges,
+                                  self_edge);
         } else if constexpr (std::is_same_v<N, Expr::Unary>) {
           collect_call_edges_expr(*n.inner,
                                   caller_index,
@@ -364,6 +391,20 @@ static void collect_call_edges_expr(const Expr& e,
                                   self_edge);
         } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
           collect_call_edges_expr(*n.inner,
+                                  caller_index,
+                                  resolution,
+                                  index_by_name,
+                                  out_edges,
+                                  self_edge);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          collect_call_edges_expr(*n.subject,
+                                  caller_index,
+                                  resolution,
+                                  index_by_name,
+                                  out_edges,
+                                  self_edge);
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          collect_call_edges_expr(*n.subject,
                                   caller_index,
                                   resolution,
                                   index_by_name,
@@ -392,7 +433,8 @@ static void collect_call_edges_stmt(const Stmt& s,
   std::visit(
       [&](auto&& st) {
         using S = std::decay_t<decltype(st)>;
-        if constexpr (std::is_same_v<S, Stmt::Let>) {
+        if constexpr (std::is_same_v<S, Stmt::Declare>) {
+        } else if constexpr (std::is_same_v<S, Stmt::Let>) {
           collect_call_edges_expr(
               *st.value, caller_index, resolution, index_by_name, out_edges, self_edge);
         } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
@@ -423,6 +465,14 @@ static void collect_call_edges_stmt(const Stmt& s,
               *st.end, caller_index, resolution, index_by_name, out_edges, self_edge);
           collect_call_edges_block(
               st.body, caller_index, resolution, index_by_name, out_edges, self_edge);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          collect_call_edges_expr(
+              *st.cond, caller_index, resolution, index_by_name, out_edges, self_edge);
+          collect_call_edges_block(
+              st.body, caller_index, resolution, index_by_name, out_edges, self_edge);
+        } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                             std::is_same_v<S, Stmt::Continue>) {
+          // no-op
         } else if constexpr (std::is_same_v<S, Stmt::Region>) {
           collect_call_edges_block(
               st.body, caller_index, resolution, index_by_name, out_edges, self_edge);
@@ -451,6 +501,7 @@ static CallGraph build_call_graph(const nebula::nir::Program& p,
   for (const auto& item : p.items) {
     if (!std::holds_alternative<Function>(item.node)) continue;
     const auto& fn = std::get<Function>(item.node);
+    if (fn.is_extern) continue;
     const std::string identity = nebula::nir::function_identity(fn);
     graph.index_by_name.insert({identity, graph.names.size()});
     graph.names.push_back(identity);
@@ -586,6 +637,47 @@ static InternalFuncSummary make_unknown_summary(std::size_t nparams) {
   return out;
 }
 
+static InternalFuncSummary make_extern_summary(const Function& fn) {
+  const std::size_t nparams = fn.params.size();
+  const auto contract = nebula::frontend::parse_external_escape_contract(fn.annotations, nparams);
+  if (!contract.has_annotations || !contract.errors.empty()) {
+    return make_unknown_summary(nparams);
+  }
+
+  InternalFuncSummary out = make_unknown_summary(nparams);
+  if (contract.has_return_contract) {
+    out.return_depends_on_param.assign(nparams, 0);
+    if (!contract.returns_fresh) {
+      for (std::size_t i = 0; i < contract.return_depends_on_param.size(); ++i) {
+        out.return_depends_on_param[i] = contract.return_depends_on_param[i] ? 1 : 0;
+      }
+    }
+  }
+
+  for (std::size_t i = 0; i < contract.param_states.size(); ++i) {
+    switch (contract.param_states[i]) {
+    case nebula::frontend::ExternalEscapeState::Unspecified:
+      break;
+    case nebula::frontend::ExternalEscapeState::NoEscape:
+      out.param_escape[i] = EscapeState::KnownNoEscape;
+      break;
+    case nebula::frontend::ExternalEscapeState::MayEscape:
+      out.param_escape[i] = EscapeState::KnownMayEscape;
+      break;
+    case nebula::frontend::ExternalEscapeState::Unknown:
+      out.param_escape[i] = EscapeState::Unknown;
+      break;
+    }
+  }
+  return out;
+}
+
+static bool has_valid_extern_contract(const Function& fn) {
+  if (!fn.is_extern) return false;
+  const auto contract = nebula::frontend::parse_external_escape_contract(fn.annotations, fn.params.size());
+  return contract.has_annotations && contract.errors.empty();
+}
+
 static bool merge_summary(InternalFuncSummary& dst, const InternalFuncSummary& src) {
   bool changed = false;
   const std::size_t nret = std::min(dst.return_depends_on_param.size(), src.return_depends_on_param.size());
@@ -653,6 +745,12 @@ EscapeAnalysisResult run_escape_analysis(const nebula::nir::Program& p,
   internal.insert({"args_get", make_empty_summary(1)});
   for (std::size_t i = 0; i < graph.names.size(); ++i) {
     internal.insert({graph.names[i], make_empty_summary(graph.funcs[i].fn->params.size())});
+  }
+  for (const auto& item : p.items) {
+    if (!std::holds_alternative<Function>(item.node)) continue;
+    const auto& fn = std::get<Function>(item.node);
+    if (!has_valid_extern_contract(fn)) continue;
+    internal.insert({nebula::nir::function_identity(fn), make_extern_summary(fn)});
   }
 
   std::vector<std::size_t> scc_order = scc.topo_order;

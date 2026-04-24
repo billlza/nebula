@@ -1,0 +1,34 @@
+module bytes
+
+struct Bytes {}
+
+extern fn __nebula_rt_bytes_from_string(s: String) -> Bytes
+extern fn __nebula_rt_bytes_to_string(b: Bytes) -> String
+extern fn __nebula_rt_bytes_len(b: Bytes) -> Int
+extern fn __nebula_rt_bytes_is_empty(b: Bytes) -> Bool
+extern fn __nebula_rt_bytes_concat(lhs: Bytes, rhs: Bytes) -> Bytes
+extern fn __nebula_rt_bytes_equal(lhs: Bytes, rhs: Bytes) -> Bool
+
+fn from_string(s: String) -> Bytes {
+  return __nebula_rt_bytes_from_string(s)
+}
+
+fn to_string(b: Bytes) -> String {
+  return __nebula_rt_bytes_to_string(b)
+}
+
+fn len(b: Bytes) -> Int {
+  return __nebula_rt_bytes_len(b)
+}
+
+fn is_empty(b: Bytes) -> Bool {
+  return __nebula_rt_bytes_is_empty(b)
+}
+
+fn concat(lhs: Bytes, rhs: Bytes) -> Bytes {
+  return __nebula_rt_bytes_concat(lhs, rhs)
+}
+
+fn equal(lhs: Bytes, rhs: Bytes) -> Bool {
+  return __nebula_rt_bytes_equal(lhs, rhs)
+}

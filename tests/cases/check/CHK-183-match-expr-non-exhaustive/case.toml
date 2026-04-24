@@ -1,0 +1,10 @@
+id = "CHK-183-match-expr-non-exhaustive"
+suite = "check"
+command = "check"
+source = "fixtures/match_expr_non_exhaustive.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T114"
+severity = "error"

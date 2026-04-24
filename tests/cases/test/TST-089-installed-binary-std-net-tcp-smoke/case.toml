@@ -1,0 +1,28 @@
+id = "TST-089-installed-binary-std-net-tcp-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/release_asset work/install-root work/install-net-app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport hashlib\nimport os\nimport platform\nimport subprocess\nfrom pathlib import Path\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nroot = Path('work/release_asset')\nroot.mkdir(parents=True, exist_ok=True)\nversion = (repo_root / 'VERSION').read_text(encoding='utf-8').strip()\nsystem = platform.system()\nmachine = platform.machine().lower()\nif system == 'Darwin' and machine in ('arm64', 'aarch64'):\n    target = 'darwin-arm64'; host_kind = 'unix'; binary_name = 'nebula'\nelif system == 'Darwin' and machine == 'x86_64':\n    target = 'darwin-x86_64'; host_kind = 'unix'; binary_name = 'nebula'\nelif system == 'Linux' and machine == 'x86_64':\n    target = 'linux-x86_64'; host_kind = 'unix'; binary_name = 'nebula'\nelif system.startswith('MSYS') or system.startswith('MINGW') or system == 'Windows':\n    target = 'windows-x86_64'; host_kind = 'windows'; binary_name = 'nebula.exe'\nelse:\n    raise SystemExit(f'unsupported host for install smoke test: {system}/{machine}')\nsubprocess.run(['python3', str(repo_root / 'scripts' / 'package_release.py'), '--binary', os.environ['NEBULA_BINARY'], '--target', target, '--output-dir', str(root)], check=True)\nasset = next(root.glob('nebula-v*.zip' if host_kind == 'windows' else 'nebula-v*.tar.gz'))\nh = hashlib.sha256()\nwith asset.open('rb') as fh:\n    for chunk in iter(lambda: fh.read(1024 * 1024), b''):\n        h.update(chunk)\n(root / 'SHA256SUMS.txt').write_text(f'{h.hexdigest()}  {asset.name}\\n', encoding='utf-8')\n(root / 'VERSION.txt').write_text(version + '\\n', encoding='utf-8')\n(root / 'HOST_KIND').write_text(host_kind + '\\n', encoding='utf-8')\n(root / 'BINARY_NAME').write_text(binary_name + '\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat work/release_asset/VERSION.txt) && kind=$(cat work/release_asset/HOST_KIND) && if [ \"$kind\" = windows ]; then prefix=$(cygpath -w \"$PWD/work/install-root\") && base=$(cygpath -w \"$PWD/work/release_asset\") && script=$(cygpath -w \"$NEBULA_REPO_ROOT/scripts/install.ps1\") && pwsh -File \"$script\" -Version \"$version\" -InstallPrefix \"$prefix\" -BaseUrl \"$base\"; else bash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --version \"$version\" --prefix \"$PWD/work/install-root\" --base-url \"$PWD/work/release_asset\"; fi"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport socket\nfrom pathlib import Path\n\nwith socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:\n    sock.bind(('127.0.0.1', 0))\n    port = sock.getsockname()[1]\n\nroot = Path('work/install-net-app')\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"install-net\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'src' / 'server.nb').write_text('module server\\nimport std::bytes\\nimport std::net\\nimport std::result\\n\\nasync fn serve_once(listener: TcpListener) -> Void {\\n  match await listener.accept() {\\n    Ok(stream) => {\\n      match await stream.read(64) {\\n        Ok(bytes) => {\\n          match await stream.write_all(bytes) {\\n            Ok(_) => { stream.close() }\\n            Err(msg) => { print(msg) }\\n          }\\n        }\\n        Err(msg) => { print(msg) }\\n      }\\n    }\\n    Err(msg) => { print(msg) }\\n  }\\n}\\n', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text(f'module main\\nimport server\\nimport std::bytes\\nimport std::net\\nimport std::result\\nimport std::task\\nimport std::time\\n\\nasync fn main() -> Void {{\\n  match ipv4(\"127.0.0.1\", {port}) {{\\n    Ok(addr) => {{\\n      match await bind(addr) {{\\n        Ok(listener) => {{\\n          let task = spawn(serve_once(listener))\\n          await sleep(millis(1))\\n          match await connect(addr) {{\\n            Ok(stream) => {{\\n              let payload = from_string(\"hello\")\\n              match await stream.write_all(payload) {{\\n                Ok(_) => {{\\n                  match await stream.read(64) {{\\n                    Ok(bytes) => {{\\n                      if to_string(bytes) == \"hello\" {{\\n                        print(\"install-net-ok\")\\n                      }} else {{\\n                        print(\"install-net-bad\")\\n                      }}\\n                    }}\\n                    Err(msg) => {{ print(msg) }}\\n                  }}\\n                }}\\n                Err(msg) => {{ print(msg) }}\\n              }}\\n              stream.close()\\n              listener.close()\\n              await join(task)\\n            }}\\n            Err(msg) => {{ print(msg) }}\\n          }}\\n        }}\\n        Err(msg) => {{ print(msg) }}\\n      }}\\n    }}\\n    Err(msg) => {{ print(msg) }}\\n  }}\\n}}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "bin=$(cat work/release_asset/BINARY_NAME) && (cd work && install-root/bin/$bin run install-net-app --run-gate none)"
+expect_rc = 0
+expect_stdout_contains = ["install-net-ok"]

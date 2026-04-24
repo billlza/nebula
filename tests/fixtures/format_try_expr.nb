@@ -1,0 +1,12 @@
+enum Result<T, E>{
+Ok(T)
+Err(E)
+}
+
+fn make(v:Int)->Result<Int,String>{
+return Ok(v)
+}
+
+fn main()->Result<Int,String>{
+return make(1)?
+}

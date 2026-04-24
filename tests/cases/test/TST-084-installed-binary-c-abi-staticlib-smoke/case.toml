@@ -1,0 +1,48 @@
+id = "TST-084-installed-binary-c-abi-staticlib-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/release_asset work/install-root work/installed_cabi_app work/installed_cabi_out"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport hashlib\nimport os\nimport platform\nimport subprocess\nfrom pathlib import Path\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nroot = Path('work/release_asset')\nroot.mkdir(parents=True, exist_ok=True)\nversion = (repo_root / 'VERSION').read_text(encoding='utf-8').strip()\nsystem = platform.system()\nmachine = platform.machine().lower()\nif system == 'Darwin' and machine in ('arm64', 'aarch64'):\n    target = 'darwin-arm64'\n    host_kind = 'unix'\n    binary_name = 'nebula'\nelif system == 'Darwin' and machine == 'x86_64':\n    target = 'darwin-x86_64'\n    host_kind = 'unix'\n    binary_name = 'nebula'\nelif system == 'Linux' and machine == 'x86_64':\n    target = 'linux-x86_64'\n    host_kind = 'unix'\n    binary_name = 'nebula'\nelif system.startswith('MSYS') or system.startswith('MINGW') or system == 'Windows':\n    target = 'windows-x86_64'\n    host_kind = 'windows'\n    binary_name = 'nebula.exe'\nelse:\n    raise SystemExit(f'unsupported host for install smoke test: {system}/{machine}')\nsubprocess.run([\n    'python3', str(repo_root / 'scripts' / 'package_release.py'),\n    '--binary', os.environ['NEBULA_BINARY'],\n    '--target', target,\n    '--output-dir', str(root),\n], check=True)\nasset = next(root.glob('nebula-v*.zip' if host_kind == 'windows' else 'nebula-v*.tar.gz'))\nh = hashlib.sha256()\nwith asset.open('rb') as fh:\n    for chunk in iter(lambda: fh.read(1024 * 1024), b''):\n        h.update(chunk)\n(root / 'SHA256SUMS.txt').write_text(f'{h.hexdigest()}  {asset.name}\\n', encoding='utf-8')\n(root / 'VERSION.txt').write_text(version + '\\n', encoding='utf-8')\n(root / 'HOST_KIND').write_text(host_kind + '\\n', encoding='utf-8')\n(root / 'BINARY_NAME').write_text(binary_name + '\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "version=$(cat work/release_asset/VERSION.txt) && kind=$(cat work/release_asset/HOST_KIND) && if [ \"$kind\" = windows ]; then prefix=$(cygpath -w \"$PWD/work/install-root\") && base=$(cygpath -w \"$PWD/work/release_asset\") && script=$(cygpath -w \"$NEBULA_REPO_ROOT/scripts/install.ps1\") && pwsh -File \"$script\" -Version \"$version\" -InstallPrefix \"$prefix\" -BaseUrl \"$base\"; else bash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --version \"$version\" --prefix \"$PWD/work/install-root\" --base-url \"$PWD/work/release_asset\"; fi"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cp -R \"$NEBULA_REPO_ROOT/examples/c_abi_export\" work/installed_cabi_app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "bin=$(cat work/release_asset/BINARY_NAME) && (cd work && install-root/bin/$bin build installed_cabi_app --emit staticlib --out-dir installed_cabi_out)"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "test -f work/installed_cabi_out/abi-demo.h && test -f work/installed_cabi_out/libabi-demo.a && grep -F 'nebula_abi_demo_main_ping(void);' work/installed_cabi_out/abi-demo.h"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cc=${CC:-clang} && \"$cc\" -std=c11 -Wstrict-prototypes -Werror -Iwork/installed_cabi_out -c work/installed_cabi_app/consumer.c -o work/installed_cabi_out/consumer.o"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cxx=${CXX:-clang++} && \"$cxx\" work/installed_cabi_out/consumer.o work/installed_cabi_out/libabi-demo.a -o work/installed_cabi_out/consumer"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "work/installed_cabi_out/consumer"
+expect_rc = 0
+expect_stdout_contains = ["42 1 4.0"]

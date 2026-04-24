@@ -1,4 +1,4 @@
-# Escape analysis (v1.0.0)
+# Escape analysis
 
 Goal: conservatively detect when values (especially region-allocated ones) may **outlive** the scope they were allocated in.
 
@@ -115,6 +115,25 @@ Invariant: `unknown=true => may=true` must always hold.
 The strong leak-safety guarantee only applies inside analyzable ownership graphs.
 Opaque boundaries (dynamic containers/FFI/unknown external ownership transfer) are not safe by
 default and must be explicitly marked `unsafe` in future surface syntax revisions.
+
+## External boundary contracts (v0.3-d)
+
+Bare `extern fn` declarations are treated as opaque by default:
+- arguments may escape
+- return value may depend on any argument
+
+This keeps FFI/mixed-language ownership boundaries conservative unless the package author declares
+an explicit contract on the `extern fn` item:
+- `@returns_fresh`
+- `@returns_paramN`
+- `@paramN_noescape`
+- `@paramN_may_escape`
+- `@paramN_escape_unknown`
+
+Contract annotations are additive refinements:
+- unspecified parameters remain `Unknown`
+- return dependency stays conservative unless `@returns_fresh` or `@returns_paramN` is present
+- invalid usage or conflicting annotations emit `NBL-U003`
 
 ## Unsafe block handling (v0.2.x)
 

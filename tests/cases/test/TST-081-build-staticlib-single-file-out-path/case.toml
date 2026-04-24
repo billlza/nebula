@@ -1,0 +1,33 @@
+id = "TST-081-build-staticlib-single-file-out-path"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/cabi_single && mkdir -p work/cabi_single"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY build \"$NEBULA_REPO_ROOT/tests/fixtures/c_abi_single_file.nb\" --emit staticlib -o work/cabi_single/libsingle.a"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "test -f work/cabi_single/libsingle.a && test -f work/cabi_single/c_abi_single_file.h && grep -F 'nebula_c_abi_single_file_triple' work/cabi_single/c_abi_single_file.h && grep -F 'nebula_c_abi_single_file_always(void);' work/cabi_single/c_abi_single_file.h"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nPath('work/cabi_single/consumer.cpp').write_text('#include \"c_abi_single_file.h\"\\n#include <iostream>\\nint main() { std::cout << nebula_c_abi_single_file_triple(14) << \" \" << (nebula_c_abi_single_file_always() ? 1 : 0) << \"\\\\n\"; }\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cxx=${CXX:-clang++} && \"$cxx\" -std=c++23 work/cabi_single/consumer.cpp work/cabi_single/libsingle.a -Iwork/cabi_single -o work/cabi_single/consumer"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "work/cabi_single/consumer"
+expect_rc = 0
+expect_stdout_contains = ["42 1"]

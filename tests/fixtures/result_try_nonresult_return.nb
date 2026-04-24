@@ -1,0 +1,12 @@
+enum Result<T, E> {
+  Ok(T)
+  Err(E)
+}
+
+fn value() -> Result<Int, String> {
+  return Ok(1)
+}
+
+fn main() -> Int {
+  return value()?
+}

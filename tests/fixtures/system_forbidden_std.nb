@@ -1,0 +1,5 @@
+import std::fs
+
+fn main() -> Int {
+  return 0
+}

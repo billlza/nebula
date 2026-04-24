@@ -1,0 +1,14 @@
+struct Foo {
+  a: Int
+}
+
+@returns_param0
+@param0_may_escape
+extern fn relay(x: Foo) -> Foo
+
+fn extern_return_contract_param0() -> Foo {
+  region R {
+    let x = Foo(1)
+    return relay(x)
+  }
+}

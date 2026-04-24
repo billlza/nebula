@@ -1,0 +1,14 @@
+id = "CHK-176-match-payload-nonstruct-no-cascade"
+suite = "check"
+command = "check"
+source = "fixtures/match_struct_payload_nonstruct_no_unknown_name.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T116"
+stage = "build"
+
+[[forbid_diag]]
+code = "NBL-T050"
+stage = "build"

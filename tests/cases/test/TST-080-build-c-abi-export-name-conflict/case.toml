@@ -1,0 +1,17 @@
+id = "TST-080-build-c-abi-export-name-conflict"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/cabi_conflict')\n(root / 'src' / 'foo').mkdir(parents=True, exist_ok=True)\n(root / 'src' / 'foo_bar').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"abi-demo\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('import foo.bar\\nimport foo_bar\\n\\nfn main() -> Int {\\n  return 0\\n}\\n', encoding='utf-8')\n(root / 'src' / 'foo' / 'bar.nb').write_text('module foo.bar\\n\\n@export\\n@abi_c\\nfn add() -> Int {\\n  return 1\\n}\\n', encoding='utf-8')\n(root / 'src' / 'foo_bar.nb').write_text('module foo_bar\\n\\n@export\\n@abi_c\\nfn add() -> Int {\\n  return 2\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY build work/cabi_conflict --emit staticlib > work/cabi-conflict.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-CABI-CONFLICT' work/cabi-conflict.out && grep -F 'duplicate exported C ABI symbol: nebula_abi_demo_foo_bar_add' work/cabi-conflict.out"
+expect_rc = 0

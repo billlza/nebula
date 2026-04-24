@@ -1,0 +1,31 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn choose(flag: Bool) -> Option<Int> {
+  return match flag {
+    true => Some(1),
+    false => None,
+  }
+}
+
+fn main() -> Void {
+  match choose(true) {
+    Some(value) => {
+      expect_eq(value, 1)
+    }
+    None => {
+      print("bad")
+    }
+  }
+
+  match choose(false) {
+    None => {
+      print("ok")
+    }
+    Some(value) => {
+      expect_eq(value, 0)
+    }
+  }
+}

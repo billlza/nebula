@@ -1,0 +1,10 @@
+id = "CHK-178-temp-postfix-field-nonstruct-label"
+suite = "check"
+command = "check"
+source = "fixtures/temp_postfix_nonstruct_field_label.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T081"
+stage = "build"

@@ -1,0 +1,11 @@
+id = "CHK-203-std-json-construct-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/std_json_construct_rejected.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T135"
+stage = "build"
+category = "typecheck"

@@ -1,0 +1,20 @@
+import std::task
+import std::time
+import std::result
+
+async fn slow() -> Int {
+  await sleep(millis(5))
+  return 9
+}
+
+async fn main() -> Void {
+  let result = await timeout(millis(1), slow())
+  match result {
+    Err(message) => {
+      print(message)
+    }
+    Ok(value) => {
+      print("ok")
+    }
+  }
+}

@@ -1,0 +1,21 @@
+id = "TST-106-native-generated-header-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/native_generated')\ndep = root / 'dep'\napp = root / 'app'\nfor path in [dep / 'src', dep / 'native' / 'templates', dep / 'native', app / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-generated\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[[native.sources]]\\npath = \"native/bridge.cpp\"\\nlanguage = \"cxx\"\\n\\n[[native.generated_headers]]\\nout = \"cfg/config.h\"\\ntemplate = \"native/templates/config.h.in\"\\nvalues = { MAGIC = \"41\" }\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn generated_value() -> Int\\n\\nfn dep_value() -> Int {\\n  return generated_value()\\n}\\n', encoding='utf-8')\n(dep / 'native' / 'templates' / 'config.h.in').write_text('#pragma once\\n#define MAGIC @MAGIC@\\n', encoding='utf-8')\n(dep / 'native' / 'bridge.cpp').write_text('#include <cstdint>\\n#include \"cfg/config.h\"\\nstd::int64_t generated_value() { return MAGIC + 1; }\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"generated-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = { path = \"../dep\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if dep_value() == 42 {\\n    print(\"generated-ok\")\\n  } else {\\n    print(\"generated-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/native_generated/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/native_generated/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["generated-ok"]

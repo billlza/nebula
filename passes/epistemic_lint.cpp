@@ -262,6 +262,8 @@ static void lint_expr_calls(const Expr& e, const EpistemicLintOptions& opt,
           // no nested calls
         } else if constexpr (std::is_same_v<E, Expr::Construct>) {
           for (const auto& a : ex.args) lint_expr_calls(*a, opt, out, stats);
+        } else if constexpr (std::is_same_v<E, Expr::TempFieldRef>) {
+          lint_expr_calls(*ex.base, opt, out, stats);
         } else if constexpr (std::is_same_v<E, Expr::Binary>) {
           lint_expr_calls(*ex.lhs, opt, out, stats);
           lint_expr_calls(*ex.rhs, opt, out, stats);
@@ -269,6 +271,13 @@ static void lint_expr_calls(const Expr& e, const EpistemicLintOptions& opt,
           lint_expr_calls(*ex.inner, opt, out, stats);
         } else if constexpr (std::is_same_v<E, Expr::Prefix>) {
           lint_expr_calls(*ex.inner, opt, out, stats);
+        } else if constexpr (std::is_same_v<E, Expr::EnumIsVariant>) {
+          lint_expr_calls(*ex.subject, opt, out, stats);
+        } else if constexpr (std::is_same_v<E, Expr::EnumPayload>) {
+          lint_expr_calls(*ex.subject, opt, out, stats);
+        } else if constexpr (std::is_same_v<E, Expr::Match>) {
+          lint_expr_calls(*ex.subject, opt, out, stats);
+          for (const auto& arm : ex.arms) lint_expr_calls(*arm->value, opt, out, stats);
         } else {
         }
       },
@@ -301,7 +310,8 @@ static void lint_stmt(const RepOwnerResult& rep_owner, const EpistemicLintOption
   std::visit(
       [&](auto&& st) {
         using S = std::decay_t<decltype(st)>;
-        if constexpr (std::is_same_v<S, Stmt::Let>) {
+        if constexpr (std::is_same_v<S, Stmt::Declare>) {
+        } else if constexpr (std::is_same_v<S, Stmt::Let>) {
           lint_expr_calls(*st.value, opt, out, stats);
           const StorageDecision* d = lookup_decision(rep_owner, fn_name, st.var);
           const RepKind rep = d ? d->rep : RepKind::Stack;
@@ -409,6 +419,13 @@ static void lint_stmt(const RepOwnerResult& rep_owner, const EpistemicLintOption
           // Loop body counts as in_loop, and hot scope propagates.
           lint_block(rep_owner, opt, owner_traces, fn_name, loop_depth + 1, hot_here, st.body, out,
                      stats);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          lint_expr_calls(*st.cond, opt, out, stats);
+          lint_block(rep_owner, opt, owner_traces, fn_name, loop_depth + 1, hot_here, st.body, out,
+                     stats);
+        } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                             std::is_same_v<S, Stmt::Continue>) {
+          // no-op
         } else if constexpr (std::is_same_v<S, Stmt::Region>) {
           lint_block(rep_owner, opt, owner_traces, fn_name, loop_depth, hot_here, st.body, out,
                      stats);

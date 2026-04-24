@@ -1,0 +1,46 @@
+id = "TST-282-system-profile-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ['NEBULA_REPO_ROOT'])
+system_profile = repo / 'docs' / 'system_profile.md'
+required = [
+    'The system profile is the future contract',
+    'not implemented today',
+    'Allocation',
+    'Escape',
+    'Unsafe',
+    'Concurrency',
+    'Panic and unwind',
+    'ABI',
+    'Freestanding runtime',
+    'freestanding or no-std builds',
+    'strict-region behavior without implicit auto-promote',
+]
+text = system_profile.read_text(encoding='utf-8')
+for needle in required:
+    if needle not in text:
+        raise SystemExit(f'missing system profile contract text: {needle}')
+
+links = {
+    repo / 'README.md': 'docs/system_profile.md',
+    repo / 'spec' / 'SPEC.md': 'docs/system_profile.md',
+    repo / 'docs' / 'support_matrix.md': 'docs/system_profile.md',
+    repo / 'docs' / 'universeos_convergence.md': 'docs/system_profile.md',
+    repo / 'tests' / 'README.md': 'TST-282',
+}
+for path, needle in links.items():
+    body = path.read_text(encoding='utf-8')
+    if needle not in body:
+        raise SystemExit(f'{path} missing {needle}')
+
+print('system-profile-docs-ok')
+PY
+'''
+expect_stdout_contains = ["system-profile-docs-ok"]

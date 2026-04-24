@@ -1,0 +1,7 @@
+fn pick(flag: Bool) -> Int {
+  match flag {
+    true => {
+      return 1
+    }
+  }
+}

@@ -1,0 +1,27 @@
+struct Triple {
+  x: Int
+  y: Int
+  z: Int
+}
+
+enum MaybeTriple<T> {
+  Some(T)
+  None(Void)
+}
+
+fn score(v: MaybeTriple<Triple>) -> Int {
+  match v {
+    Some({ x, y: y0, z: _ }) => {
+      return x + y0
+    }
+    None => {
+      return 0
+    }
+  }
+}
+
+fn main() -> Void {
+  expect_eq(score(Some(Triple(3, 4, 9))), 7)
+  expect_eq(score(None), 0)
+  print("ok")
+}

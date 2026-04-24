@@ -1,0 +1,7 @@
+id = "RUN-075-std-http-json-helpers"
+suite = "run"
+command = "run"
+source = "fixtures/std_http_json_helpers.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["json-http-ok"]

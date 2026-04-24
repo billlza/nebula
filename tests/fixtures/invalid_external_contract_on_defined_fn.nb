@@ -1,0 +1,4 @@
+@returns_fresh
+fn invalid_external_contract_on_defined_fn(x: Int) -> Int {
+  return x
+}

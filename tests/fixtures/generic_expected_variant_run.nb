@@ -1,0 +1,35 @@
+enum Either<L, R> {
+  Left(L)
+  Right(R)
+}
+
+fn choose(flag: Bool) -> Either<Int, Bool> {
+  return match flag {
+    true => Left(7),
+    false => Right(false),
+  }
+}
+
+fn main() -> Void {
+  match choose(true) {
+    Left(value) => {
+      expect_eq(value, 7)
+    }
+    Right(_) => {
+      print("bad")
+    }
+  }
+
+  match choose(false) {
+    Right(value) => {
+      if !value {
+        print("ok")
+      } else {
+        print("bad")
+      }
+    }
+    Left(_) => {
+      print("bad")
+    }
+  }
+}

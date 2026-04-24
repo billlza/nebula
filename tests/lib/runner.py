@@ -34,11 +34,12 @@ def run_cases(cases: list[dict[str, Any]], cfg: RunnerConfig) -> list[dict[str, 
 
         try:
             for idx, step in enumerate(case["steps"], start=1):
+                step_timeout = int(step.get("timeout", cfg.timeout_sec))
                 step_result = run_step(
                     step,
                     cfg.binary,
                     sandbox,
-                    timeout_sec=cfg.timeout_sec,
+                    timeout_sec=step_timeout,
                     extra_env={
                         "NEBULA_BINARY": str(cfg.binary),
                         "NEBULA_REPO_ROOT": str(cfg.tests_root.parent),
@@ -60,6 +61,7 @@ def run_cases(cases: list[dict[str, Any]], cfg: RunnerConfig) -> list[dict[str, 
                         "cmd": step_result["cmd_str"],
                         "rc": step_result["rc"],
                         "duration_ms": step_result["duration_ms"],
+                        "timed_out": step_result.get("timed_out", False),
                         "ok": assertion["ok"],
                         "fail_reason": assertion["fail_reason"],
                         "diag_count": assertion["diag_count"],

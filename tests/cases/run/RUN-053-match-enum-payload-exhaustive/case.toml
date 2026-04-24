@@ -1,0 +1,8 @@
+id = "RUN-053-match-enum-payload-exhaustive"
+suite = "run"
+command = "run"
+source = "fixtures/match_enum_payload_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["ok"]

@@ -1,0 +1,30 @@
+import std::bytes
+import std::http
+
+fn make_get() -> Method {
+  return Get
+}
+
+fn make_request() -> Request {
+  return Request(make_get(), "/hello/nebula", from_string(""))
+}
+
+fn main() -> Void {
+  let request = make_request()
+  if endpoint_matches(Get, "/hello/:name", request) {
+    match route_param1("/hello/:name", request) {
+      Ok(name) => {
+        if name == "nebula" {
+          print("route-ok")
+        } else {
+          print("route-bad")
+        }
+      }
+      Err(msg) => {
+        print(msg)
+      }
+    }
+  } else {
+    print("route-bad")
+  }
+}

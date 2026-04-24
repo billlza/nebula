@@ -1,0 +1,25 @@
+module time
+import std::task
+
+struct Duration {}
+
+extern fn __nebula_rt_time_millis(value: Int) -> Duration
+extern fn __nebula_rt_time_sleep(delay: Duration) -> Future<Void>
+extern fn __nebula_rt_time_unix_millis() -> Int
+extern fn __nebula_rt_time_steady_millis() -> Int
+
+fn millis(value: Int) -> Duration {
+  return __nebula_rt_time_millis(value)
+}
+
+fn sleep(delay: Duration) -> Future<Void> {
+  return __nebula_rt_time_sleep(delay)
+}
+
+fn unix_millis() -> Int {
+  return __nebula_rt_time_unix_millis()
+}
+
+fn steady_millis() -> Int {
+  return __nebula_rt_time_steady_millis()
+}

@@ -1,4 +1,4 @@
-// Nebula-Core v1.0.0 + minimal tooling extensions (modules, extern, bool/control flow, tooling).
+// Nebula-Core + minimal tooling extensions (modules, extern, bool/control flow, tooling).
 //
 // Notes:
 // - The syntax stays intentionally small to keep the compiler bootstrap fast.
@@ -14,30 +14,42 @@ ImportPath      ::= Ident [ "::" Ident ] { "." Ident }
 AnnotatedItem   ::= { Annotation } Item
 Annotation      ::= "@" Ident
 
-Item            ::= Function | ExternFunction | Struct | Enum
+Item            ::= Function | ExternFunction | Struct | Enum | Ui
 
-Function        ::= "fn" Ident "(" ParamList? ")" ReturnType? Block
-ExternFunction  ::= "extern" "fn" Ident "(" ParamList? ")" ReturnType?
+Function        ::= "fn" Ident TypeParamList? "(" ParamList? ")" ReturnType? Block
+ExternFunction  ::= "extern" "fn" Ident TypeParamList? "(" ParamList? ")" ReturnType?
 
 ParamList       ::= Param { "," Param }
 Param           ::= ("ref")? Ident ":" Type
 ReturnType      ::= "->" Type
 
-Struct          ::= "struct" Ident "{" { Field } "}"
+Struct          ::= "struct" Ident TypeParamList? "{" { Field } "}"
 Field           ::= Ident ":" Type
 
-Enum            ::= "enum" Ident "<" Ident ">" "{" Variant { Variant } "}"
+Enum            ::= "enum" Ident TypeParamList? "{" Variant { Variant } "}"
 Variant         ::= Ident "(" Type ")"
+
+Ui              ::= "ui" Ident "(" ParamList? ")" UiBlock
+UiBlock         ::= "{" { UiNode } "}"
+UiNode          ::= UiView | UiIf | UiFor
+UiView          ::= "view" Ident "(" UiPropList? ")" UiBlock?
+UiPropList      ::= UiProp { "," UiProp }
+UiProp          ::= Ident "=" Expr
+UiIf            ::= "if" Expr UiBlock
+UiFor           ::= "for" Ident "in" Expr UiBlock
 
 Block           ::= "{" { AnnotatedStmt } "}"
 AnnotatedStmt   ::= { Annotation } Stmt
 
-Stmt            ::= LetStmt | AssignStmt | ExprStmt | ReturnStmt | RegionStmt | UnsafeStmt | IfStmt | ForStmt
+Stmt            ::= LetStmt | AssignStmt | ExprStmt | ReturnStmt | RegionStmt | UnsafeStmt | IfStmt | MatchStmt | ForStmt | WhileStmt | BreakStmt | ContinueStmt
 
 LetStmt         ::= "let" Ident "=" Expr
+                  | "let" "{" StructBindingFieldList? "}" "=" Expr
+StructBindingFieldList ::= StructBindingField { "," StructBindingField }
+StructBindingField ::= Ident [ ":" (Ident | "_") ]
 AssignStmt      ::= AssignTarget "=" Expr
                   | AssignTarget CompoundAssignOp Expr
-AssignTarget    ::= Ident | Ident "." Ident
+AssignTarget    ::= Ident { "." Ident }
 CompoundAssignOp ::= "+=" | "-=" | "*=" | "/="
                   | "%="
 ReturnStmt      ::= "return" Expr
@@ -45,15 +57,29 @@ ExprStmt        ::= Expr
 RegionStmt      ::= "region" Ident Block
 UnsafeStmt      ::= "unsafe" Block
 IfStmt          ::= "if" Expr Block [ "else" (IfStmt | Block) ]
+MatchStmt       ::= "match" Expr "{" { MatchArm } "}"
+MatchArm        ::= Pattern "=>" Block [ "," ]
+Pattern         ::= "_"
+                  | Bool
+                  | VariantPattern
+VariantPattern  ::= Ident [ "(" [ Ident | "_" | StructPatternPayload ] ")" ]
+StructPatternPayload ::= "{"
+                         StructBindingField
+                         { "," StructBindingField }
+                         [ "," ]
+                         "}"
 
 ForStmt         ::= "for" Ident "in" Expr ForRangeOp Expr Block
 ForRangeOp      ::= ".." | "..<" | "..."
+WhileStmt       ::= "while" Expr Block
+BreakStmt       ::= "break"
+ContinueStmt    ::= "continue"
 
 Expr            ::= Literal
+                  | MatchExpr
                   | Ident
-                  | FieldExpr
-                  | MethodCallExpr
                   | Call
+                  | PostfixExpr
                   | Binary
                   | Unary
                   | Shared
@@ -61,8 +87,16 @@ Expr            ::= Literal
                   | Heap
                   | Promote
 
-FieldExpr       ::= Ident "." Ident
-MethodCallExpr  ::= Ident "." Ident "(" ArgList? ")"
+MatchExpr       ::= "match" Expr "{" { MatchExprArm } "}"
+MatchExprArm    ::= Pattern "=>" Expr [ "," ]
+
+PostfixExpr     ::= PostfixBase PostfixSuffix { PostfixSuffix }
+PostfixBase     ::= Ident
+                  | Call
+                  | "(" Expr ")"
+PostfixSuffix   ::= "." Ident
+                  | "." Ident "(" ArgList? ")"
+                  | "?"
 Call            ::= Ident "(" ArgList? ")"
 ArgList         ::= Expr { "," Expr }
 
@@ -81,13 +115,20 @@ Promote         ::= "promote" Expr
 //   (i.e., `shared Foo(...)`, `unique Foo(...)`, `heap Foo(...)`, `promote Foo(...)`)
 // - directive chains are rejected (e.g. `shared unique Foo(...)` is an error)
 // v0.2.x method/field restriction:
-// - field/method base is identifier-only (`x.f`, `x.m(...)`)
-// - chained/temporary base forms are not supported yet (`a.b.c`, `foo().m()`)
+// - rooted and temporary-base postfix chains are supported (`x.f.g`, `foo().x`, `foo().m()`)
+// - assignment targets remain rooted-only (`x.f = v`, not `foo().x = v`)
+// current match restriction:
+// - patterns are first-level only (`_`, `Bool`, enum variants with at most one payload binder)
+// current generic restriction:
+// - function calls do not yet support explicit type-argument syntax (`foo<Int>(x)` is not in the
+//   surface grammar yet)
 
 Type            ::= Ident
-                  | Ident "<" Type ">"
+                  | Ident "<" TypeList ">"
                   | FnType
                   | UnsafeFnType
+
+TypeParamList   ::= "<" Ident { "," Ident } ">"
 
 FnType          ::= "Fn" "(" TypeList? ")" "->" Type
 UnsafeFnType    ::= "UnsafeFn" "(" TypeList? ")" "->" Type

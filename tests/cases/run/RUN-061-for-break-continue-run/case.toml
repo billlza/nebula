@@ -1,0 +1,8 @@
+id = "RUN-061-for-break-continue-run"
+suite = "run"
+command = "run"
+source = "fixtures/for_break_continue_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["for-ok"]

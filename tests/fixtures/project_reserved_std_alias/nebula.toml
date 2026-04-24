@@ -1,0 +1,10 @@
+schema_version = 1
+
+[package]
+name = "reserved-std-alias"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+std = { path = "../package_dep" }

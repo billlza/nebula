@@ -1,0 +1,25 @@
+module app
+import io
+import std::result
+
+fn usage() -> Void {
+  print("usage: nebula run examples/project_cli --run-gate none -- <input> <output>")
+}
+
+fn run() -> Int {
+  if argc() != 3 {
+    usage()
+    return 1
+  }
+  let input = argv(1)
+  let output = argv(2)
+  match copy_file(input, output) {
+    Ok(_) => {
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}

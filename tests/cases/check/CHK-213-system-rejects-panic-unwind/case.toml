@@ -1,0 +1,7 @@
+id = "CHK-213-system-rejects-panic-unwind"
+suite = "check"
+command = "check"
+source = "fixtures/system_no_std_ok.nb"
+args = ["--target", "system", "--panic", "unwind"]
+expect_rc = 2
+expect_stdout_contains = ["error: --panic unwind requires the hosted runtime profile"]

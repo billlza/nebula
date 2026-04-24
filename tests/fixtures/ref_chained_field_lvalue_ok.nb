@@ -1,0 +1,18 @@
+struct Inner {
+  a: Int
+  b: Int
+}
+
+struct Outer {
+  inner: Inner
+}
+
+fn bump(ref v: Int) -> Int {
+  v = v + 1
+  return v
+}
+
+fn ref_chained_field_lvalue_ok() -> Int {
+  let o = Outer(Inner(1, 2))
+  return bump(o.inner.a)
+}

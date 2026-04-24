@@ -1,0 +1,26 @@
+id = "TST-099-git-native-dependency-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport subprocess\nroot = Path('work/native_git')\ndep = root / 'dep'\napp = root / 'app'\nfor path in [dep / 'src', dep / 'native' / 'include', app / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"crypto\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[native]\\nc_sources = [\"native/native_offset.c\"]\\ncxx_sources = [\"native/native_bridge.cpp\"]\\ninclude_dirs = [\"native/include\"]\\ndefines = [\"NATIVE_OFFSET=5\"]\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn native_sum(a: Int, b: Int) -> Int\\n\\nfn crypto_value() -> Int {\\n  return native_sum(10, 27)\\n}\\n', encoding='utf-8')\n(dep / 'native' / 'include' / 'native.h').write_text('#pragma once\\n#include <stdint.h>\\n#ifdef __cplusplus\\nextern \"C\" {\\n#endif\\nint64_t native_offset_value(void);\\n#ifdef __cplusplus\\n}\\n#endif\\n', encoding='utf-8')\n(dep / 'native' / 'native_offset.c').write_text('#include \"native.h\"\\nint64_t native_offset_value(void) { return NATIVE_OFFSET; }\\n', encoding='utf-8')\n(dep / 'native' / 'native_bridge.cpp').write_text('#include <cstdint>\\n#include \"native.h\"\\nstd::int64_t native_sum(std::int64_t a, std::int64_t b) { return a + b + native_offset_value(); }\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"native-git-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport crypto::lib\\n\\nfn main() -> Void {\\n  if crypto_value() == 42 {\\n    print(\"git-native-ok\")\\n  } else {\\n    print(\"git-native-bad\")\\n  }\\n}\\n', encoding='utf-8')\nsubprocess.run(['git', 'init', dep], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nsubprocess.run(['git', '-C', str(dep), 'config', 'user.email', 'tests@example.com'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'config', 'user.name', 'Nebula Tests'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'add', '.'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'commit', '-m', 'init'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY add work/native_git/app crypto --git \"$PWD/work/native_git/dep\" --rev HEAD"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/native_git/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/native_git/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["git-native-ok"]

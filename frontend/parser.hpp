@@ -28,12 +28,25 @@ private:
   std::string parse_module_path(bool allow_package_qualifier = false);
   Item parse_item_with_annotations();
   Item parse_item(std::vector<std::string> annotations);
-  Function parse_function(std::vector<std::string> annotations, bool is_extern = false);
+  Function parse_function(std::vector<std::string> annotations,
+                          bool is_extern = false,
+                          bool is_async = false);
   Struct parse_struct(std::vector<std::string> annotations);
   Enum parse_enum(std::vector<std::string> annotations);
+  Ui parse_ui(std::vector<std::string> annotations);
+  std::vector<UiNode> parse_ui_node_list();
+  UiNode parse_ui_node();
+  UiNode parse_ui_view_node();
+  UiNode parse_ui_if_node();
+  UiNode parse_ui_for_node();
+  UiProp parse_ui_prop();
 
   Param parse_param();
+  std::vector<std::string> parse_type_param_names();
   Type parse_type();
+  Pattern parse_pattern();
+  StructBindingField parse_struct_binding_field();
+  std::vector<StructBindingField> parse_struct_binding_fields();
 
   Block parse_block();
   Stmt parse_stmt();

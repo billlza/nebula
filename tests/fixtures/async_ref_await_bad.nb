@@ -1,0 +1,6 @@
+import std::task
+
+async fn bad(ref x: Int) -> Int {
+  await yield_now()
+  return x
+}

@@ -1,0 +1,6 @@
+id = "RUN-076-main-int-exit-code"
+suite = "run"
+command = "run"
+source = "fixtures/main_exit_code_7.nb"
+args = ["--run-gate", "none"]
+expect_rc = 7

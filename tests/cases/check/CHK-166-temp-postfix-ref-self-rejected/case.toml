@@ -1,0 +1,10 @@
+id = "CHK-166-temp-postfix-ref-self-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/temp_postfix_ref_self_bad.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T063"
+stage = "build"

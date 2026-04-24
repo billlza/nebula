@@ -1,0 +1,10 @@
+id = "CHK-171-match-struct-payload-nonstruct-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/match_struct_payload_nonstruct.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T116"
+stage = "build"

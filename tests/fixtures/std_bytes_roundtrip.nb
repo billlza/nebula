@@ -1,0 +1,11 @@
+import std::bytes
+
+fn main() -> Void {
+  let payload = from_string("nebula")
+  expect_eq(len(payload), 6)
+  if is_empty(payload) {
+    print("bad")
+  } else {
+    print(to_string(payload))
+  }
+}

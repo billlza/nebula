@@ -1,0 +1,13 @@
+id = "CHK-162-ref-chained-field-prefix-overlap"
+suite = "check"
+command = "check"
+source = "fixtures/ref_chained_field_prefix_overlap.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+require_diag_keys = ["code", "category", "severity", "risk", "cause", "impact", "suggestions", "related_spans"]
+
+[[expect_diag]]
+code = "NBL-T091"
+severity = "error"
+category = "typecheck"
+risk = "high"

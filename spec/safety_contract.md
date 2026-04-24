@@ -1,8 +1,8 @@
-# Safety contract (v1.0.0)
+# Safety contract
 
 ## Goal
 
-Nebula v1.0.0 hardens safe-subset boundaries with explicit unsafe constructs:
+Nebula hardens safe-subset boundaries with explicit unsafe constructs:
 - `@unsafe fn` on function items
 - `unsafe { ... }` blocks for scoped opt-in
 
@@ -14,7 +14,7 @@ This contract turns boundary rules into compile-time enforcement.
 | --- | --- | --- |
 | Safe context calling unsafe-callable | Rejected | `NBL-U001` |
 | `@unsafe` on non-function item | Rejected | `NBL-U002` |
-| Unsafe code family reserved expansion slot | Reserved code point | `NBL-U003` |
+| Invalid external escape/ownership contract annotation | Rejected | `NBL-U003` |
 
 ## Callable safety metadata
 
@@ -93,6 +93,19 @@ Unknown source kinds are explicit in diagnostics:
 - `SummaryUnknown`: target is known but summary precision is unknown
 - `UnknownUnsafeBoundary`: target is `@unsafe` (direct or resolved-indirect), always conservative
 - `UnknownOrigin`: only for `ref` arguments whose origin cannot be reduced to tracked caller roots
+
+Extern boundaries may opt into explicit escape/ownership contracts via item annotations on `extern fn`:
+- `@returns_fresh`: returned value is not derived from any parameter
+- `@returns_paramN`: returned value may depend on parameter `N`
+- `@paramN_noescape`: parameter `N` is proven `KnownNoEscape`
+- `@paramN_may_escape`: parameter `N` is proven `KnownMayEscape`
+- `@paramN_escape_unknown`: parameter `N` stays conservative `Unknown`
+
+Contract rules:
+- bare `extern fn` remains opaque/conservative by default
+- unspecified parameters inside a contract remain `Unknown`
+- return path remains conservative unless `@returns_fresh` or one/more `@returns_paramN` annotations are present
+- these annotations are only valid on `extern fn`; misuse emits `NBL-U003`
 
 Window extension is computed on the `ref` argument subset only:
 - extend only when an index `i` satisfies

@@ -1,7 +1,9 @@
 #include "cli_shared.hpp"
 #include "project.hpp"
 
+#include <cctype>
 #include <iostream>
+#include <unordered_set>
 
 #include "codegen/cpp_backend.hpp"
 
@@ -17,9 +19,61 @@ struct CacheReportScope {
 };
 } // namespace
 
+namespace {
+
+static std::string sanitize_artifact_stem(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (char ch : text) {
+    if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-') {
+      out.push_back(ch);
+    } else {
+      out.push_back('_');
+    }
+  }
+  return out.empty() ? std::string("nebula_artifact") : out;
+}
+
+static std::string default_header_stem(const LoadedCompileInput& loaded, const fs::path& effective_file) {
+  const std::string base = !loaded.project_name.empty() ? loaded.project_name : effective_file.stem().string();
+  return sanitize_artifact_stem(base);
+}
+
+static fs::path default_build_artifact_path(const LoadedCompileInput& loaded,
+                                            const fs::path& effective_file,
+                                            const CliOptions& opt) {
+  if (opt.out_path.has_value()) return *opt.out_path;
+  const std::string stem = default_header_stem(loaded, effective_file);
+  switch (opt.artifact_kind) {
+  case BuildArtifactKind::Executable:
+    return opt.out_dir / (effective_file.stem().string() + ".out");
+  case BuildArtifactKind::StaticLib:
+    return opt.out_dir / ("lib" + stem + ".a");
+  case BuildArtifactKind::SharedLib:
+#if defined(_WIN32)
+    return opt.out_dir / (stem + ".dll");
+#elif defined(__APPLE__)
+    return opt.out_dir / ("lib" + stem + ".dylib");
+#else
+    return opt.out_dir / ("lib" + stem + ".so");
+#endif
+  }
+  return opt.out_dir / (effective_file.stem().string() + ".out");
+}
+
+static fs::path header_output_path_for(const LoadedCompileInput& loaded,
+                                       const fs::path& effective_file,
+                                       const fs::path& artifact_path) {
+  return artifact_path.parent_path() / (default_header_stem(loaded, effective_file) + ".h");
+}
+
+} // namespace
+
 int cmd_build(const fs::path& file, const CliOptions& opt) {
   CacheReportScope cache_scope(opt);
-  auto loaded = load_compile_input(file, nebula::frontend::DiagnosticStage::Build);
+  auto loaded = load_compile_input(file,
+                                   nebula::frontend::DiagnosticStage::Build,
+                                   load_compile_options_from_cli(opt));
   if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
   if (!loaded.ok) {
     return 1;
@@ -33,8 +87,12 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
   popt.mode = opt.mode;
   popt.profile = resolved;
   popt.analysis_tier = tier;
-  popt.strict_region = opt.strict_region;
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
   popt.warnings_as_errors = opt.warnings_as_errors;
+  popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+  popt.runtime_profile = opt.runtime_profile;
+  popt.panic_policy = opt.panic_policy;
+  popt.target = opt.target;
   popt.include_lint = should_include_lint_in_build_stage(opt);
   popt.allow_cross_stage_reuse = false;
   popt.budget_ms = opt.diag_budget_ms;
@@ -47,11 +105,43 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
   if (analysis.has_error || !analysis.nir_prog || !analysis.rep_owner) return 1;
 
   const fs::path out_cpp = cpp_output_path(effective_file, opt, "");
-  const fs::path out_bin = chosen_artifact_path(effective_file, opt);
+  const fs::path out_bin = default_build_artifact_path(loaded, effective_file, opt);
+  const bool library_mode = opt.artifact_kind != BuildArtifactKind::Executable;
+  if (library_mode && !loaded.host_cxx_sources.empty()) {
+    auto d = make_cli_diag(
+        nebula::frontend::Severity::Error, "NBL-CLI-CABI-HOSTCXX",
+        "C ABI library build does not support host_cxx sources yet",
+        nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+        "host_cxx files currently model executable-side host integration, not stable library ABI surface",
+        "generated library could accidentally expose or link unintended host-side symbols",
+        {"remove host_cxx from the package for library builds", "or keep the host bridge in a separate consumer project"});
+    emit_diagnostics({d}, opt, std::cerr);
+    return 1;
+  }
+  if (library_mode && !loaded.native_inputs.empty()) {
+    auto d = make_cli_diag(
+        nebula::frontend::Severity::Error, "NBL-CLI-CABI-NATIVE",
+        "C ABI library build does not support [native] package sources yet",
+        nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+        "package-native sources currently model executable-side integration, not stable library ABI surface",
+        "generated library could accidentally depend on non-portable native build inputs",
+        {"remove [native] from the reachable package graph for library builds",
+         "or keep the native bridge in a separate executable consumer"});
+    emit_diagnostics({d}, opt, std::cerr);
+    return 1;
+  }
 
   nebula::codegen::EmitOptions eopt;
-  eopt.main_mode = nebula::codegen::MainMode::CallMainIfPresent;
-  eopt.strict_region = opt.strict_region;
+  eopt.main_mode = library_mode ? nebula::codegen::MainMode::None
+                                : nebula::codegen::MainMode::CallMainIfPresent;
+  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  eopt.runtime_profile = opt.runtime_profile;
+  eopt.target = opt.target;
+  eopt.panic_policy = opt.panic_policy;
+  eopt.emit_c_abi_wrappers = library_mode;
+  if (library_mode && !loaded.project_name.empty()) {
+    eopt.c_abi_export_package = loaded.project_name;
+  }
   const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
 
   if (!write_text_file(out_cpp, cpp)) {
@@ -66,7 +156,51 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
   }
 
   std::cerr << "wrote: " << out_cpp.string() << "\n";
-  if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Normal, loaded.host_cxx_sources) != 0) {
+  if (library_mode) {
+    const auto exports =
+        nebula::codegen::collect_c_abi_functions(*analysis.nir_prog, loaded.project_name);
+    if (exports.empty()) {
+      auto d = make_cli_diag(
+          nebula::frontend::Severity::Error, "NBL-CLI-CABI-NOEXPORT",
+          "library build requested but no @export @abi_c functions were found",
+          nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+          "C ABI library output needs an explicit exported function surface",
+          "generated library would not expose a supported public ABI",
+          {"mark at least one function with @export and @abi_c", "or build the project as an executable"});
+      emit_diagnostics({d}, opt, std::cerr);
+      return 1;
+    }
+    std::unordered_set<std::string> seen_exports;
+    for (const auto& fn : exports) {
+      if (!seen_exports.insert(fn.export_name).second) {
+        auto d = make_cli_diag(
+            nebula::frontend::Severity::Error, "NBL-CLI-CABI-CONFLICT",
+            "duplicate exported C ABI symbol: " + fn.export_name,
+            nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+            "sanitized package/module/function names collided in the public C ABI surface",
+            "generated library would expose ambiguous symbols",
+            {"rename one of the exported functions or modules", "or narrow the export set"});
+        emit_diagnostics({d}, opt, std::cerr);
+        return 1;
+      }
+    }
+    const fs::path header_path = header_output_path_for(loaded, effective_file, out_bin);
+    const std::string header = nebula::codegen::emit_c_abi_header(
+        *analysis.nir_prog, exports, default_header_stem(loaded, effective_file));
+    if (!write_text_file(header_path, header)) {
+      auto d = make_cli_diag(
+          nebula::frontend::Severity::Error, "NBL-CLI-IO002",
+          "failed to write generated C header: " + header_path.string(),
+          nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+          "output directory is not writable", "C ABI build cannot proceed without the generated header");
+      emit_diagnostics({d}, opt, std::cerr);
+      return 1;
+    }
+    std::cerr << "wrote: " << header_path.string() << "\n";
+  }
+
+  if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Normal, loaded.host_cxx_sources,
+                  loaded.native_inputs, opt.artifact_kind) != 0) {
     return 1;
   }
 
@@ -79,6 +213,13 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
 
 int cmd_run(const fs::path& file, const CliOptions& opt) {
   CacheReportScope cache_scope(opt);
+  auto run_args = [&](const fs::path& artifact) {
+    std::vector<std::string> cmd;
+    cmd.reserve(1 + opt.run_args.size());
+    cmd.push_back(artifact.string());
+    cmd.insert(cmd.end(), opt.run_args.begin(), opt.run_args.end());
+    return cmd;
+  };
   if (opt.no_build && opt.reuse) {
     auto d = make_cli_diag(
         nebula::frontend::Severity::Error, "NBL-CLI-CONFLICT",
@@ -91,7 +232,9 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     return 1;
   }
 
-  auto loaded = load_compile_input(file, nebula::frontend::DiagnosticStage::Build);
+  auto loaded = load_compile_input(file,
+                                   nebula::frontend::DiagnosticStage::Build,
+                                   load_compile_options_from_cli(opt));
   if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
   if (!loaded.ok) {
     return 1;
@@ -105,7 +248,7 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     auto lookup = resolve_no_build_artifact(effective_file, opt);
     emit_diagnostics(lookup.diags, opt, std::cerr);
     if (!lookup.artifact.has_value()) return 1;
-    return run_command({lookup.artifact->string()});
+    return run_command(run_args(*lookup.artifact));
   }
 
   const fs::path out_bin = chosen_artifact_path(effective_file, opt);
@@ -126,8 +269,12 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     popt.mode = opt.mode;
     popt.profile = resolved_profile;
     popt.analysis_tier = tier;
-    popt.strict_region = opt.strict_region;
+    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
     popt.warnings_as_errors = opt.warnings_as_errors;
+    popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+    popt.runtime_profile = opt.runtime_profile;
+    popt.panic_policy = opt.panic_policy;
+    popt.target = opt.target;
     popt.include_lint = should_include_lint_in_build_stage(opt);
     popt.allow_cross_stage_reuse = (opt.cross_stage_reuse == CrossStageReuseMode::Safe);
     popt.disk_cache_enabled = (opt.disk_cache == DiskCacheMode::On);
@@ -151,7 +298,10 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     } else if (analysis.nir_prog && analysis.rep_owner) {
       nebula::codegen::EmitOptions eopt;
       eopt.main_mode = nebula::codegen::MainMode::CallMainIfPresent;
-      eopt.strict_region = opt.strict_region;
+      eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+      eopt.runtime_profile = opt.runtime_profile;
+      eopt.target = opt.target;
+      eopt.panic_policy = opt.panic_policy;
       cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
     } else {
       auto d = make_cli_diag(
@@ -177,7 +327,8 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     }
     std::cerr << "wrote: " << out_cpp.string() << "\n";
 
-    if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Normal, loaded.host_cxx_sources) != 0) {
+    if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Normal, loaded.host_cxx_sources,
+                    loaded.native_inputs) != 0) {
       return 1;
     }
     (void)write_artifact_meta(out_bin, expected);
@@ -191,5 +342,5 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     emit_diagnostics({d}, opt, std::cerr);
   }
 
-  return run_command({out_bin.string()});
+  return run_command(run_args(out_bin));
 }

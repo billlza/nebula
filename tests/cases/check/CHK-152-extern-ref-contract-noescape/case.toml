@@ -1,0 +1,9 @@
+id = "CHK-152-extern-ref-contract-noescape"
+suite = "check"
+command = "check"
+source = "fixtures/extern_ref_contract_noescape.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T093"

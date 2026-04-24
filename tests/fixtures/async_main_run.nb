@@ -1,0 +1,17 @@
+import std::task
+import std::time
+import std::log
+
+async fn tick() -> Int {
+  await yield_now()
+  info("tick")
+  return 41
+}
+
+async fn main() -> Void {
+  let task = spawn(tick())
+  let answer = await join(task)
+  await sleep(millis(1))
+  print("phase1-ok")
+  expect_eq(answer, 41)
+}

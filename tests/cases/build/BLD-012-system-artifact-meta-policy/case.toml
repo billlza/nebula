@@ -1,0 +1,17 @@
+id = "BLD-012-system-artifact-meta-policy"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+rm -rf work/system-meta
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/system_no_std_ok.nb" \
+  --target x86_64-unknown-none --panic trap --out-dir work/system-meta
+grep -F 'runtime_profile=system' work/system-meta/system_no_std_ok.out.nebmeta
+grep -F 'target=x86_64-unknown-none' work/system-meta/system_no_std_ok.out.nebmeta
+grep -F 'panic_policy=trap' work/system-meta/system_no_std_ok.out.nebmeta
+grep -F 'strict_region=1' work/system-meta/system_no_std_ok.out.nebmeta
+grep -F 'no_std=1' work/system-meta/system_no_std_ok.out.nebmeta
+'''
+expect_rc = 0
+expect_stdout_contains = ["runtime_profile=system", "panic_policy=trap", "strict_region=1", "no_std=1"]

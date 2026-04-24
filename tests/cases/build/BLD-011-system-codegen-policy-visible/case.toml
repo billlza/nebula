@@ -1,0 +1,18 @@
+id = "BLD-011-system-codegen-policy-visible"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+rm -rf work/system-codegen
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/system_no_std_ok.nb" \
+  --target system --panic trap --out-dir work/system-codegen
+grep -F 'nebula-codegen-profile runtime_profile=system target=system panic_policy=trap' work/system-codegen/system_no_std_ok.cpp
+grep -F 'NEBULA_PANIC_POLICY = "trap"' work/system-codegen/system_no_std_ok.cpp
+if grep -F 'catch (const nebula::rt::UserPanic' work/system-codegen/system_no_std_ok.cpp; then
+  echo 'unexpected hosted panic catch in system profile'
+  exit 1
+fi
+'''
+expect_rc = 0
+expect_stdout_contains = ["runtime_profile=system target=system panic_policy=trap"]

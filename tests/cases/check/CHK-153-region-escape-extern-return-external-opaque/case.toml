@@ -1,0 +1,15 @@
+id = "CHK-153-region-escape-extern-return-external-opaque"
+suite = "check"
+command = "check"
+source = "fixtures/extern_return_external_opaque.nb"
+args = ["--diag-format", "json", "--dump-ownership", "--profile", "fast"]
+expect_rc = 0
+expect_stdout_regex = ["v[0-9]+ x -> rep=Heap owner=Shared region=-"]
+
+[[expect_diag]]
+code = "NBL-R001"
+machine_reason = "return"
+machine_subreason = "cross-function-return-path-unknown-external-opaque"
+machine_detail = "return/cross-function-return-path-unknown-external-opaque"
+machine_owner = "heap-shared"
+machine_owner_reason = "cross-function-return-path-unknown-external-opaque"

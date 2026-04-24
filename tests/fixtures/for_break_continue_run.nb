@@ -1,0 +1,18 @@
+fn main() -> Int {
+  let sum = 0
+  for i in 0...5 {
+    if i == 2 {
+      continue
+    }
+    if i == 4 {
+      break
+    }
+    sum += i
+  }
+  if sum == 4 {
+    print("for-ok")
+  } else {
+    print("for-bad")
+  }
+  return 0
+}

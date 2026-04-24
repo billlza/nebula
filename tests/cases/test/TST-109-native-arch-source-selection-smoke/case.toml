@@ -1,0 +1,21 @@
+id = "TST-109-native-arch-source-selection-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport platform\nroot = Path('work/native_arch')\ndep = root / 'dep'\napp = root / 'app'\nfor path in [dep / 'src', dep / 'native', app / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\nmachine = platform.machine().lower()\nif machine in ('arm64', 'aarch64'):\n    host_arch = 'arm64'\n    other_arch = 'x86_64'\nelif machine == 'x86_64':\n    host_arch = 'x86_64'\n    other_arch = 'arm64'\nelse:\n    raise SystemExit(f'unsupported host for arch selection smoke: {machine}')\n(dep / 'nebula.toml').write_text(f'schema_version = 1\\n\\n[package]\\nname = \"dep-arch\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[[native.sources]]\\npath = \"native/host.c\"\\nlanguage = \"c\"\\narch = [\"{host_arch}\"]\\n\\n[[native.sources]]\\npath = \"native/other.c\"\\nlanguage = \"c\"\\narch = [\"{other_arch}\"]\\n\\n[[native.sources]]\\npath = \"native/bridge.cpp\"\\nlanguage = \"cxx\"\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn native_arch_value() -> Int\\n\\nfn dep_value() -> Int {\\n  return native_arch_value()\\n}\\n', encoding='utf-8')\n(dep / 'native' / 'host.c').write_text('#include <stdint.h>\\nint64_t native_arch_impl(void) { return 42; }\\n', encoding='utf-8')\n(dep / 'native' / 'other.c').write_text('#error wrong-arch-source-selected\\n', encoding='utf-8')\n(dep / 'native' / 'bridge.cpp').write_text('#include <cstdint>\\nextern \"C\" std::int64_t native_arch_impl();\\nstd::int64_t native_arch_value() { return native_arch_impl(); }\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"arch-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = { path = \"../dep\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if dep_value() == 42 {\\n    print(\"arch-ok\")\\n  } else {\\n    print(\"arch-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/native_arch/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/native_arch/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["arch-ok"]

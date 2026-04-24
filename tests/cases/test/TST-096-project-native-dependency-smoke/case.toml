@@ -1,0 +1,21 @@
+id = "TST-096-project-native-dependency-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/native_dep_smoke')\ndep = root / 'dep'\napp = root / 'app'\nfor path in [dep / 'src', dep / 'native' / 'include', app / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep_native\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[native]\\nc_sources = [\"native/native_offset.c\"]\\ncxx_sources = [\"native/native_bridge.cpp\"]\\ninclude_dirs = [\"native/include\"]\\ndefines = [\"NATIVE_OFFSET=2\"]\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn native_sum(a: Int, b: Int) -> Int\\n\\nfn dep_value() -> Int {\\n  return native_sum(20, 22)\\n}\\n', encoding='utf-8')\n(dep / 'native' / 'include' / 'native.h').write_text('#pragma once\\n#include <stdint.h>\\n#ifdef __cplusplus\\nextern \"C\" {\\n#endif\\nint64_t native_offset_value(void);\\n#ifdef __cplusplus\\n}\\n#endif\\n', encoding='utf-8')\n(dep / 'native' / 'native_offset.c').write_text('#include \"native.h\"\\nint64_t native_offset_value(void) { return NATIVE_OFFSET; }\\n', encoding='utf-8')\n(dep / 'native' / 'native_bridge.cpp').write_text('#include <cstdint>\\n#include \"native.h\"\\nstd::int64_t native_sum(std::int64_t a, std::int64_t b) { return a + b + native_offset_value(); }\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"native_app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = { path = \"../dep\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if dep_value() == 44 {\\n    print(\"native-ok\")\\n  } else {\\n    print(\"native-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/native_dep_smoke/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/native_dep_smoke/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["native-ok"]

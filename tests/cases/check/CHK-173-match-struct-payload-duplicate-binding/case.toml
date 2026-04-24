@@ -1,0 +1,10 @@
+id = "CHK-173-match-struct-payload-duplicate-binding"
+suite = "check"
+command = "check"
+source = "fixtures/match_struct_payload_duplicate_binding.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T020"
+stage = "build"

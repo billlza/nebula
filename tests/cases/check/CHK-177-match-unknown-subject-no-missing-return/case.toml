@@ -1,0 +1,14 @@
+id = "CHK-177-match-unknown-subject-no-missing-return"
+suite = "check"
+command = "check"
+source = "fixtures/match_unknown_subject_no_missing_return.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T050"
+stage = "build"
+
+[[forbid_diag]]
+code = "NBL-T030"
+stage = "build"

@@ -17,6 +17,7 @@ option(NEBULA_WERROR "Treat warnings as errors (for strict CI/release gates)" OF
 
 add_executable(nebula
   cli/main.cpp
+  cli/json.cpp
   cli/parse.cpp
   cli/build_run.cpp
   cli/dispatch.cpp
@@ -29,6 +30,7 @@ add_executable(nebula
   nir/lower.cpp
   nir/cfg.cpp
   nir/cfg_ir.cpp
+  passes/async_explain.cpp
   passes/call_target_resolver.cpp
   passes/escape_analysis.cpp
   passes/borrow_xstmt.cpp
@@ -37,7 +39,9 @@ add_executable(nebula
 )
 
 set(NEBULA_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+set(NEBULA_GENERATED_STD_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/std")
 file(MAKE_DIRECTORY "${NEBULA_GENERATED_INCLUDE_DIR}")
+file(MAKE_DIRECTORY "${NEBULA_GENERATED_STD_DIR}")
 file(GLOB_RECURSE NEBULA_HEADER_FILES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/cli/*.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/codegen/*.hpp"
@@ -54,6 +58,22 @@ foreach(header IN LISTS NEBULA_HEADER_FILES)
   file(TO_CMAKE_PATH "${header}" header_for_include)
   file(WRITE "${dst}" "#pragma once\n#include \"${header_for_include}\"\n")
 endforeach()
+
+file(GLOB_RECURSE NEBULA_STD_FILES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/std/*.nb"
+)
+
+set(NEBULA_SYNC_STD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/sync_std.cmake")
+file(WRITE "${NEBULA_SYNC_STD_SCRIPT}" "file(REMOVE_RECURSE \"${NEBULA_GENERATED_STD_DIR}\")\n")
+file(APPEND "${NEBULA_SYNC_STD_SCRIPT}" "file(MAKE_DIRECTORY \"${NEBULA_GENERATED_STD_DIR}\")\n")
+file(APPEND "${NEBULA_SYNC_STD_SCRIPT}" "file(COPY \"${CMAKE_CURRENT_SOURCE_DIR}/std/\" DESTINATION \"${NEBULA_GENERATED_STD_DIR}\")\n")
+
+add_custom_target(nebula-std-assets ALL
+  COMMAND ${CMAKE_COMMAND} -P "${NEBULA_SYNC_STD_SCRIPT}"
+  COMMENT "Sync bundled std sources into the build tree"
+)
+
+add_dependencies(nebula nebula-std-assets)
 
 target_include_directories(nebula PRIVATE
   ${NEBULA_GENERATED_INCLUDE_DIR}
@@ -99,13 +119,34 @@ install(DIRECTORY
   FILES_MATCHING PATTERN "*.hpp"
 )
 
+install(DIRECTORY
+  ${NEBULA_GENERATED_STD_DIR}/
+  DESTINATION share/nebula/std
+  FILES_MATCHING PATTERN "*.nb"
+)
+
+install(DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/tooling/registry
+  DESTINATION share/nebula
+  FILES_MATCHING
+    PATTERN "__pycache__" EXCLUDE
+    PATTERN "*.pyc" EXCLUDE
+    PATTERN "*.py"
+    PATTERN "README.md"
+)
+
 set(NEBULA_INSTALL_DOCS
   ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
   ${CMAKE_CURRENT_SOURCE_DIR}/VERSION
   ${CMAKE_CURRENT_SOURCE_DIR}/README.md
   ${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md
   ${CMAKE_CURRENT_SOURCE_DIR}/RELEASE_PROCESS.md
+  ${CMAKE_CURRENT_SOURCE_DIR}/SECURITY.md
 )
+file(GLOB NEBULA_INSTALL_GUIDES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/docs/*.md"
+)
+list(APPEND NEBULA_INSTALL_DOCS ${NEBULA_INSTALL_GUIDES})
 set(NEBULA_RELEASE_NOTES "${CMAKE_CURRENT_SOURCE_DIR}/RELEASE_NOTES_v${NEBULA_VERSION}.md")
 if(EXISTS "${NEBULA_RELEASE_NOTES}")
   list(APPEND NEBULA_INSTALL_DOCS "${NEBULA_RELEASE_NOTES}")

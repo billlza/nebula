@@ -1,0 +1,107 @@
+module main
+import std::json
+
+fn main() -> Void {
+  let nested = object2("value", int_value(7), "flag", bool_value(true))
+  let items = array_builder()
+  items = array_push(items, nested)
+  items = array_push(items, string_value("tail"))
+  let payload = object3(
+    "name",
+    string_value("proj"),
+    "entry",
+    nested,
+    "items",
+    array_build(items)
+  )
+
+  match get_value(payload, "entry") {
+    Ok(entry) => {
+      match get_int(entry, "value") {
+        Ok(value) => {
+          match get_bool(entry, "flag") {
+            Ok(flag) => {
+              match get_value(payload, "items") {
+                Ok(entries) => {
+                  match array_len(entries) {
+                    Ok(count) => {
+                      if count != 2 {
+                        print("json-array-bad")
+                      } else {
+                        match array_get(entries, 0) {
+                          Ok(first) => {
+                            match get_int(first, "value") {
+                              Ok(first_value) => {
+                                match array_get(entries, 1) {
+                                  Ok(second) => {
+                                    match as_string(second) {
+                                      Ok(second_value) => {
+                                        let parsed = parse(stringify(entries))
+                                        match parsed {
+                                          Ok(parsed_entries) => {
+                                            match array_len(parsed_entries) {
+                                              Ok(parsed_count) => {
+                                                if value == 7 && flag == true &&
+                                                   first_value == 7 && second_value == "tail" &&
+                                                   parsed_count == 2 {
+                                                  print("json-array-ok")
+                                                } else {
+                                                  print("json-array-bad")
+                                                }
+                                              }
+                                              Err(msg) => {
+                                                print(msg)
+                                              }
+                                            }
+                                          }
+                                          Err(msg) => {
+                                            print(msg)
+                                          }
+                                        }
+                                      }
+                                      Err(msg) => {
+                                        print(msg)
+                                      }
+                                    }
+                                  }
+                                  Err(msg) => {
+                                    print(msg)
+                                  }
+                                }
+                              }
+                              Err(msg) => {
+                                print(msg)
+                              }
+                            }
+                          }
+                          Err(msg) => {
+                            print(msg)
+                          }
+                        }
+                      }
+                    }
+                    Err(msg) => {
+                      print(msg)
+                    }
+                  }
+                }
+                Err(msg) => {
+                  print(msg)
+                }
+              }
+            }
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

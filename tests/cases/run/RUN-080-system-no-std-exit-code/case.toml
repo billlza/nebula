@@ -1,0 +1,6 @@
+id = "RUN-080-system-no-std-exit-code"
+suite = "run"
+command = "run"
+source = "fixtures/system_main_exit_code_42.nb"
+args = ["--target", "system", "--run-gate", "none"]
+expect_rc = 42

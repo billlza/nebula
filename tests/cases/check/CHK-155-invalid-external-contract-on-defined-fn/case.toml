@@ -1,0 +1,12 @@
+id = "CHK-155-invalid-external-contract-on-defined-fn"
+suite = "check"
+command = "check"
+source = "fixtures/invalid_external_contract_on_defined_fn.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-U003"
+severity = "error"
+category = "unsafe-boundary"
+risk = "high"

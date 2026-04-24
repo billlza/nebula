@@ -1,0 +1,342 @@
+module json
+import std::result
+
+struct Json {}
+
+struct JsonArrayBuilder {}
+
+extern fn __nebula_rt_json_parse(text: String) -> Result<Json, String>
+extern fn __nebula_rt_json_stringify(value: Json) -> String
+extern fn __nebula_rt_json_string_value(value: String) -> Json
+extern fn __nebula_rt_json_int_value(value: Int) -> Json
+extern fn __nebula_rt_json_bool_value(value: Bool) -> Json
+extern fn __nebula_rt_json_null_value() -> Json
+extern fn __nebula_rt_json_object1(key1: String, value1: Json) -> Json
+extern fn __nebula_rt_json_object2(key1: String, value1: Json, key2: String, value2: Json) -> Json
+extern fn __nebula_rt_json_object3(key1: String, value1: Json, key2: String, value2: Json, key3: String, value3: Json) -> Json
+extern fn __nebula_rt_json_object4(key1: String,
+                                   value1: Json,
+                                   key2: String,
+                                   value2: Json,
+                                   key3: String,
+                                   value3: Json,
+                                   key4: String,
+                                   value4: Json) -> Json
+extern fn __nebula_rt_json_object5(key1: String,
+                                   value1: Json,
+                                   key2: String,
+                                   value2: Json,
+                                   key3: String,
+                                   value3: Json,
+                                   key4: String,
+                                   value4: Json,
+                                   key5: String,
+                                   value5: Json) -> Json
+extern fn __nebula_rt_json_object6(key1: String,
+                                   value1: Json,
+                                   key2: String,
+                                   value2: Json,
+                                   key3: String,
+                                   value3: Json,
+                                   key4: String,
+                                   value4: Json,
+                                   key5: String,
+                                   value5: Json,
+                                   key6: String,
+                                   value6: Json) -> Json
+extern fn __nebula_rt_json_object7(key1: String,
+                                   value1: Json,
+                                   key2: String,
+                                   value2: Json,
+                                   key3: String,
+                                   value3: Json,
+                                   key4: String,
+                                   value4: Json,
+                                   key5: String,
+                                   value5: Json,
+                                   key6: String,
+                                   value6: Json,
+                                   key7: String,
+                                   value7: Json) -> Json
+extern fn __nebula_rt_json_object8(key1: String,
+                                   value1: Json,
+                                   key2: String,
+                                   value2: Json,
+                                   key3: String,
+                                   value3: Json,
+                                   key4: String,
+                                   value4: Json,
+                                   key5: String,
+                                   value5: Json,
+                                   key6: String,
+                                   value6: Json,
+                                   key7: String,
+                                   value7: Json,
+                                   key8: String,
+                                   value8: Json) -> Json
+extern fn __nebula_rt_json_object9(key1: String,
+                                   value1: Json,
+                                   key2: String,
+                                   value2: Json,
+                                   key3: String,
+                                   value3: Json,
+                                   key4: String,
+                                   value4: Json,
+                                   key5: String,
+                                   value5: Json,
+                                   key6: String,
+                                   value6: Json,
+                                   key7: String,
+                                   value7: Json,
+                                   key8: String,
+                                   value8: Json,
+                                   key9: String,
+                                   value9: Json) -> Json
+extern fn __nebula_rt_json_get_string(value: Json, key: String) -> Result<String, String>
+extern fn __nebula_rt_json_get_int(value: Json, key: String) -> Result<Int, String>
+extern fn __nebula_rt_json_get_bool(value: Json, key: String) -> Result<Bool, String>
+extern fn __nebula_rt_json_get_value(value: Json, key: String) -> Result<Json, String>
+extern fn __nebula_rt_json_as_string(value: Json) -> Result<String, String>
+extern fn __nebula_rt_json_as_int(value: Json) -> Result<Int, String>
+extern fn __nebula_rt_json_as_bool(value: Json) -> Result<Bool, String>
+extern fn __nebula_rt_json_array_builder() -> JsonArrayBuilder
+extern fn __nebula_rt_json_array_push(builder: JsonArrayBuilder, value: Json) -> JsonArrayBuilder
+extern fn __nebula_rt_json_array_build(builder: JsonArrayBuilder) -> Json
+extern fn __nebula_rt_json_array_len(value: Json) -> Result<Int, String>
+extern fn __nebula_rt_json_array_get(value: Json, index: Int) -> Result<Json, String>
+
+fn parse(text: String) -> Result<Json, String> {
+  return __nebula_rt_json_parse(text)
+}
+
+fn stringify(value: Json) -> String {
+  return __nebula_rt_json_stringify(value)
+}
+
+fn string_value(value: String) -> Json {
+  return __nebula_rt_json_string_value(value)
+}
+
+fn int_value(value: Int) -> Json {
+  return __nebula_rt_json_int_value(value)
+}
+
+fn bool_value(value: Bool) -> Json {
+  return __nebula_rt_json_bool_value(value)
+}
+
+fn null_value() -> Json {
+  return __nebula_rt_json_null_value()
+}
+
+fn object1(key1: String, value1: Json) -> Json {
+  return __nebula_rt_json_object1(key1, value1)
+}
+
+fn object2(key1: String, value1: Json, key2: String, value2: Json) -> Json {
+  return __nebula_rt_json_object2(key1, value1, key2, value2)
+}
+
+fn object3(key1: String, value1: Json, key2: String, value2: Json, key3: String, value3: Json) -> Json {
+  return __nebula_rt_json_object3(key1, value1, key2, value2, key3, value3)
+}
+
+fn object4(key1: String,
+           value1: Json,
+           key2: String,
+           value2: Json,
+           key3: String,
+           value3: Json,
+           key4: String,
+           value4: Json) -> Json {
+  return __nebula_rt_json_object4(key1, value1, key2, value2, key3, value3, key4, value4)
+}
+
+fn object5(key1: String,
+           value1: Json,
+           key2: String,
+           value2: Json,
+           key3: String,
+           value3: Json,
+           key4: String,
+           value4: Json,
+           key5: String,
+           value5: Json) -> Json {
+  return __nebula_rt_json_object5(key1, value1, key2, value2, key3, value3, key4, value4, key5, value5)
+}
+
+fn object6(key1: String,
+           value1: Json,
+           key2: String,
+           value2: Json,
+           key3: String,
+           value3: Json,
+           key4: String,
+           value4: Json,
+           key5: String,
+           value5: Json,
+           key6: String,
+           value6: Json) -> Json {
+  return __nebula_rt_json_object6(key1,
+                                  value1,
+                                  key2,
+                                  value2,
+                                  key3,
+                                  value3,
+                                  key4,
+                                  value4,
+                                  key5,
+                                  value5,
+                                  key6,
+                                  value6)
+}
+
+fn object7(key1: String,
+           value1: Json,
+           key2: String,
+           value2: Json,
+           key3: String,
+           value3: Json,
+           key4: String,
+           value4: Json,
+           key5: String,
+           value5: Json,
+           key6: String,
+           value6: Json,
+           key7: String,
+           value7: Json) -> Json {
+  return __nebula_rt_json_object7(key1,
+                                  value1,
+                                  key2,
+                                  value2,
+                                  key3,
+                                  value3,
+                                  key4,
+                                  value4,
+                                  key5,
+                                  value5,
+                                  key6,
+                                  value6,
+                                  key7,
+                                  value7)
+}
+
+fn object8(key1: String,
+           value1: Json,
+           key2: String,
+           value2: Json,
+           key3: String,
+           value3: Json,
+           key4: String,
+           value4: Json,
+           key5: String,
+           value5: Json,
+           key6: String,
+           value6: Json,
+           key7: String,
+           value7: Json,
+           key8: String,
+           value8: Json) -> Json {
+  return __nebula_rt_json_object8(key1,
+                                  value1,
+                                  key2,
+                                  value2,
+                                  key3,
+                                  value3,
+                                  key4,
+                                  value4,
+                                  key5,
+                                  value5,
+                                  key6,
+                                  value6,
+                                  key7,
+                                  value7,
+                                  key8,
+                                  value8)
+}
+
+fn object9(key1: String,
+           value1: Json,
+           key2: String,
+           value2: Json,
+           key3: String,
+           value3: Json,
+           key4: String,
+           value4: Json,
+           key5: String,
+           value5: Json,
+           key6: String,
+           value6: Json,
+           key7: String,
+           value7: Json,
+           key8: String,
+           value8: Json,
+           key9: String,
+           value9: Json) -> Json {
+  return __nebula_rt_json_object9(key1,
+                                  value1,
+                                  key2,
+                                  value2,
+                                  key3,
+                                  value3,
+                                  key4,
+                                  value4,
+                                  key5,
+                                  value5,
+                                  key6,
+                                  value6,
+                                  key7,
+                                  value7,
+                                  key8,
+                                  value8,
+                                  key9,
+                                  value9)
+}
+
+fn array_builder() -> JsonArrayBuilder {
+  return __nebula_rt_json_array_builder()
+}
+
+fn array_push(builder: JsonArrayBuilder, value: Json) -> JsonArrayBuilder {
+  return __nebula_rt_json_array_push(builder, value)
+}
+
+fn array_build(builder: JsonArrayBuilder) -> Json {
+  return __nebula_rt_json_array_build(builder)
+}
+
+fn get_string(value: Json, key: String) -> Result<String, String> {
+  return __nebula_rt_json_get_string(value, key)
+}
+
+fn get_int(value: Json, key: String) -> Result<Int, String> {
+  return __nebula_rt_json_get_int(value, key)
+}
+
+fn get_bool(value: Json, key: String) -> Result<Bool, String> {
+  return __nebula_rt_json_get_bool(value, key)
+}
+
+fn get_value(value: Json, key: String) -> Result<Json, String> {
+  return __nebula_rt_json_get_value(value, key)
+}
+
+fn as_string(value: Json) -> Result<String, String> {
+  return __nebula_rt_json_as_string(value)
+}
+
+fn as_int(value: Json) -> Result<Int, String> {
+  return __nebula_rt_json_as_int(value)
+}
+
+fn as_bool(value: Json) -> Result<Bool, String> {
+  return __nebula_rt_json_as_bool(value)
+}
+
+fn array_len(value: Json) -> Result<Int, String> {
+  return __nebula_rt_json_array_len(value)
+}
+
+fn array_get(value: Json, index: Int) -> Result<Json, String> {
+  return __nebula_rt_json_array_get(value, index)
+}

@@ -1,0 +1,48 @@
+import std::json
+
+fn main() -> Void {
+  let doc = object3(
+    "name", string_value("nebula"),
+    "count", int_value(7),
+    "ok", bool_value(true)
+  )
+  let text = stringify(doc)
+  match parse(text) {
+    Ok(parsed) => {
+      match get_string(parsed, "name") {
+        Ok(name) => {
+          if name == "nebula" {
+            match get_int(parsed, "count") {
+              Ok(count) => {
+                expect_eq(count, 7)
+              }
+              Err(msg) => {
+                print(msg)
+              }
+            }
+            match get_bool(parsed, "ok") {
+              Ok(flag) => {
+                if flag {
+                  print("json-ok")
+                } else {
+                  print("json-bad")
+                }
+              }
+              Err(msg) => {
+                print(msg)
+              }
+            }
+          } else {
+            print("json-bad")
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

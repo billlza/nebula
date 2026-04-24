@@ -11,12 +11,30 @@ namespace nebula::nir::cfgir {
 
 namespace {
 
+std::vector<std::string> split_field_path(std::string_view path) {
+  std::vector<std::string> out;
+  std::size_t start = 0;
+  while (start < path.size()) {
+    const std::size_t dot = path.find('.', start);
+    const std::size_t end = (dot == std::string_view::npos) ? path.size() : dot;
+    if (end > start) out.push_back(std::string(path.substr(start, end - start)));
+    if (dot == std::string_view::npos) break;
+    start = dot + 1;
+  }
+  return out;
+}
+
 struct Builder {
   FunctionCFG out;
+  struct LoopTargets {
+    BlockId break_target{};
+    BlockId continue_target{};
+  };
 
   // current lexical stacks
   std::vector<std::string> region_stack;
   std::vector<std::string> ann_stack;
+  std::vector<LoopTargets> loop_stack;
 
   // SSA environment: VarId -> ValueId (current)
   std::unordered_map<VarId, ValueId> env;
@@ -112,8 +130,32 @@ struct Builder {
           } else if constexpr (std::is_same_v<N, nir::Expr::FieldRef>) {
             auto it = env.find(n.base_var);
             if (it == env.end()) return emit_undef(e.span);
+            ValueId cur = it->second;
+            const auto path = split_field_path(n.field);
+            for (std::size_t i = 0; i < path.size(); ++i) {
+              Op o;
+              o.node = Op::LoadField{cur, path[i]};
+              cur = emit(std::move(o), (i + 1 == path.size()) ? e.ty : frontend::Ty::Unknown(), e.span);
+            }
+            return cur;
+          } else if constexpr (std::is_same_v<N, nir::Expr::TempFieldRef>) {
+            ValueId cur = lower_expr(*n.base);
+            const auto path = split_field_path(n.field);
+            for (std::size_t i = 0; i < path.size(); ++i) {
+              Op o;
+              o.node = Op::LoadField{cur, path[i]};
+              cur = emit(std::move(o), (i + 1 == path.size()) ? e.ty : frontend::Ty::Unknown(), e.span);
+            }
+            return cur;
+          } else if constexpr (std::is_same_v<N, nir::Expr::EnumIsVariant>) {
+            ValueId subject = lower_expr(*n.subject);
             Op o;
-            o.node = Op::LoadField{it->second, n.field};
+            o.node = Op::EnumIsVariant{subject, n.variant_name, n.variant_index};
+            return emit(std::move(o), e.ty, e.span);
+          } else if constexpr (std::is_same_v<N, nir::Expr::EnumPayload>) {
+            ValueId subject = lower_expr(*n.subject);
+            Op o;
+            o.node = Op::EnumPayload{subject, n.variant_name, n.variant_index};
             return emit(std::move(o), e.ty, e.span);
           } else if constexpr (std::is_same_v<N, nir::Expr::Binary>) {
             ValueId a = lower_expr(*n.lhs);
@@ -152,6 +194,121 @@ struct Builder {
             Op o;
             o.node = Op::AllocHint{n.kind, c.type_name, std::move(args)};
             return emit(std::move(o), e.ty, e.span);
+          } else if constexpr (std::is_same_v<N, nir::Expr::Match>) {
+            const ValueId subject = lower_expr(*n.subject);
+            const BlockId after = new_block();
+            std::vector<std::pair<BlockId, ValueId>> incoming_values;
+            BlockId decision = cur;
+
+            auto emit_arm_bindings = [&](const nir::Expr::Match::Arm& arm) {
+              if (arm.payload_binding.has_value()) {
+                Op payload_op;
+                payload_op.node = Op::EnumPayload{subject, arm.variant_name, arm.variant_index};
+                ValueId payload_value = emit(std::move(payload_op), arm.payload_ty, arm.span);
+                env[arm.payload_binding->var] = payload_value;
+              } else if (!arm.payload_struct_bindings.empty()) {
+                Op payload_op;
+                payload_op.node = Op::EnumPayload{subject, arm.variant_name, arm.variant_index};
+                ValueId payload_value = emit(std::move(payload_op), arm.payload_ty, arm.span);
+                for (const auto& field : arm.payload_struct_bindings) {
+                  ValueId current_value = payload_value;
+                  const auto path = split_field_path(field.field_name);
+                  for (std::size_t i = 0; i < path.size(); ++i) {
+                    Op load;
+                    load.node = Op::LoadField{current_value, path[i]};
+                    current_value = emit(std::move(load),
+                                         (i + 1 == path.size()) ? field.binding.ty
+                                                                : frontend::Ty::Unknown(),
+                                         field.field_span);
+                  }
+                  env[field.binding.var] = current_value;
+                }
+              }
+            };
+
+            auto emit_match_condition = [&](const nir::Expr::Match::Arm& arm) -> ValueId {
+              if (arm.kind == nir::Expr::Match::Arm::Kind::Bool) {
+                if (arm.bool_value) return subject;
+                Op negate;
+                negate.node = Op::Unary{UnaryOp::Not, subject};
+                return emit(std::move(negate), frontend::Ty::Bool(), arm.span);
+              }
+              Op variant_check;
+              variant_check.node = Op::EnumIsVariant{subject, arm.variant_name, arm.variant_index};
+              return emit(std::move(variant_check), frontend::Ty::Bool(), arm.span);
+            };
+
+            for (std::size_t i = 0; i < n.arms.size(); ++i) {
+              const auto& arm = *n.arms[i];
+              const bool unconditional =
+                  arm.kind == nir::Expr::Match::Arm::Kind::Wildcard ||
+                  (n.exhaustive && i + 1 == n.arms.size());
+
+              BlockId arm_bb = decision;
+              BlockId next_decision = 0;
+              if (!unconditional) {
+                arm_bb = new_block();
+                next_decision = new_block();
+
+                cur = decision;
+                bb(decision).region_stack = region_stack;
+                bb(decision).annotation_stack = ann_stack;
+                const ValueId cond = emit_match_condition(arm);
+                Terminator t;
+                t.span = arm.span;
+                t.node = Terminator::Branch{cond, arm_bb, next_decision};
+                set_term(decision, std::move(t));
+
+                bb(arm_bb).region_stack = region_stack;
+                bb(arm_bb).annotation_stack = ann_stack;
+                bb(next_decision).region_stack = region_stack;
+                bb(next_decision).annotation_stack = ann_stack;
+              }
+
+              cur = arm_bb;
+              auto saved_env = env;
+              emit_arm_bindings(arm);
+              if (!terminated(cur)) {
+                const ValueId arm_value = lower_expr(*arm.value);
+                incoming_values.push_back({cur, arm_value});
+              }
+              if (!terminated(cur)) {
+                Terminator jump_to_after;
+                jump_to_after.span = arm.span;
+                jump_to_after.node = Terminator::Jump{after};
+                set_term(cur, std::move(jump_to_after));
+              }
+              env = std::move(saved_env);
+
+              if (unconditional) {
+                break;
+              }
+              decision = next_decision;
+            }
+
+            if (!n.exhaustive && !terminated(decision)) {
+              cur = decision;
+              bb(decision).region_stack = region_stack;
+              bb(decision).annotation_stack = ann_stack;
+              const ValueId fallback = emit_undef(e.span);
+              incoming_values.push_back({decision, fallback});
+              Terminator jump_to_after;
+              jump_to_after.span = e.span;
+              jump_to_after.node = Terminator::Jump{after};
+              set_term(decision, std::move(jump_to_after));
+            }
+
+            cur = after;
+            bb(after).region_stack = region_stack;
+            bb(after).annotation_stack = ann_stack;
+            const ValueId phi_result = next_value++;
+            Phi phi;
+            phi.result = phi_result;
+            phi.ty = e.ty;
+            phi.debug_name = "__match_result";
+            phi.incomings = std::move(incoming_values);
+            bb(after).phis.push_back(std::move(phi));
+            return phi_result;
           } else {
             return emit_undef(e.span);
           }
@@ -175,7 +332,9 @@ struct Builder {
     std::visit(
         [&](auto&& st) {
           using S = std::decay_t<decltype(st)>;
-          if constexpr (std::is_same_v<S, nir::Stmt::Let>) {
+          if constexpr (std::is_same_v<S, nir::Stmt::Declare>) {
+            env[st.var] = emit_undef(s.span);
+          } else if constexpr (std::is_same_v<S, nir::Stmt::Let>) {
             ValueId v = lower_expr(*st.value);
             env[st.var] = v;
             // Attach debug name if this value is defined in current block (best-effort).
@@ -199,8 +358,16 @@ struct Builder {
             auto it = env.find(st.base_var);
             if (it != env.end()) base = it->second;
             ValueId value = lower_expr(*st.value);
+            const auto path = split_field_path(st.field);
+            if (path.empty()) return;
+            ValueId cur = base;
+            for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+              Op load;
+              load.node = Op::LoadField{cur, path[i]};
+              cur = emit(std::move(load), frontend::Ty::Unknown(), s.span);
+            }
             Op o;
-            o.node = Op::StoreField{base, st.field, value};
+            o.node = Op::StoreField{cur, path.back(), value};
             (void)emit(std::move(o), frontend::Ty::Void(), s.span);
           } else if constexpr (std::is_same_v<S, nir::Stmt::ExprStmt>) {
             (void)lower_expr(*st.expr);
@@ -314,7 +481,9 @@ struct Builder {
             cur = body;
             bb(body).region_stack = region_stack;
             bb(body).annotation_stack = ann_stack;
+            loop_stack.push_back(LoopTargets{after, latch});
             lower_block(st.body);
+            loop_stack.pop_back();
             const bool body_terminated = terminated(cur);
 
             if (!body_terminated) {
@@ -361,6 +530,56 @@ struct Builder {
             cur = after;
             bb(after).region_stack = region_stack;
             bb(after).annotation_stack = ann_stack;
+          } else if constexpr (std::is_same_v<S, nir::Stmt::While>) {
+            const BlockId preheader = cur;
+            const BlockId header = new_block();
+            const BlockId body = new_block();
+            const BlockId after = new_block();
+
+            {
+              Terminator t;
+              t.span = s.span;
+              t.node = Terminator::Jump{header};
+              set_term(preheader, std::move(t));
+            }
+
+            cur = header;
+            bb(header).region_stack = region_stack;
+            bb(header).annotation_stack = ann_stack;
+            const ValueId cond = lower_expr(*st.cond);
+            {
+              Terminator t;
+              t.span = s.span;
+              t.node = Terminator::Branch{cond, body, after};
+              set_term(header, std::move(t));
+            }
+
+            cur = body;
+            bb(body).region_stack = region_stack;
+            bb(body).annotation_stack = ann_stack;
+            loop_stack.push_back(LoopTargets{after, header});
+            lower_block(st.body);
+            loop_stack.pop_back();
+            if (!terminated(cur)) {
+              Terminator t;
+              t.span = s.span;
+              t.node = Terminator::Jump{header};
+              set_term(cur, std::move(t));
+            }
+
+            cur = after;
+            bb(after).region_stack = region_stack;
+            bb(after).annotation_stack = ann_stack;
+          } else if constexpr (std::is_same_v<S, nir::Stmt::Break>) {
+            Terminator t;
+            t.span = s.span;
+            t.node = Terminator::Jump{loop_stack.back().break_target};
+            set_term(cur, std::move(t));
+          } else if constexpr (std::is_same_v<S, nir::Stmt::Continue>) {
+            Terminator t;
+            t.span = s.span;
+            t.node = Terminator::Jump{loop_stack.back().continue_target};
+            set_term(cur, std::move(t));
           }
         },
         s.node);
@@ -388,6 +607,8 @@ static std::string op_name(const Op& op) {
         if constexpr (std::is_same_v<N, Op::CmpLt>) return "cmp_lt";
         if constexpr (std::is_same_v<N, Op::Call>) return "call";
         if constexpr (std::is_same_v<N, Op::LoadField>) return "load_field";
+        if constexpr (std::is_same_v<N, Op::EnumIsVariant>) return "enum_is_variant";
+        if constexpr (std::is_same_v<N, Op::EnumPayload>) return "enum_payload";
         if constexpr (std::is_same_v<N, Op::StoreField>) return "store_field";
         if constexpr (std::is_same_v<N, Op::Construct>) return "construct";
         if constexpr (std::is_same_v<N, Op::AllocHint>) return "alloc_hint";
@@ -527,6 +748,10 @@ std::string dump_cfg_ir(const FunctionCFG& f) {
               os << ")";
             } else if constexpr (std::is_same_v<N, Op::LoadField>) {
               os << "%" << n.base << "." << n.field;
+            } else if constexpr (std::is_same_v<N, Op::EnumIsVariant>) {
+              os << "%" << n.subject << " is " << n.variant_name << "#" << n.variant_index;
+            } else if constexpr (std::is_same_v<N, Op::EnumPayload>) {
+              os << "%" << n.subject << " payload " << n.variant_name << "#" << n.variant_index;
             } else if constexpr (std::is_same_v<N, Op::StoreField>) {
               os << "%" << n.base << "." << n.field << " = %" << n.value;
             } else if constexpr (std::is_same_v<N, Op::Construct>) {

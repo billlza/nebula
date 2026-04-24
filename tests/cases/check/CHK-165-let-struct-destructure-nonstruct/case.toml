@@ -1,0 +1,10 @@
+id = "CHK-165-let-struct-destructure-nonstruct"
+suite = "check"
+command = "check"
+source = "fixtures/let_struct_destructure_nonstruct.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T116"
+stage = "build"

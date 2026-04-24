@@ -1,0 +1,14 @@
+id = "CHK-197-await-outside-async-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/await_outside_async.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T132"
+severity = "error"
+
+[[expect_diagnostics]]
+code = "NBL-T133"
+severity = "error"

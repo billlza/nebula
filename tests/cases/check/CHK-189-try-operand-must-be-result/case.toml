@@ -1,0 +1,10 @@
+id = "CHK-189-try-operand-must-be-result"
+suite = "check"
+command = "check"
+source = "fixtures/result_try_nonresult_operand.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T126"
+severity = "error"

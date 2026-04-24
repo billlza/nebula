@@ -1,0 +1,42 @@
+module http_json
+import std::bytes
+import std::http
+import std::json
+import std::result
+
+extern fn __nebula_rt_json_parse_bytes(body: Bytes) -> Result<Json, String>
+
+fn parse_json_body(body: Bytes) -> Result<Json, String> {
+  return __nebula_rt_json_parse_bytes(body)
+}
+
+fn json_response(status: Int, value: Json) -> Response {
+  return response(status, "application/json; charset=utf-8", from_string(stringify(value)))
+}
+
+fn json_response1(status: Int,
+                  value: Json,
+                  name1: String,
+                  value1: String) -> Result<Response, String> {
+  return response1(status,
+                   "application/json; charset=utf-8",
+                   from_string(stringify(value)),
+                   name1,
+                   value1)
+}
+
+fn json_response_with_etag(status: Int, value: Json, etag: String) -> Result<Response, String> {
+  return with_etag(json_response(status, value), etag)
+}
+
+fn ok_json(value: Json) -> Response {
+  return json_response(200, value)
+}
+
+fn ok_json1(value: Json, name1: String, value1: String) -> Result<Response, String> {
+  return json_response1(200, value, name1, value1)
+}
+
+fn ok_json_with_etag(value: Json, etag: String) -> Result<Response, String> {
+  return json_response_with_etag(200, value, etag)
+}

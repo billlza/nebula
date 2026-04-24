@@ -1,0 +1,65 @@
+module fs
+import std::bytes
+import std::json
+import std::result
+
+extern fn __nebula_rt_fs_exists(path: String) -> Result<Bool, String>
+extern fn __nebula_rt_fs_is_file(path: String) -> Result<Bool, String>
+extern fn __nebula_rt_fs_is_dir(path: String) -> Result<Bool, String>
+extern fn __nebula_rt_fs_read_bytes(path: String) -> Result<Bytes, String>
+extern fn __nebula_rt_fs_read_string(path: String) -> Result<String, String>
+extern fn __nebula_rt_fs_write_bytes(path: String, data: Bytes) -> Result<Void, String>
+extern fn __nebula_rt_fs_write_string(path: String, text: String) -> Result<Void, String>
+extern fn __nebula_rt_fs_create_dir_all(path: String) -> Result<Void, String>
+extern fn __nebula_rt_fs_list_dir(path: String) -> Result<Json, String>
+extern fn __nebula_rt_fs_remove_file(path: String) -> Result<Void, String>
+extern fn __nebula_rt_fs_write_bytes_atomic(path: String, data: Bytes) -> Result<Void, String>
+extern fn __nebula_rt_fs_write_string_atomic(path: String, text: String) -> Result<Void, String>
+
+fn exists(path: String) -> Result<Bool, String> {
+  return __nebula_rt_fs_exists(path)
+}
+
+fn is_file(path: String) -> Result<Bool, String> {
+  return __nebula_rt_fs_is_file(path)
+}
+
+fn is_dir(path: String) -> Result<Bool, String> {
+  return __nebula_rt_fs_is_dir(path)
+}
+
+fn read_bytes(path: String) -> Result<Bytes, String> {
+  return __nebula_rt_fs_read_bytes(path)
+}
+
+fn read_string(path: String) -> Result<String, String> {
+  return __nebula_rt_fs_read_string(path)
+}
+
+fn write_bytes(path: String, data: Bytes) -> Result<Void, String> {
+  return __nebula_rt_fs_write_bytes(path, data)
+}
+
+fn write_string(path: String, text: String) -> Result<Void, String> {
+  return __nebula_rt_fs_write_string(path, text)
+}
+
+fn create_dir_all(path: String) -> Result<Void, String> {
+  return __nebula_rt_fs_create_dir_all(path)
+}
+
+fn list_dir(path: String) -> Result<Json, String> {
+  return __nebula_rt_fs_list_dir(path)
+}
+
+fn remove_file(path: String) -> Result<Void, String> {
+  return __nebula_rt_fs_remove_file(path)
+}
+
+fn write_bytes_atomic(path: String, data: Bytes) -> Result<Void, String> {
+  return __nebula_rt_fs_write_bytes_atomic(path, data)
+}
+
+fn write_string_atomic(path: String, text: String) -> Result<Void, String> {
+  return __nebula_rt_fs_write_string_atomic(path, text)
+}

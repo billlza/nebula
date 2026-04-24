@@ -1,0 +1,8 @@
+enum Result<T, E> {
+  Ok(T)
+  Err(E)
+}
+
+fn main() -> Result<Int, String> {
+  return Ok(1?)
+}

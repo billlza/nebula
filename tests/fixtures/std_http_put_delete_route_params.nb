@@ -1,0 +1,50 @@
+module main
+import std::bytes
+import std::http
+
+fn make_get() -> Method {
+  return Get
+}
+
+fn make_put() -> Method {
+  return Put
+}
+
+fn make_delete() -> Method {
+  return Delete
+}
+
+fn main() -> Void {
+  let list_request = Request(make_get(), "/v1/configs/proj/prod", from_string(""))
+  let item_request = Request(make_put(), "/v1/configs/proj/prod/flag", from_string(""))
+  let delete_client = delete_request("example.local", "/v1/configs/proj/prod/flag")
+  let put_client = put_request("example.local",
+                               "/v1/configs/proj/prod/flag",
+                               "application/json; charset=utf-8",
+                               from_string("{}"))
+
+  match route_params2("/v1/configs/:project/:environment", list_request) {
+    Ok(scope) => {
+      match route_params3("/v1/configs/:project/:environment/:key", item_request) {
+        Ok(item) => {
+          if scope.first == "proj" && scope.second == "prod" &&
+             item.first == "proj" && item.second == "prod" && item.third == "flag" &&
+             method_matches(make_put(), put_client.method) &&
+             method_matches(make_delete(), delete_client.method) &&
+             !method_matches(make_delete(), put_client.method) &&
+             endpoint_matches(make_get(), "/v1/configs/:project/:environment", list_request) {
+            print("http-put-delete-route-ok")
+          } else {
+            print("http-put-delete-route-bad")
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

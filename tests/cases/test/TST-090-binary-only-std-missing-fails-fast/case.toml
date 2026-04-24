@@ -1,0 +1,22 @@
+id = "TST-090-binary-only-std-missing-fails-fast"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/binonly-std work/binonly-std-app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cp \"$NEBULA_BINARY\" work/binonly-std && chmod +x work/binonly-std && mkdir -p work/binonly-std-app/src && cat > work/binonly-std-app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"binonly-std\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\nEOF\ncat > work/binonly-std-app/src/main.nb <<'EOF'\nimport std::task\n\nasync fn main() -> Void {\n  await yield_now()\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "work/binonly-std run work/binonly-std-app --run-gate none --diag-format json > work/binonly-std.json 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-CLI-STD-MODULE\"' work/binonly-std.json >/dev/null && grep -F 'std module not found: std::task' work/binonly-std.json >/dev/null"
+expect_rc = 0

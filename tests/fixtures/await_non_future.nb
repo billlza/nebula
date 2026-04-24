@@ -1,0 +1,5 @@
+import std::task
+
+async fn main() -> Int {
+  return await argc()
+}

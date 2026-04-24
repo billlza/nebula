@@ -1,0 +1,10 @@
+id = "CHK-194-c-abi-unsafe-type-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_string_param.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T131"
+severity = "error"

@@ -1,0 +1,12 @@
+enum Boxed<T> {
+  Some(T)
+  None(Void)
+}
+
+fn main() -> Void {
+  let value = Some(1)
+  match value {
+    Some({ payload }) => {}
+    None => {}
+  }
+}

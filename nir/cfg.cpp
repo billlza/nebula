@@ -8,6 +8,11 @@ namespace {
 
 struct Builder {
   Cfg cfg;
+  struct LoopTargets {
+    NodeId continue_target{};
+    std::vector<NodeId> break_fallthroughs;
+  };
+  std::vector<LoopTargets> loop_stack;
 
   NodeId new_node(NodeKind kind, const Stmt* stmt, std::vector<std::string> regions,
                   std::vector<std::string> ann) {
@@ -58,7 +63,8 @@ struct Builder {
     return std::visit(
         [&](auto&& n) -> std::vector<NodeId> {
           using N = std::decay_t<decltype(n)>;
-          if constexpr (std::is_same_v<N, Stmt::Let> || std::is_same_v<N, Stmt::ExprStmt> ||
+          if constexpr (std::is_same_v<N, Stmt::Declare> || std::is_same_v<N, Stmt::Let> ||
+                        std::is_same_v<N, Stmt::ExprStmt> ||
                         std::is_same_v<N, Stmt::AssignVar> ||
                         std::is_same_v<N, Stmt::AssignField>) {
             NodeId id = mk_stmt_node(&s);
@@ -94,16 +100,40 @@ struct Builder {
             NodeId header = mk_stmt_node(&s);
 
             // Body CFG
+            loop_stack.push_back(LoopTargets{header, {}});
             std::vector<NodeId> body_preds = {header};
             std::vector<NodeId> body_fallthrough =
                 build_block(n.body, std::move(body_preds), regions, ann_here);
+            std::vector<NodeId> break_fallthroughs = std::move(loop_stack.back().break_fallthroughs);
+            loop_stack.pop_back();
 
             // Backedge(s): end of body goes back to header
             for (NodeId bt : body_fallthrough) add_edge(bt, header);
 
             // Loop exit: header also falls through to next statement; represent this by returning
-            // the header as the single fallthrough predecessor.
-            return {header};
+            // the header plus any `break` nodes as fallthrough predecessors.
+            break_fallthroughs.push_back(header);
+            return break_fallthroughs;
+          } else if constexpr (std::is_same_v<N, Stmt::While>) {
+            NodeId header = mk_stmt_node(&s);
+            loop_stack.push_back(LoopTargets{header, {}});
+            std::vector<NodeId> body_fallthrough =
+                build_block(n.body, {header}, regions, ann_here);
+            std::vector<NodeId> break_fallthroughs = std::move(loop_stack.back().break_fallthroughs);
+            loop_stack.pop_back();
+            for (NodeId bt : body_fallthrough) add_edge(bt, header);
+            break_fallthroughs.push_back(header);
+            return break_fallthroughs;
+          } else if constexpr (std::is_same_v<N, Stmt::Break>) {
+            NodeId id = mk_stmt_node(&s);
+            if (!loop_stack.empty()) loop_stack.back().break_fallthroughs.push_back(id);
+            return {};
+          } else if constexpr (std::is_same_v<N, Stmt::Continue>) {
+            NodeId id = mk_stmt_node(&s);
+            if (!loop_stack.empty()) add_edge(id, loop_stack.back().continue_target);
+            return {};
+          } else {
+            return preds;
           }
         },
         s.node);

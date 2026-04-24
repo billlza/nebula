@@ -1,0 +1,8 @@
+id = "RUN-070-async-main-spawn-join-sleep-ok"
+suite = "run"
+command = "run"
+source = "fixtures/async_main_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["phase1-ok"]

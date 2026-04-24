@@ -1,0 +1,10 @@
+id = "CHK-186-generic-fn-infer-fail"
+suite = "check"
+command = "check"
+source = "fixtures/generic_fn_infer_fail.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T123"
+severity = "error"

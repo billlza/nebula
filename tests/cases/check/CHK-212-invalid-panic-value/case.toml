@@ -1,0 +1,7 @@
+id = "CHK-212-invalid-panic-value"
+suite = "check"
+command = "check"
+source = "fixtures/system_no_std_ok.nb"
+args = ["--panic", "explode"]
+expect_rc = 2
+expect_stdout_contains = ["error: invalid --panic value: explode"]

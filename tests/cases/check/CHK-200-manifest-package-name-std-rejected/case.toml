@@ -1,0 +1,11 @@
+id = "CHK-200-manifest-package-name-std-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/project_reserved_std_package"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-MANIFEST-STD"
+stage = "build"
+category = "cli"

@@ -1,0 +1,34 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn keep(x: Option<Int>) -> Option<Int> {
+  return x
+}
+
+fn make_none() -> Option<Int> {
+  return None
+}
+
+fn main() -> Void {
+  let x = keep(None)
+  match x {
+    None => {
+      print("none")
+    }
+    Some(v) => {
+      print("bad")
+    }
+  }
+
+  let y = make_none()
+  match y {
+    None => {
+      print("ok")
+    }
+    Some(v) => {
+      print("bad")
+    }
+  }
+}

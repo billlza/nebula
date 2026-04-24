@@ -1,0 +1,14 @@
+id = "CHK-175-let-struct-unknown-field-no-cascade"
+suite = "check"
+command = "check"
+source = "fixtures/let_struct_unknown_field_no_unknown_name.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T080"
+stage = "build"
+
+[[forbid_diag]]
+code = "NBL-T050"
+stage = "build"

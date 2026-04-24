@@ -1,0 +1,8 @@
+id = "RUN-052-match-bool-exhaustive"
+suite = "run"
+command = "run"
+source = "fixtures/match_bool_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["yes"]

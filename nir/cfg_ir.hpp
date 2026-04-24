@@ -68,6 +68,16 @@ struct Op {
     ValueId base{};
     std::string field;
   };
+  struct EnumIsVariant {
+    ValueId subject{};
+    std::string variant_name;
+    std::uint32_t variant_index = 0;
+  };
+  struct EnumPayload {
+    ValueId subject{};
+    std::string variant_name;
+    std::uint32_t variant_index = 0;
+  };
   struct StoreField {
     ValueId base{};
     std::string field;
@@ -85,8 +95,10 @@ struct Op {
   struct Undef {};
 
   std::variant<Param, ConstInt, ConstBool, ConstFloat, ConstString, Bin, Unary, CmpLt, Call,
-               LoadField, StoreField, Construct, AllocHint, Undef>
+               LoadField, EnumIsVariant, EnumPayload, StoreField, Construct, AllocHint, Undef>
       node;
+
+  Op() : node(Undef{}) {}
 };
 
 struct Instr {
@@ -95,6 +107,8 @@ struct Instr {
   Span span{};
   std::string debug_name;
   Op op;
+
+  Instr() : op(Op{}) {}
 };
 
 struct Terminator {
@@ -112,6 +126,8 @@ struct Terminator {
 
   Span span{};
   std::variant<Jump, Branch, Ret> node;
+
+  Terminator() : node(Jump{}) {}
 };
 
 struct BasicBlock {

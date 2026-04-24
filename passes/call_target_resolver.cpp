@@ -112,6 +112,8 @@ static void analyze_expr(const Expr& e,
           for (const auto& arg : n.args) {
             if (arg) analyze_expr(*arg, env, known_functions, out);
           }
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          if (n.base) analyze_expr(*n.base, env, known_functions, out);
         } else if constexpr (std::is_same_v<N, Expr::Binary>) {
           if (n.lhs) analyze_expr(*n.lhs, env, known_functions, out);
           if (n.rhs) analyze_expr(*n.rhs, env, known_functions, out);
@@ -119,6 +121,15 @@ static void analyze_expr(const Expr& e,
           if (n.inner) analyze_expr(*n.inner, env, known_functions, out);
         } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
           if (n.inner) analyze_expr(*n.inner, env, known_functions, out);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          if (n.subject) analyze_expr(*n.subject, env, known_functions, out);
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          if (n.subject) analyze_expr(*n.subject, env, known_functions, out);
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          if (n.subject) analyze_expr(*n.subject, env, known_functions, out);
+          for (const auto& arm : n.arms) {
+            if (arm && arm->value) analyze_expr(*arm->value, env, known_functions, out);
+          }
         } else if constexpr (std::is_same_v<N, Expr::VarRef> ||
                              std::is_same_v<N, Expr::FieldRef> ||
                              std::is_same_v<N, Expr::IntLit> ||
@@ -139,10 +150,14 @@ static void transfer_stmt(const Stmt& s,
   std::visit(
       [&](auto&& st) {
         using S = std::decay_t<decltype(st)>;
-        if constexpr (std::is_same_v<S, Stmt::Let>) {
+        if constexpr (std::is_same_v<S, Stmt::Declare>) {
+          env.insert_or_assign(st.var, ResolvedTargetState::unknown());
+        } else if constexpr (std::is_same_v<S, Stmt::Let>) {
           analyze_expr(*st.value, env, known_functions, out);
           if (st.ty.kind == Ty::Kind::Callable) {
             env.insert_or_assign(st.var, callable_state_from_expr(*st.value, env, known_functions));
+          } else {
+            env.insert_or_assign(st.var, ResolvedTargetState::unknown());
           }
         } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
           analyze_expr(*st.value, env, known_functions, out);
@@ -160,6 +175,11 @@ static void transfer_stmt(const Stmt& s,
         } else if constexpr (std::is_same_v<S, Stmt::For>) {
           analyze_expr(*st.start, env, known_functions, out);
           analyze_expr(*st.end, env, known_functions, out);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          analyze_expr(*st.cond, env, known_functions, out);
+        } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                             std::is_same_v<S, Stmt::Continue>) {
+          // no-op
         } else if constexpr (std::is_same_v<S, Stmt::Region> || std::is_same_v<S, Stmt::Unsafe>) {
           // No explicit CFG statement node for these wrappers.
         }

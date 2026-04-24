@@ -1,4 +1,4 @@
-# Diagnostics contract (v1.0.0)
+# Diagnostics contract
 
 Nebula diagnostics are structured, stage-aware, and stable enough for CLI + CI integration.
 
@@ -180,7 +180,7 @@ Example: a warning can still be high-risk.
     so return-path escapes are queued before call-path, then field-path hardening
 - `NBL-U001`: safe context calls unsafe-callable (directly/indirectly/method-sugar) without `unsafe` context
 - `NBL-U002`: `@unsafe` annotation used on non-function item
-- `NBL-U003`: reserved unsafe-boundary code point for future boundary diagnostics
+- `NBL-U003`: external escape/ownership contract annotation is invalid or attached to a non-`extern fn` boundary
 - `NBL-T065`: callee is not callable
 - `NBL-T066`: callable arity mismatch
 - `NBL-T067`: callable argument type mismatch
@@ -191,6 +191,25 @@ Example: a warning can still be high-risk.
 - `NBL-T084`: unknown mapped method (`Type_m`)
 - `NBL-T085`: mutating `self` requires `self: ref T`
 - `NBL-T086`: mapped method signature invalid (`self: T/ref T` required in slot 0)
+- `NBL-T122`: cannot infer type arguments for constructor
+- `NBL-T123`: cannot infer type arguments for function
+- `NBL-T124`: generic `extern fn` declarations are rejected
+- `NBL-T125`: postfix `?` requires the enclosing function to return `Result<T, E>`
+- `NBL-T126`: postfix `?` operand must have type `Result<T, E>`
+- `NBL-T127`: postfix `?` propagated error type must match the enclosing `Result<_, E>`
+- `NBL-T128`: `@export/@abi_c` annotations are only valid on functions
+- `NBL-T129`: C ABI export requires both `@export` and `@abi_c`, and cannot target `extern fn`
+- `NBL-T130`: C ABI export does not support generics or `ref` parameters
+- `NBL-T131`: C ABI export parameter/return type is not ABI-safe in the current slice
+- `NBL-T132`: `await` is only valid inside async functions
+- `NBL-T133`: `await` operand must have type `Future<T>` or `Task<T>`
+- `NBL-T134`: phase-1 async functions reject suspension with `ref` parameters
+- `NBL-CLI-CABI-HOSTCXX`: library build rejects `host_cxx` sources because the current public ABI
+  contract is limited to Nebula-defined exported wrappers
+- `NBL-CLI-CABI-NOEXPORT`: `build --emit staticlib|sharedlib` found no root-package
+  `@export @abi_c` functions to publish
+- `NBL-CLI-CABI-CONFLICT`: sanitized public C ABI symbol names collided
+- `NBL-CLI-AR-MISSING`: static library build could not find `llvm-ar`/`ar`
 - `NBL-T090`: mutable ref alias conflict (`ref`/`ref` overlap on same alias location in one call)
 - `NBL-T091`: mutable ref overlaps non-ref argument on same alias location
 - `NBL-T092`: same-statement borrow conflict after an active `ref` borrow

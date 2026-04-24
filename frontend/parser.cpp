@@ -12,6 +12,15 @@ namespace nebula::frontend {
 Parser::Parser(std::vector<Token> tokens) : toks_(std::move(tokens)) {}
 
 namespace {
+std::string join_dotted_path(const std::vector<std::string>& segments) {
+  std::string out;
+  for (std::size_t i = 0; i < segments.size(); ++i) {
+    if (i) out.push_back('.');
+    out += segments[i];
+  }
+  return out;
+}
+
 bool is_compound_assign_op(TokenKind kind) {
   return kind == TokenKind::PlusEqual || kind == TokenKind::MinusEqual ||
          kind == TokenKind::StarEqual || kind == TokenKind::SlashEqual ||
@@ -46,14 +55,35 @@ Span make_span(const SourcePos& start, const SourcePos& end, std::string source_
   return span;
 }
 
-ExprPtr make_field_expr(const Token& base, const Token& field) {
+std::vector<std::string> split_dotted_path(std::string_view path) {
+  std::vector<std::string> out;
+  std::size_t start = 0;
+  while (start < path.size()) {
+    const std::size_t dot = path.find('.', start);
+    const std::size_t end = (dot == std::string_view::npos) ? path.size() : dot;
+    if (end > start) out.push_back(std::string(path.substr(start, end - start)));
+    if (dot == std::string_view::npos) break;
+    start = dot + 1;
+  }
+  return out;
+}
+
+ExprPtr make_field_expr(ExprPtr base, std::string field_name, SourcePos end) {
   auto lhs = std::make_unique<Expr>();
   Expr::Field lhs_field;
-  lhs_field.base = base.lexeme;
-  lhs_field.field = field.lexeme;
-  lhs->span = make_span(base.span.start, field.span.end, base.span.source_path);
+  lhs_field.base = std::move(base);
+  lhs_field.field = std::move(field_name);
+  lhs->span = make_span(lhs_field.base->span.start, end, lhs_field.base->span.source_path);
   lhs->node = std::move(lhs_field);
   return lhs;
+}
+
+ExprPtr make_field_chain_expr(const Token& base, std::string field_path, SourcePos end) {
+  ExprPtr out = make_var_name_expr(base);
+  for (auto& segment : split_dotted_path(field_path)) {
+    out = make_field_expr(std::move(out), segment, end);
+  }
+  return out;
 }
 
 ExprPtr make_compound_rhs(TokenKind op, ExprPtr lhs, ExprPtr rhs) {
@@ -205,12 +235,22 @@ Item Parser::parse_item(std::vector<std::string> annotations) {
   const Token& t = peek();
   Item it;
   switch (t.kind) {
+  case TokenKind::KwAsync:
+    bump();
+    it.node = parse_function(std::move(annotations), false, true);
+    break;
   case TokenKind::KwFn: it.node = parse_function(std::move(annotations)); break;
   case TokenKind::KwExtern: it.node = parse_function(std::move(annotations), true); break;
   case TokenKind::KwStruct: it.node = parse_struct(std::move(annotations)); break;
   case TokenKind::KwEnum: it.node = parse_enum(std::move(annotations)); break;
+  case TokenKind::Ident:
+    if (t.lexeme == "ui") {
+      it.node = parse_ui(std::move(annotations));
+      break;
+    }
+    [[fallthrough]];
   default:
-    throw ParseError("expected item (fn/extern fn/struct/enum)", t.span);
+    throw ParseError("expected item (fn/extern fn/struct/enum/ui)", t.span);
   }
 
   // span: conservatively set to child span
@@ -218,10 +258,11 @@ Item Parser::parse_item(std::vector<std::string> annotations) {
   return it;
 }
 
-Function Parser::parse_function(std::vector<std::string> annotations, bool is_extern) {
+Function Parser::parse_function(std::vector<std::string> annotations, bool is_extern, bool is_async) {
   const Token& kw = is_extern ? expect(TokenKind::KwExtern, "`extern`") : expect(TokenKind::KwFn, "`fn`");
   if (is_extern) expect(TokenKind::KwFn, "`fn`");
   const Token& name = expect(TokenKind::Ident, "function name");
+  const std::vector<std::string> type_params = parse_type_param_names();
 
   expect(TokenKind::LParen, "`(`");
   std::vector<Param> params;
@@ -242,8 +283,10 @@ Function Parser::parse_function(std::vector<std::string> annotations, bool is_ex
   Function fn;
   fn.annotations = std::move(annotations);
   fn.name = name.lexeme;
+  fn.type_params = type_params;
   fn.params = std::move(params);
   fn.return_type = std::move(ret);
+  fn.is_async = is_async;
   fn.is_extern = is_extern;
   if (is_extern) {
     fn.span = make_span(kw.span.start,
@@ -254,6 +297,145 @@ Function Parser::parse_function(std::vector<std::string> annotations, bool is_ex
     fn.span = make_span(kw.span.start, fn.body->span.end, kw.span.source_path);
   }
   return fn;
+}
+
+UiProp Parser::parse_ui_prop() {
+  const Token& name = expect(TokenKind::Ident, "UI property name");
+  expect(TokenKind::Equal, "`=`");
+  auto value = parse_expr();
+  UiProp prop;
+  prop.name = name.lexeme;
+  prop.span = make_span(name.span.start, value->span.end, name.span.source_path);
+  prop.value = std::move(value);
+  return prop;
+}
+
+std::vector<UiNode> Parser::parse_ui_node_list() {
+  expect(TokenKind::LBrace, "`{`");
+  std::vector<UiNode> nodes;
+  while (!at(TokenKind::RBrace) && !eof()) {
+    nodes.push_back(parse_ui_node());
+  }
+  expect(TokenKind::RBrace, "`}`");
+  return nodes;
+}
+
+UiNode Parser::parse_ui_view_node() {
+  const Token& start = expect(TokenKind::Ident, "`view`");
+  if (start.lexeme != "view") throw ParseError("expected `view`", start.span);
+  const Token& component = expect(TokenKind::Ident, "UI component name");
+  expect(TokenKind::LParen, "`(`");
+  std::vector<UiProp> props;
+  if (!at(TokenKind::RParen)) {
+    props.push_back(parse_ui_prop());
+    while (match(TokenKind::Comma)) {
+      if (at(TokenKind::RParen)) break;
+      props.push_back(parse_ui_prop());
+    }
+  }
+  const Token& rp = expect(TokenKind::RParen, "`)`");
+  std::vector<UiNode> children;
+  SourcePos end = rp.span.end;
+  if (at(TokenKind::LBrace)) {
+    children = parse_ui_node_list();
+    if (!children.empty()) {
+      end = children.back().span.end;
+    }
+  }
+
+  UiNode::View view;
+  view.component = component.lexeme;
+  view.component_span = component.span;
+  view.props = std::move(props);
+  view.children = std::move(children);
+
+  UiNode node;
+  node.span = make_span(start.span.start, end, start.span.source_path);
+  node.node = std::move(view);
+  return node;
+}
+
+UiNode Parser::parse_ui_if_node() {
+  const Token& start = expect(TokenKind::KwIf, "`if`");
+  auto cond = parse_expr();
+  auto children = parse_ui_node_list();
+
+  UiNode::If if_node;
+  if_node.cond = std::move(cond);
+  if_node.then_children = std::move(children);
+
+  UiNode node;
+  node.span = make_span(start.span.start,
+                        if_node.then_children.empty() ? start.span.end : if_node.then_children.back().span.end,
+                        start.span.source_path);
+  node.node = std::move(if_node);
+  return node;
+}
+
+UiNode Parser::parse_ui_for_node() {
+  const Token& start = expect(TokenKind::KwFor, "`for`");
+  const Token& var = expect(TokenKind::Ident, "UI loop variable");
+  expect(TokenKind::KwIn, "`in`");
+  auto iterable = parse_expr();
+  auto children = parse_ui_node_list();
+
+  UiNode::For for_node;
+  for_node.var = var.lexeme;
+  for_node.var_span = var.span;
+  for_node.iterable = std::move(iterable);
+  for_node.body = std::move(children);
+
+  UiNode node;
+  node.span = make_span(start.span.start,
+                        for_node.body.empty() ? start.span.end : for_node.body.back().span.end,
+                        start.span.source_path);
+  node.node = std::move(for_node);
+  return node;
+}
+
+UiNode Parser::parse_ui_node() {
+  if (at(TokenKind::Ident) && peek().lexeme == "view") return parse_ui_view_node();
+  if (at(TokenKind::KwIf)) return parse_ui_if_node();
+  if (at(TokenKind::KwFor)) return parse_ui_for_node();
+  throw ParseError("expected UI node (view/if/for)", peek().span);
+}
+
+Ui Parser::parse_ui(std::vector<std::string> annotations) {
+  const Token& kw = expect(TokenKind::Ident, "`ui`");
+  if (kw.lexeme != "ui") throw ParseError("expected `ui`", kw.span);
+  const Token& name = expect(TokenKind::Ident, "UI name");
+  expect(TokenKind::LParen, "`(`");
+  std::vector<Param> params;
+  if (!at(TokenKind::RParen)) {
+    params.push_back(parse_param());
+    while (match(TokenKind::Comma)) {
+      if (at(TokenKind::RParen)) break;
+      params.push_back(parse_param());
+    }
+  }
+  expect(TokenKind::RParen, "`)`");
+  auto body = parse_ui_node_list();
+
+  Ui ui;
+  ui.annotations = std::move(annotations);
+  ui.name = name.lexeme;
+  ui.params = std::move(params);
+  ui.body = std::move(body);
+  ui.span = make_span(kw.span.start, ui.body.empty() ? name.span.end : ui.body.back().span.end, kw.span.source_path);
+  return ui;
+}
+
+std::vector<std::string> Parser::parse_type_param_names() {
+  std::vector<std::string> out;
+  if (!match(TokenKind::Less)) return out;
+  const Token& first = expect(TokenKind::Ident, "type parameter");
+  out.push_back(first.lexeme);
+  while (match(TokenKind::Comma)) {
+    const Token& next = expect(TokenKind::Ident, "type parameter");
+    out.push_back(next.lexeme);
+  }
+  expect(TokenKind::Greater, "`>`");
+  return out;
 }
 
 Param Parser::parse_param() {
@@ -294,8 +476,10 @@ Type Parser::parse_type() {
   }
 
   if (match(TokenKind::Less)) {
-    Type arg = parse_type();
-    t.arg = std::make_unique<Type>(std::move(arg));
+    t.args.push_back(parse_type());
+    while (match(TokenKind::Comma)) {
+      t.args.push_back(parse_type());
+    }
     const Token& gt = expect(TokenKind::Greater, "`>`");
     t.span.end = gt.span.end;
   } else {
@@ -304,9 +488,98 @@ Type Parser::parse_type() {
   return t;
 }
 
+Pattern Parser::parse_pattern() {
+  const Token& start = peek();
+  Pattern pattern;
+
+  if (start.kind == TokenKind::Ident && start.lexeme == "_") {
+    (void)bump();
+    pattern.span = start.span;
+    pattern.node = Pattern::Wildcard{};
+    return pattern;
+  }
+
+  if (match(TokenKind::KwTrue) || match(TokenKind::KwFalse)) {
+    Pattern::BoolLit lit;
+    lit.value = (start.kind == TokenKind::KwTrue);
+    pattern.span = start.span;
+    pattern.node = lit;
+    return pattern;
+  }
+
+  const Token& name = expect(TokenKind::Ident, "match pattern");
+  Pattern::Variant variant;
+  variant.name = name.lexeme;
+  variant.name_span = name.span;
+  SourcePos end = name.span.end;
+
+  if (match(TokenKind::LParen)) {
+    if (match(TokenKind::LBrace)) {
+      Pattern::Variant::StructPayload payload;
+      payload.fields = parse_struct_binding_fields();
+      const Token& rb = expect(TokenKind::RBrace, "`}`");
+      variant.payload = std::move(payload);
+      end = rb.span.end;
+    } else if (!at(TokenKind::RParen)) {
+      const Token& payload = expect(TokenKind::Ident, "pattern binding");
+      if (payload.lexeme == "_") {
+        variant.payload = Pattern::Variant::WildcardPayload{};
+      } else {
+        variant.payload = Pattern::Variant::BindingPayload{payload.lexeme, payload.span};
+      }
+      end = payload.span.end;
+    } else {
+      variant.payload = Pattern::Variant::EmptyPayload{};
+    }
+    const Token& rp = expect(TokenKind::RParen, "`)`");
+    end = rp.span.end;
+  }
+
+  pattern.span = make_span(name.span.start, end, name.span.source_path);
+  pattern.node = std::move(variant);
+  return pattern;
+}
+
+StructBindingField Parser::parse_struct_binding_field() {
+  const Token& field = expect(TokenKind::Ident, "field name");
+  StructBindingField out;
+  out.field_name = field.lexeme;
+  out.binding_name = field.lexeme;
+  out.span = field.span;
+  out.binding_span = field.span;
+  if (match(TokenKind::Colon)) {
+    const Token& binding = expect(TokenKind::Ident, "binding name");
+    out.span = make_span(field.span.start, binding.span.end, field.span.source_path);
+    out.binding_span = binding.span;
+    if (binding.lexeme == "_") {
+      out.skip = true;
+      out.binding_name.reset();
+    } else {
+      out.binding_name = binding.lexeme;
+    }
+  }
+  return out;
+}
+
+std::vector<StructBindingField> Parser::parse_struct_binding_fields() {
+  std::vector<StructBindingField> fields;
+  if (!at(TokenKind::RBrace)) {
+    fields.push_back(parse_struct_binding_field());
+    while (match(TokenKind::Comma)) {
+      if (at(TokenKind::RBrace)) break;
+      fields.push_back(parse_struct_binding_field());
+    }
+  }
+  if (fields.empty()) {
+    throw ParseError("struct destructuring requires at least one field", peek().span);
+  }
+  return fields;
+}
+
 Struct Parser::parse_struct(std::vector<std::string> annotations) {
   const Token& kw = expect(TokenKind::KwStruct, "`struct`");
   const Token& name = expect(TokenKind::Ident, "struct name");
+  const std::vector<std::string> type_params = parse_type_param_names();
   expect(TokenKind::LBrace, "`{`");
 
   std::vector<Field> fields;
@@ -327,6 +600,7 @@ Struct Parser::parse_struct(std::vector<std::string> annotations) {
   Struct st;
   st.annotations = std::move(annotations);
   st.name = name.lexeme;
+  st.type_params = type_params;
   st.fields = std::move(fields);
   st.span = make_span(kw.span.start, rb.span.end, kw.span.source_path);
   return st;
@@ -335,9 +609,7 @@ Struct Parser::parse_struct(std::vector<std::string> annotations) {
 Enum Parser::parse_enum(std::vector<std::string> annotations) {
   const Token& kw = expect(TokenKind::KwEnum, "`enum`");
   const Token& name = expect(TokenKind::Ident, "enum name");
-  expect(TokenKind::Less, "`<`");
-  const Token& tp = expect(TokenKind::Ident, "type parameter");
-  expect(TokenKind::Greater, "`>`");
+  const std::vector<std::string> type_params = parse_type_param_names();
   expect(TokenKind::LBrace, "`{`");
 
   std::vector<Variant> vars;
@@ -358,7 +630,7 @@ Enum Parser::parse_enum(std::vector<std::string> annotations) {
   Enum en;
   en.annotations = std::move(annotations);
   en.name = name.lexeme;
-  en.type_param = tp.lexeme;
+  en.type_params = type_params;
   en.variants = std::move(vars);
   en.span = make_span(kw.span.start, rb.span.end, kw.span.source_path);
   return en;
@@ -389,6 +661,20 @@ Stmt Parser::parse_stmt_with_annotations(std::vector<std::string> annotations) {
   s.annotations = std::move(annotations);
 
   if (match(TokenKind::KwLet)) {
+    if (match(TokenKind::LBrace)) {
+      std::vector<StructBindingField> fields = parse_struct_binding_fields();
+      expect(TokenKind::RBrace, "`}`");
+      expect(TokenKind::Equal, "`=`");
+      ExprPtr value = parse_expr();
+      Stmt::LetStruct n;
+      n.fields = std::move(fields);
+      n.value = std::move(value);
+      s.node = std::move(n);
+      s.span = make_span(start.span.start, std::get<Stmt::LetStruct>(s.node).value->span.end,
+                         start.span.source_path);
+      return s;
+    }
+
     const Token& name = expect(TokenKind::Ident, "binding name");
     expect(TokenKind::Equal, "`=`");
     ExprPtr value = parse_expr();
@@ -460,6 +746,32 @@ Stmt Parser::parse_stmt_with_annotations(std::vector<std::string> annotations) {
     return s;
   }
 
+  if (match(TokenKind::KwMatch)) {
+    ExprPtr subject = parse_expr();
+    const Token& lb = expect(TokenKind::LBrace, "`{`");
+    std::vector<MatchArm> arms;
+    while (!at(TokenKind::RBrace)) {
+      MatchArm arm;
+      arm.pattern = parse_pattern();
+      expect(TokenKind::FatArrow, "`=>`");
+      arm.body = parse_block();
+      arm.span = make_span(arm.pattern.span.start, arm.body.span.end, arm.pattern.span.source_path);
+      arms.push_back(std::move(arm));
+      (void)match(TokenKind::Comma);
+    }
+    const Token& rb = expect(TokenKind::RBrace, "`}`");
+    if (arms.empty()) {
+      throw ParseError("match requires at least one arm", lb.span);
+    }
+
+    Stmt::Match n;
+    n.subject = std::move(subject);
+    n.arms = std::move(arms);
+    s.node = std::move(n);
+    s.span = make_span(start.span.start, rb.span.end, start.span.source_path);
+    return s;
+  }
+
   if (match(TokenKind::KwFor)) {
     const Token& var = expect(TokenKind::Ident, "loop variable");
     expect(TokenKind::KwIn, "`in`");
@@ -482,70 +794,109 @@ Stmt Parser::parse_stmt_with_annotations(std::vector<std::string> annotations) {
     return s;
   }
 
-  // Assignment statement forms (v0.2.x minimal surface):
-  //   Ident '=' Expr
-  //   Ident ('+='|'-='|'*='|'/='|'%=') Expr
-  //   Ident '.' Ident '=' Expr
-  //   Ident '.' Ident ('+='|'-='|'*='|'/='|'%=') Expr
-  if (at(TokenKind::Ident) && peek(1).kind == TokenKind::Equal) {
-    const Token& name = bump();
-    expect(TokenKind::Equal, "`=`");
-    ExprPtr value = parse_expr();
-    Stmt::AssignVar n;
-    n.name = name.lexeme;
-    n.value = std::move(value);
+  if (match(TokenKind::KwWhile)) {
+    ExprPtr cond = parse_expr();
+    Block body = parse_block();
+    Stmt::While n;
+    n.cond = std::move(cond);
+    n.body = std::move(body);
     s.node = std::move(n);
-    s.span = make_span(start.span.start, std::get<Stmt::AssignVar>(s.node).value->span.end,
-                       start.span.source_path);
-    return s;
-  }
-  if (at(TokenKind::Ident) && is_compound_assign_op(peek(1).kind)) {
-    const Token& name = bump();
-    const TokenKind op = bump().kind;
-    ExprPtr value = make_compound_rhs(op, make_var_name_expr(name), parse_expr());
-    Stmt::AssignVar n;
-    n.name = name.lexeme;
-    n.value = std::move(value);
-    s.node = std::move(n);
-    s.span = make_span(start.span.start, std::get<Stmt::AssignVar>(s.node).value->span.end,
-                       start.span.source_path);
-    return s;
-  }
-  if (at(TokenKind::Ident) && peek(1).kind == TokenKind::Dot && peek(2).kind == TokenKind::Ident &&
-      peek(3).kind == TokenKind::Equal) {
-    const Token& base = bump();
-    expect(TokenKind::Dot, "`.`");
-    const Token& field = expect(TokenKind::Ident, "field name");
-    expect(TokenKind::Equal, "`=`");
-    ExprPtr value = parse_expr();
-    Stmt::AssignField n;
-    n.base = base.lexeme;
-    n.field = field.lexeme;
-    n.value = std::move(value);
-    s.node = std::move(n);
-    s.span = make_span(start.span.start, std::get<Stmt::AssignField>(s.node).value->span.end,
-                       start.span.source_path);
-    return s;
-  }
-  if (at(TokenKind::Ident) && peek(1).kind == TokenKind::Dot && peek(2).kind == TokenKind::Ident &&
-      is_compound_assign_op(peek(3).kind)) {
-    const Token& base = bump();
-    expect(TokenKind::Dot, "`.`");
-    const Token& field = expect(TokenKind::Ident, "field name");
-    const TokenKind op = bump().kind;
-    ExprPtr value = make_compound_rhs(op, make_field_expr(base, field), parse_expr());
-    Stmt::AssignField n;
-    n.base = base.lexeme;
-    n.field = field.lexeme;
-    n.value = std::move(value);
-    s.node = std::move(n);
-    s.span = make_span(start.span.start, std::get<Stmt::AssignField>(s.node).value->span.end,
+    s.span = make_span(start.span.start, std::get<Stmt::While>(s.node).body.span.end,
                        start.span.source_path);
     return s;
   }
 
+  if (match(TokenKind::KwBreak)) {
+    s.node = Stmt::Break{};
+    s.span = start.span;
+    return s;
+  }
+
+  if (match(TokenKind::KwContinue)) {
+    s.node = Stmt::Continue{};
+    s.span = start.span;
+    return s;
+  }
+
+  // Rooted assignment statement forms:
+  //   Ident ('=' | op=) Expr
+  //   Ident ('.' Ident)+ ('=' | op=) Expr
+  if (at(TokenKind::Ident)) {
+    std::size_t lookahead = 1;
+    std::vector<std::string> path_segments;
+    while (peek(lookahead).kind == TokenKind::Dot && peek(lookahead + 1).kind == TokenKind::Ident) {
+      path_segments.push_back(peek(lookahead + 1).lexeme);
+      lookahead += 2;
+    }
+
+    const TokenKind tail = peek(lookahead).kind;
+    if (tail == TokenKind::Equal || is_compound_assign_op(tail)) {
+      const Token& base = bump();
+      SourcePos path_end = base.span.end;
+      for (std::size_t i = 0; i < path_segments.size(); ++i) {
+        expect(TokenKind::Dot, "`.`");
+        const Token& segment = expect(TokenKind::Ident, "field name");
+        path_end = segment.span.end;
+      }
+
+      if (path_segments.empty()) {
+        if (tail == TokenKind::Equal) {
+          expect(TokenKind::Equal, "`=`");
+          ExprPtr value = parse_expr();
+          Stmt::AssignVar n;
+          n.name = base.lexeme;
+          n.value = std::move(value);
+          s.node = std::move(n);
+          s.span = make_span(start.span.start, std::get<Stmt::AssignVar>(s.node).value->span.end,
+                             start.span.source_path);
+          return s;
+        }
+
+        const TokenKind op = bump().kind;
+        ExprPtr value = make_compound_rhs(op, make_var_name_expr(base), parse_expr());
+        Stmt::AssignVar n;
+        n.name = base.lexeme;
+        n.value = std::move(value);
+        s.node = std::move(n);
+        s.span = make_span(start.span.start, std::get<Stmt::AssignVar>(s.node).value->span.end,
+                           start.span.source_path);
+        return s;
+      }
+
+      const std::string field_path = join_dotted_path(path_segments);
+      if (tail == TokenKind::Equal) {
+        expect(TokenKind::Equal, "`=`");
+        ExprPtr value = parse_expr();
+        Stmt::AssignField n;
+        n.base = base.lexeme;
+        n.field = field_path;
+        n.value = std::move(value);
+        s.node = std::move(n);
+        s.span = make_span(start.span.start, std::get<Stmt::AssignField>(s.node).value->span.end,
+                           start.span.source_path);
+        return s;
+      }
+
+      const TokenKind op = bump().kind;
+      ExprPtr value = make_compound_rhs(op, make_field_chain_expr(base, field_path, path_end), parse_expr());
+      Stmt::AssignField n;
+      n.base = base.lexeme;
+      n.field = field_path;
+      n.value = std::move(value);
+      s.node = std::move(n);
+      s.span = make_span(start.span.start, std::get<Stmt::AssignField>(s.node).value->span.end,
+                         start.span.source_path);
+      return s;
+    }
+  }
+
   // Expr statement
   ExprPtr e = parse_expr();
+  if (at(TokenKind::Equal) || is_compound_assign_op(peek().kind)) {
+    throw ParseError(
+        "assignment target must be a rooted name or rooted field chain; temporary-base assignment is not supported",
+        peek().span);
+  }
   Stmt::ExprStmt n;
   n.expr = std::move(e);
   s.node = std::move(n);
@@ -659,6 +1010,16 @@ ExprPtr Parser::parse_prefix() {
   }
 
   switch (t.kind) {
+  case TokenKind::KwAwait: {
+    const Token& kw = bump();
+    ExprPtr inner = parse_prefix();
+    auto e = std::make_unique<Expr>();
+    Expr::Await a;
+    a.inner = std::move(inner);
+    e->span = make_span(kw.span.start, a.inner->span.end, kw.span.source_path);
+    e->node = std::move(a);
+    return e;
+  }
   case TokenKind::KwShared: return mk_prefix(Expr::PrefixKind::Shared);
   case TokenKind::KwUnique: return mk_prefix(Expr::PrefixKind::Unique);
   case TokenKind::KwHeap: return mk_prefix(Expr::PrefixKind::Heap);
@@ -669,61 +1030,102 @@ ExprPtr Parser::parse_prefix() {
 
 ExprPtr Parser::parse_primary() {
   const Token& t = peek();
-  if (match(TokenKind::IntLit)) {
+  auto parse_call_args = [&]() {
+    std::vector<ExprPtr> args;
+    if (!at(TokenKind::RParen)) {
+      args.push_back(parse_expr());
+      while (match(TokenKind::Comma)) {
+        if (at(TokenKind::RParen)) break;
+        args.push_back(parse_expr());
+      }
+    }
+    return args;
+  };
+
+  ExprPtr base;
+  if (match(TokenKind::KwMatch)) {
+    ExprPtr subject = parse_expr();
+    const Token& lb = expect(TokenKind::LBrace, "`{`");
+    std::vector<MatchExprArmPtr> arms;
+    while (!at(TokenKind::RBrace)) {
+      auto arm = std::make_unique<MatchExprArm>();
+      arm->pattern = parse_pattern();
+      expect(TokenKind::FatArrow, "`=>`");
+      arm->value = parse_expr();
+      arm->span =
+          make_span(arm->pattern.span.start, arm->value->span.end, arm->pattern.span.source_path);
+      arms.push_back(std::move(arm));
+      (void)match(TokenKind::Comma);
+    }
+    const Token& rb = expect(TokenKind::RBrace, "`}`");
+    if (arms.empty()) {
+      throw ParseError("match requires at least one arm", lb.span);
+    }
+    auto e = std::make_unique<Expr>();
+    Expr::Match m;
+    m.subject = std::move(subject);
+    m.arms = std::move(arms);
+    e->span = make_span(t.span.start, rb.span.end, t.span.source_path);
+    e->node = std::move(m);
+    base = std::move(e);
+  } else if (match(TokenKind::IntLit)) {
     auto e = std::make_unique<Expr>();
     Expr::IntLit n;
     n.value = parse_int_literal(t);
     e->span = t.span;
     e->node = n;
-    return e;
-  }
-  if (match(TokenKind::FloatLit)) {
+    base = std::move(e);
+  } else if (match(TokenKind::FloatLit)) {
     auto e = std::make_unique<Expr>();
     Expr::FloatLit n;
     n.value = std::strtod(t.lexeme.c_str(), nullptr);
     e->span = t.span;
     e->node = n;
-    return e;
-  }
-  if (match(TokenKind::KwTrue) || match(TokenKind::KwFalse)) {
+    base = std::move(e);
+  } else if (match(TokenKind::KwTrue) || match(TokenKind::KwFalse)) {
     auto e = std::make_unique<Expr>();
     Expr::BoolLit n;
     n.value = (t.kind == TokenKind::KwTrue);
     e->span = t.span;
     e->node = n;
-    return e;
-  }
-  if (match(TokenKind::StringLit)) {
+    base = std::move(e);
+  } else if (match(TokenKind::StringLit)) {
     auto e = std::make_unique<Expr>();
     Expr::StringLit n;
     n.value = t.lexeme;
     e->span = t.span;
     e->node = std::move(n);
-    return e;
-  }
-
-  if (match(TokenKind::LParen)) {
-    ExprPtr inner = parse_expr();
+    base = std::move(e);
+  } else if (match(TokenKind::LParen)) {
+    base = parse_expr();
     expect(TokenKind::RParen, "`)`");
-    return inner;
-  }
-
-  if (match(TokenKind::Ident)) {
+  } else if (match(TokenKind::Ident)) {
     const Token& ident = t;
 
-    auto parse_call_args = [&]() {
-      std::vector<ExprPtr> args;
-      if (!at(TokenKind::RParen)) {
-        args.push_back(parse_expr());
-        while (match(TokenKind::Comma)) {
-          if (at(TokenKind::RParen)) break;
-          args.push_back(parse_expr());
-        }
-      }
-      return args;
-    };
+    if (match(TokenKind::LParen)) {
+      std::vector<ExprPtr> args = parse_call_args();
+      const Token& rp = expect(TokenKind::RParen, "`)`");
+      auto e = std::make_unique<Expr>();
+      Expr::Call c;
+      c.callee = ident.lexeme;
+      c.callee_span = ident.span;
+      c.args = std::move(args);
+      e->span = make_span(ident.span.start, rp.span.end, ident.span.source_path);
+      e->node = std::move(c);
+      base = std::move(e);
+    } else {
+      auto e = std::make_unique<Expr>();
+      Expr::Name n;
+      n.ident = ident.lexeme;
+      e->span = ident.span;
+      e->node = std::move(n);
+      base = std::move(e);
+    }
+  } else {
+    throw ParseError("expected expression", t.span);
+  }
 
-    // Method call / field access (base is identifier only in v0.2.x)
+  while (true) {
     if (match(TokenKind::Dot)) {
       const Token& member = expect(TokenKind::Ident, "member name");
       if (match(TokenKind::LParen)) {
@@ -731,44 +1133,32 @@ ExprPtr Parser::parse_primary() {
         const Token& rp = expect(TokenKind::RParen, "`)`");
         auto e = std::make_unique<Expr>();
         Expr::MethodCall c;
-        c.base = ident.lexeme;
+        c.base = std::move(base);
         c.method = member.lexeme;
+        c.method_span = member.span;
         c.args = std::move(args);
-        e->span = make_span(ident.span.start, rp.span.end, ident.span.source_path);
+        e->span = make_span(c.base->span.start, rp.span.end, c.base->span.source_path);
         e->node = std::move(c);
-        return e;
+        base = std::move(e);
+      } else {
+        base = make_field_expr(std::move(base), member.lexeme, member.span.end);
       }
-      auto e = std::make_unique<Expr>();
-      Expr::Field f;
-      f.base = ident.lexeme;
-      f.field = member.lexeme;
-      e->span = make_span(ident.span.start, member.span.end, ident.span.source_path);
-      e->node = std::move(f);
-      return e;
+      continue;
     }
-
-    // Call or name
-    if (match(TokenKind::LParen)) {
-      std::vector<ExprPtr> args = parse_call_args();
-      const Token& rp = expect(TokenKind::RParen, "`)`");
+    if (match(TokenKind::Question)) {
+      const Token& q = toks_[i_ - 1];
       auto e = std::make_unique<Expr>();
-      Expr::Call c;
-      c.callee = ident.lexeme;
-      c.args = std::move(args);
-      e->span = make_span(ident.span.start, rp.span.end, ident.span.source_path);
-      e->node = std::move(c);
-      return e;
+      Expr::Try tr;
+      tr.inner = std::move(base);
+      e->span = make_span(tr.inner->span.start, q.span.end, tr.inner->span.source_path);
+      e->node = std::move(tr);
+      base = std::move(e);
+      continue;
     }
-
-    auto e = std::make_unique<Expr>();
-    Expr::Name n;
-    n.ident = ident.lexeme;
-    e->span = ident.span;
-    e->node = std::move(n);
-    return e;
+    break;
   }
 
-  throw ParseError("expected expression", t.span);
+  return base;
 }
 
 } // namespace nebula::frontend

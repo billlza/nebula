@@ -1,4 +1,4 @@
-# Representation × Ownership model (v1.0.0)
+# Representation × Ownership model
 
 Region remains an allocation-domain choice, not ownership.
 

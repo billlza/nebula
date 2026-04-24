@@ -1,0 +1,12 @@
+struct Foo {
+  a: Int
+}
+
+extern fn relay(x: Foo) -> Foo
+
+fn extern_return_external_opaque() -> Foo {
+  region R {
+    let x = Foo(1)
+    return relay(x)
+  }
+}

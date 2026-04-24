@@ -1,4 +1,4 @@
-# Region semantics (v1.0.0)
+# Region semantics
 
 ## Region scope
 

@@ -1,0 +1,5 @@
+@export
+@abi_c
+fn bad(msg: String) -> Int {
+  return 0
+}

@@ -1,0 +1,11 @@
+id = "CHK-202-std-net-handle-construct-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/std_net_handle_construct_rejected.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T135"
+stage = "build"
+category = "typecheck"

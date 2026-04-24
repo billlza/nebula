@@ -1,0 +1,40 @@
+import std::bytes
+import std::http
+import std::http_json
+import std::json
+
+fn make_post() -> Method {
+  return Post
+}
+
+fn make_request() -> Request {
+  return Request(make_post(), "/echo", from_string("{\"name\":\"nebula\"}"))
+}
+
+fn main() -> Void {
+  let request = make_request()
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match get_string(payload, "name") {
+        Ok(name) => {
+          let reply = ok_json(object1("name", string_value(name)))
+          if reply.content_type == "application/json; charset=utf-8" {
+            if to_string(reply.body) == "{\"name\":\"nebula\"}" {
+              print("json-http-ok")
+            } else {
+              print("json-http-bad")
+            }
+          } else {
+            print("json-http-bad")
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

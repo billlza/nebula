@@ -16,10 +16,13 @@ static TokenKind keyword_kind(std::string_view s) {
       {"module", TokenKind::KwModule}, {"import", TokenKind::KwImport},
       {"extern", TokenKind::KwExtern}, {"ref", TokenKind::KwRef},
       {"shared", TokenKind::KwShared}, {"unique", TokenKind::KwUnique},
-      {"for", TokenKind::KwFor},       {"in", TokenKind::KwIn},
+      {"for", TokenKind::KwFor},       {"while", TokenKind::KwWhile},
+      {"break", TokenKind::KwBreak},   {"continue", TokenKind::KwContinue},
+      {"in", TokenKind::KwIn},
       {"heap", TokenKind::KwHeap},     {"promote", TokenKind::KwPromote},
       {"unsafe", TokenKind::KwUnsafe}, {"true", TokenKind::KwTrue},
-      {"false", TokenKind::KwFalse},
+      {"false", TokenKind::KwFalse},   {"match", TokenKind::KwMatch},
+      {"async", TokenKind::KwAsync},   {"await", TokenKind::KwAwait},
   };
   auto it = kMap.find(s);
   if (it == kMap.end()) return TokenKind::Ident;
@@ -276,6 +279,7 @@ Token Lexer::lex_string() {
       const char e = bump();
       switch (e) {
       case 'n': s.push_back('\n'); break;
+      case 'r': s.push_back('\r'); break;
       case 't': s.push_back('\t'); break;
       case '"': s.push_back('"'); break;
       case '\\': s.push_back('\\'); break;
@@ -320,6 +324,11 @@ Token Lexer::lex_punct() {
     bump();
     bump();
     return Token{TokenKind::EqualEqual, span_from(start), "=="};
+  }
+  if (c == '=' && peek(1) == '>') {
+    bump();
+    bump();
+    return Token{TokenKind::FatArrow, span_from(start), "=>"};
   }
   if (c == '!' && peek(1) == '=') {
     bump();
@@ -389,6 +398,7 @@ Token Lexer::lex_punct() {
   case '}': return Token{TokenKind::RBrace, span_from(start), "}"};
   case ',': return Token{TokenKind::Comma, span_from(start), ","};
   case '.': return Token{TokenKind::Dot, span_from(start), "."};
+  case '?': return Token{TokenKind::Question, span_from(start), "?"};
   case ':': return Token{TokenKind::Colon, span_from(start), ":"};
   case '<': return Token{TokenKind::Less, span_from(start), "<"};
   case '>': return Token{TokenKind::Greater, span_from(start), ">"};

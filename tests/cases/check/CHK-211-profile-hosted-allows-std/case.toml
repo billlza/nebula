@@ -1,0 +1,7 @@
+id = "CHK-211-profile-hosted-allows-std"
+suite = "check"
+command = "check"
+source = "fixtures/std_json_roundtrip.nb"
+args = ["--profile", "hosted", "--diag-format", "json"]
+expect_rc = 0
+forbid_stdout_contains = ["NBL-CLI-SYSTEM-STD"]

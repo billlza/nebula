@@ -8,10 +8,14 @@
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "frontend/diagnostic.hpp"
+#include "frontend/runtime_profile.hpp"
+#include "frontend/typed_ast.hpp"
 #include "nir/lower.hpp"
+#include "passes/async_explain.hpp"
 #include "passes/rep_owner_infer.hpp"
 
 namespace fs = std::filesystem;
@@ -30,6 +34,59 @@ enum class CrossStageReuseMode : std::uint8_t { Off, Safe };
 enum class DiskCacheMode : std::uint8_t { Off, On };
 enum class CompileFlavor : std::uint8_t { Normal, Test, Bench };
 enum class CacheReportFormat : std::uint8_t { Text, Json };
+enum class BuildArtifactKind : std::uint8_t { Executable, StaticLib, SharedLib };
+enum class NativeSourceLanguage : std::uint8_t { C, Cxx, Asm };
+
+using nebula::frontend::PanicPolicy;
+using nebula::frontend::RuntimeProfile;
+using nebula::frontend::effective_no_std;
+using nebula::frontend::effective_strict_region;
+using nebula::frontend::is_system_profile;
+using nebula::frontend::panic_policy_requires_host_unwind;
+
+struct NativeSourceSpec {
+  fs::path path;
+  NativeSourceLanguage language = NativeSourceLanguage::Cxx;
+  std::vector<fs::path> include_dirs;
+  std::vector<std::string> defines;
+  std::vector<std::string> arch;
+  std::vector<std::string> cpu_features;
+};
+
+struct NativeGeneratedHeaderConfig {
+  fs::path out;
+  fs::path template_path;
+  std::vector<std::pair<std::string, std::string>> values;
+};
+
+struct NativeBuildConfig {
+  std::vector<fs::path> c_sources;
+  std::vector<fs::path> cxx_sources;
+  std::vector<fs::path> include_dirs;
+  std::vector<std::string> defines;
+  std::vector<NativeSourceSpec> sources;
+  std::vector<NativeGeneratedHeaderConfig> generated_headers;
+
+  [[nodiscard]] bool empty() const {
+    return c_sources.empty() && cxx_sources.empty() && include_dirs.empty() && defines.empty() &&
+           sources.empty() && generated_headers.empty();
+  }
+};
+
+struct NativeSourceInput {
+  fs::path path;
+  NativeSourceLanguage language = NativeSourceLanguage::Cxx;
+  std::vector<fs::path> include_dirs;
+  std::vector<std::string> defines;
+  std::vector<std::string> extra_flags;
+  std::string package_name;
+};
+
+struct NativeBuildInputs {
+  std::vector<NativeSourceInput> sources;
+
+  [[nodiscard]] bool empty() const { return sources.empty(); }
+};
 
 inline constexpr std::uint32_t kWarnClassApi = 1u << 0;
 inline constexpr std::uint32_t kWarnClassPerformance = 1u << 1;
@@ -62,6 +119,10 @@ struct CliOptions {
   bool warn_policy_explicit = false;
   bool cache_report = false;
   bool disk_cache_prune = false;
+  bool no_std = false;
+  bool runtime_profile_explicit = false;
+  bool target_explicit = false;
+  bool panic_policy_explicit = false;
 
   BuildMode mode = BuildMode::Debug;
   AnalysisProfile analysis_profile = AnalysisProfile::Auto;
@@ -76,6 +137,8 @@ struct CliOptions {
   CrossStageReuseMode cross_stage_reuse = CrossStageReuseMode::Off;
   DiskCacheMode disk_cache = DiskCacheMode::Off;
   CacheReportFormat cache_report_format = CacheReportFormat::Text;
+  RuntimeProfile runtime_profile = RuntimeProfile::Hosted;
+  PanicPolicy panic_policy = PanicPolicy::Abort;
   int diag_budget_ms = 0;
   int diag_grouping_delay_ms = 0;
   int max_root_causes = 0;
@@ -92,8 +155,18 @@ struct CliOptions {
   fs::path out_dir = "generated_cpp";
   fs::path dir = "examples";
   fs::path repo_root = ".";
+  fs::path self_executable;
+  fs::path include_root;
+  fs::path std_root;
+  fs::path backend_sdk_root;
+  std::string include_root_error;
+  std::string std_root_error;
+  std::string backend_sdk_root_error;
+  std::string target = "host";
   std::optional<fs::path> out_path;
+  std::vector<std::string> run_args;
   bool root_cause_v2_default_on = false;
+  BuildArtifactKind artifact_kind = BuildArtifactKind::Executable;
 };
 
 struct CompilePipelineOptions {
@@ -108,12 +181,16 @@ struct CompilePipelineOptions {
   bool disk_cache_prune = false;
   bool dump_ownership = false;
   bool dump_cfg_ir = false;
+  bool no_std = false;
+  RuntimeProfile runtime_profile = RuntimeProfile::Hosted;
+  PanicPolicy panic_policy = PanicPolicy::Abort;
   int budget_ms = 0;
   int disk_cache_ttl_sec = 3600;
   int disk_cache_max_entries = 256;
   fs::path disk_cache_dir = ".nebula-cache";
   std::string source_path;
   std::string cache_key_source;
+  std::string target = "host";
   nebula::frontend::DiagnosticStage stage = nebula::frontend::DiagnosticStage::Build;
 };
 
@@ -125,6 +202,7 @@ struct LoadedProjectInput {
   std::string cache_key_source;
   std::vector<nebula::frontend::SourceFile> sources;
   std::vector<fs::path> host_cxx_sources;
+  NativeBuildInputs native_inputs;
 };
 
 struct CompilePipelineResult {
@@ -139,7 +217,9 @@ struct CompilePipelineResult {
   std::size_t cfg_nodes = 0;
   std::string cached_cpp;
   std::vector<nebula::frontend::Diagnostic> diags;
+  std::shared_ptr<std::vector<nebula::frontend::TProgram>> typed_programs;
   std::shared_ptr<nebula::nir::Program> nir_prog;
+  std::shared_ptr<nebula::passes::AsyncExplainResult> async_explain;
   std::shared_ptr<nebula::passes::RepOwnerResult> rep_owner;
 };
 
@@ -169,10 +249,15 @@ struct ArtifactMeta {
   std::string source_hash;
   std::string mode;
   std::string profile;
+  std::string artifact_kind = "executable";
   int compiler_schema_version = 1;
   int cache_schema_version = 2;
   bool strict_region = false;
   bool warnings_as_errors = false;
+  bool no_std = false;
+  std::string runtime_profile = "hosted";
+  std::string target = "host";
+  std::string panic_policy = "abort";
 };
 
 struct ArtifactLookupResult {
@@ -187,6 +272,7 @@ bool parse_cli_options(const std::vector<std::string>& args,
                        CliOptions& opt,
                        std::string& err);
 
+std::optional<fs::path> find_executable_on_path(std::string_view command);
 int run_command(const std::vector<std::string>& args);
 AnalysisProfile resolve_profile(BuildMode mode, AnalysisProfile requested);
 AnalysisTier resolve_analysis_tier(BuildMode mode, AnalysisTier requested);
@@ -210,7 +296,9 @@ int compile_cpp(const CliOptions& opt,
                 const fs::path& cpp_path,
                 const fs::path& out_bin,
                 CompileFlavor flavor,
-                const std::vector<fs::path>& extra_sources = {});
+                const std::vector<fs::path>& extra_sources = {},
+                const NativeBuildInputs& native_inputs = {},
+                BuildArtifactKind artifact_kind = BuildArtifactKind::Executable);
 bool write_text_file(const fs::path& path, const std::string& text);
 fs::path cpp_output_path(const fs::path& source, const CliOptions& opt, const std::string& suffix);
 fs::path chosen_artifact_path(const fs::path& source, const CliOptions& opt);
@@ -226,10 +314,6 @@ bool read_source(const fs::path& file,
                  std::string& out,
                  std::vector<nebula::frontend::Diagnostic>& diags,
                  nebula::frontend::DiagnosticStage stage);
-bool load_project_input(const fs::path& input,
-                        LoadedProjectInput& out,
-                        std::vector<nebula::frontend::Diagnostic>& diags,
-                        nebula::frontend::DiagnosticStage stage);
 int run_preflight_if_enabled(const fs::path& file,
                              const std::vector<nebula::frontend::SourceFile>& sources,
                              const std::string& cache_key_source,

@@ -1,0 +1,17 @@
+id = "TST-075-build-c-abi-host-cxx-rejected"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/cabi_hostcpp')\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'host.cpp').write_text('#include <cstdint>\\nstd::int64_t helper_host() { return 7; }\\n', encoding='utf-8')\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"cabi-host\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\nhost_cxx = [\"host.cpp\"]\\n', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('@export\\n@abi_c\\nfn add(a: Int, b: Int) -> Int {\\n  return a + b\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY build work/cabi_hostcpp --emit staticlib > work/cabi_hostcpp.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-CABI-HOSTCXX' work/cabi_hostcpp.out && grep -F 'does not support host_cxx sources yet' work/cabi_hostcpp.out"
+expect_rc = 0

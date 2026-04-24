@@ -1,0 +1,5 @@
+@export
+@abi_c
+struct Box {
+  value: Int
+}

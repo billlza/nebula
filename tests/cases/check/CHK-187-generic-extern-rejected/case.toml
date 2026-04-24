@@ -1,0 +1,10 @@
+id = "CHK-187-generic-extern-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/generic_extern_rejected.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T124"
+severity = "error"

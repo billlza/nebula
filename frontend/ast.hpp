@@ -15,14 +15,16 @@ namespace nebula::frontend {
 struct Type;
 struct Expr;
 struct Stmt;
+struct MatchExprArm;
 
 using TypePtr = std::unique_ptr<Type>;
 using ExprPtr = std::unique_ptr<Expr>;
+using MatchExprArmPtr = std::unique_ptr<MatchExprArm>;
 
 struct Type {
   Span span{};
   std::string name;
-  TypePtr arg; // optional single type argument (enum generic)
+  std::vector<Type> args;
   std::vector<Type> callable_params;
   TypePtr callable_ret;
   bool is_unsafe_callable = false;
@@ -71,15 +73,18 @@ struct Expr {
   };
   struct Call {
     std::string callee;
+    Span callee_span{};
     std::vector<ExprPtr> args;
   };
   struct Field {
-    std::string base;
+    ExprPtr base;
     std::string field;
+    Span field_span{};
   };
   struct MethodCall {
-    std::string base;
+    ExprPtr base;
     std::string method;
+    Span method_span{};
     std::vector<ExprPtr> args;
   };
   struct Binary {
@@ -95,11 +100,23 @@ struct Expr {
     PrefixKind kind{};
     ExprPtr inner;
   };
+  struct Try {
+    ExprPtr inner;
+  };
+  struct Await {
+    ExprPtr inner;
+  };
+  struct Match {
+    ExprPtr subject;
+    std::vector<MatchExprArmPtr> arms;
+  };
 
   Span span{};
   std::variant<IntLit, FloatLit, BoolLit, StringLit, Name, Call, Field, MethodCall, Binary, Unary,
-               Prefix>
+               Prefix, Try, Await, Match>
       node;
+
+  Expr() : node(IntLit{}) {}
 };
 
 struct Block {
@@ -107,9 +124,60 @@ struct Block {
   std::vector<Stmt> stmts;
 };
 
+struct StructBindingField {
+  Span span{};
+  Span binding_span{};
+  std::string field_name;
+  std::optional<std::string> binding_name;
+  bool skip = false;
+};
+
+struct Pattern {
+  struct Wildcard {};
+  struct BoolLit {
+    bool value = false;
+  };
+  struct Variant {
+    struct EmptyPayload {};
+    struct BindingPayload {
+      std::string name;
+      Span binding_span{};
+    };
+    struct WildcardPayload {};
+    struct StructPayload {
+      std::vector<StructBindingField> fields;
+    };
+
+    std::string name;
+    Span name_span{};
+    using Payload =
+        std::variant<EmptyPayload, BindingPayload, WildcardPayload, StructPayload>;
+    std::optional<Payload> payload;
+  };
+
+  Span span{};
+  std::variant<Wildcard, BoolLit, Variant> node;
+};
+
+struct MatchExprArm {
+  Span span{};
+  Pattern pattern;
+  ExprPtr value;
+};
+
+struct MatchArm {
+  Span span{};
+  Pattern pattern;
+  Block body;
+};
+
 struct Stmt {
   struct Let {
     std::string name;
+    ExprPtr value;
+  };
+  struct LetStruct {
+    std::vector<StructBindingField> fields;
     ExprPtr value;
   };
   struct Return {
@@ -145,10 +213,22 @@ struct Stmt {
     ExprPtr end;
     Block body;
   };
+  struct While {
+    ExprPtr cond;
+    Block body;
+  };
+  struct Break {};
+  struct Continue {};
+  struct Match {
+    ExprPtr subject;
+    std::vector<MatchArm> arms;
+  };
 
   Span span{};
   std::vector<std::string> annotations;
-  std::variant<Let, Return, ExprStmt, AssignVar, AssignField, Region, Unsafe, If, For> node;
+  std::variant<Let, LetStruct, Return, ExprStmt, AssignVar, AssignField, Region, Unsafe, If, For,
+               While, Break, Continue, Match>
+      node;
 };
 
 struct Field {
@@ -167,8 +247,10 @@ struct Function {
   Span span{};
   std::vector<std::string> annotations;
   std::string name;
+  std::vector<std::string> type_params;
   std::vector<Param> params;
   std::optional<Type> return_type;
+  bool is_async = false;
   bool is_extern = false;
   std::optional<Block> body;
 };
@@ -177,6 +259,7 @@ struct Struct {
   Span span{};
   std::vector<std::string> annotations;
   std::string name;
+  std::vector<std::string> type_params;
   std::vector<Field> fields;
 };
 
@@ -184,13 +267,49 @@ struct Enum {
   Span span{};
   std::vector<std::string> annotations;
   std::string name;
-  std::string type_param;
+  std::vector<std::string> type_params;
   std::vector<Variant> variants;
+};
+
+struct UiProp {
+  Span span{};
+  std::string name;
+  ExprPtr value;
+};
+
+struct UiNode {
+  struct View {
+    std::string component;
+    Span component_span{};
+    std::vector<UiProp> props;
+    std::vector<UiNode> children;
+  };
+  struct If {
+    ExprPtr cond;
+    std::vector<UiNode> then_children;
+  };
+  struct For {
+    std::string var;
+    Span var_span{};
+    ExprPtr iterable;
+    std::vector<UiNode> body;
+  };
+
+  Span span{};
+  std::variant<View, If, For> node;
+};
+
+struct Ui {
+  Span span{};
+  std::vector<std::string> annotations;
+  std::string name;
+  std::vector<Param> params;
+  std::vector<UiNode> body;
 };
 
 struct Item {
   Span span{};
-  std::variant<Function, Struct, Enum> node;
+  std::variant<Function, Struct, Enum, Ui> node;
 };
 
 struct Program {

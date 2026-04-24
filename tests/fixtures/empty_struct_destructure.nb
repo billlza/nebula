@@ -1,0 +1,7 @@
+struct Pair {
+  x: Int
+}
+
+fn main() -> Void {
+  let { } = Pair(1)
+}

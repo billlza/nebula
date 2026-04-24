@@ -1,0 +1,49 @@
+enum Flag {
+  On(Void)
+  Off(Void)
+}
+
+enum Result<T, E> {
+  Ok(T)
+  Err(E)
+}
+
+fn get(flag: Bool) -> Result<Int, String> {
+  if flag {
+    return Ok(40)
+  } else {
+    return Err("arm-err")
+  }
+}
+
+fn compute(flag: Flag) -> Result<Int, String> {
+  let value = match flag {
+    On => get(true)? + 2,
+    Off => get(false)? + 1,
+  }
+  return Ok(value)
+}
+
+fn main() -> Void {
+  match compute(On) {
+    Ok(v) => {
+      if v == 42 {
+        print("ok")
+      } else {
+        print("bad")
+      }
+    },
+    Err(msg) => {
+      print(msg)
+    },
+  }
+
+  match compute(Off) {
+    Ok(v) => {
+      print("bad")
+    },
+    Err(msg) => {
+      print(msg)
+    },
+  }
+}

@@ -1,0 +1,17 @@
+struct Pair {
+  x: Int
+  y: Int
+}
+
+enum MaybePair<T> {
+  Some(T)
+  None(Void)
+}
+
+fn main() -> Void {
+  let value = Some(Pair(1, 2))
+  match value {
+    Some({ x: value0, y: value0 }) => {}
+    None => {}
+  }
+}

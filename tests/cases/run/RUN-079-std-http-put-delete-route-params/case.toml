@@ -1,0 +1,7 @@
+id = "RUN-079-std-http-put-delete-route-params"
+suite = "run"
+command = "run"
+source = "fixtures/std_http_put_delete_route_params.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["http-put-delete-route-ok"]

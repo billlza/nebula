@@ -1,0 +1,10 @@
+id = "CHK-182-continue-outside-loop-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/continue_outside_loop.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T120"
+severity = "error"

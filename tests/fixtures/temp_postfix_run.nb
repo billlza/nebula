@@ -1,0 +1,26 @@
+struct Point {
+  x: Int
+}
+
+struct Wrap {
+  p: Point
+}
+
+fn Point_twice(self: Point) -> Int {
+  return self.x + self.x
+}
+
+fn make_point() -> Point {
+  return Point(21)
+}
+
+fn make_wrap() -> Wrap {
+  return Wrap(Point(7))
+}
+
+fn main() -> Void {
+  expect_eq(make_point().x, 21)
+  expect_eq(make_point().twice(), 42)
+  expect_eq(make_wrap().p.x, 7)
+  print("ok")
+}

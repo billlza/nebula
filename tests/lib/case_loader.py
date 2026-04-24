@@ -47,6 +47,9 @@ def _normalize_step(raw: dict[str, Any], case_default: dict[str, Any]) -> dict[s
 
     out["args"] = [str(x) for x in _as_list(raw.get("args", case_default.get("args", [])))]
     out["expect_rc"] = int(raw.get("expect_rc", case_default.get("expect_rc", 0)))
+    timeout_value = raw.get("timeout", case_default.get("timeout"))
+    if timeout_value is not None:
+        out["timeout"] = int(timeout_value)
 
     out["expect_stdout_contains"] = [
         str(x)
@@ -108,6 +111,7 @@ def _normalize_case(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
         "source": raw.get("source"),
         "args": _as_list(raw.get("args", [])),
         "expect_rc": int(raw.get("expect_rc", 0)),
+        "timeout": raw.get("timeout"),
         "expect_stdout_contains": _as_list(raw.get("expect_stdout_contains", [])),
         "forbid_stdout_contains": _as_list(raw.get("forbid_stdout_contains", [])),
         "expect_stdout_regex": _as_list(raw.get("expect_stdout_regex", [])),

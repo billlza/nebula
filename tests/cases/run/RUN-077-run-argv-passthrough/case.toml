@@ -1,0 +1,7 @@
+id = "RUN-077-run-argv-passthrough"
+suite = "run"
+command = "run"
+source = "fixtures/run_args_passthrough.nb"
+args = ["--run-gate", "none", "--", "alpha", "beta"]
+expect_rc = 0
+expect_stdout_contains = ["argv-ok"]

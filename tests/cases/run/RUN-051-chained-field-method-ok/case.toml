@@ -1,0 +1,7 @@
+id = "RUN-051-chained-field-method-ok"
+suite = "run"
+command = "run"
+source = "fixtures/chained_field_method_ok.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["ok"]

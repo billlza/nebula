@@ -1,0 +1,8 @@
+id = "RUN-069-result-try-match-expr-arm-ok"
+suite = "run"
+command = "run"
+source = "fixtures/result_try_match_expr_arm_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["ok", "arm-err"]

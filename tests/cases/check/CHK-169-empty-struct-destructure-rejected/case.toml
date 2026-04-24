@@ -1,0 +1,11 @@
+id = "CHK-169-empty-struct-destructure-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/empty_struct_destructure.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["struct destructuring requires at least one field"]
+
+[[expect_diag]]
+code = "NBL-PAR900"
+stage = "build"

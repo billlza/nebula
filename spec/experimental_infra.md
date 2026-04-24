@@ -1,4 +1,4 @@
-# Experimental / Infra layer (v1.0.0)
+# Experimental / Infra layer
 
 This document holds non-core language mechanics so language semantics stay foregrounded.
 

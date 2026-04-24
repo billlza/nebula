@@ -19,9 +19,11 @@ using frontend::Ty;
 
 struct Expr;
 struct Stmt;
+struct MatchExprArm;
 
 using ExprPtr = std::unique_ptr<Expr>;
 using VarId = std::uint32_t;
+using MatchExprArmPtr = std::unique_ptr<MatchExprArm>;
 
 enum class PrefixKind : std::uint8_t { Shared, Unique, Heap, Promote };
 enum class UnaryOp : std::uint8_t { Not };
@@ -73,6 +75,22 @@ struct Expr {
     std::string base_name;
     std::string field;
   };
+  struct TempFieldRef {
+    ExprPtr base;
+    std::string field;
+  };
+  struct EnumIsVariant {
+    ExprPtr subject;
+    std::optional<frontend::QualifiedName> enum_name;
+    std::string variant_name;
+    std::uint32_t variant_index = 0;
+  };
+  struct EnumPayload {
+    ExprPtr subject;
+    std::optional<frontend::QualifiedName> enum_name;
+    std::string variant_name;
+    std::uint32_t variant_index = 0;
+  };
   struct Construct {
     std::string type_name;
     std::optional<frontend::QualifiedName> resolved_type;
@@ -93,13 +111,50 @@ struct Expr {
     PrefixKind kind{};
     ExprPtr inner;
   };
+  struct Await {
+    ExprPtr inner;
+  };
+  struct Match {
+    struct Binding {
+      VarId var{};
+      std::string name;
+      Ty ty = Ty::Unknown();
+      Span span{};
+    };
+    struct StructBinding {
+      std::string field_name;
+      Binding binding;
+      Span field_span{};
+    };
+    struct Arm {
+      enum class Kind : std::uint8_t { Wildcard, Bool, EnumVariant };
+
+      Kind kind = Kind::Wildcard;
+      Span span{};
+      bool bool_value = false;
+      std::string variant_name;
+      std::uint32_t variant_index = 0;
+      Ty payload_ty = Ty::Unknown();
+      std::optional<Binding> payload_binding;
+      std::vector<StructBinding> payload_struct_bindings;
+      ExprPtr value;
+    };
+
+    ExprPtr subject;
+    std::vector<MatchExprArmPtr> arms;
+    bool exhaustive = false;
+  };
 
   Span span{};
   Ty ty = Ty::Unknown();
-  std::variant<IntLit, BoolLit, FloatLit, StringLit, VarRef, Call, FieldRef, Construct, Binary,
-               Unary, Prefix>
+  std::variant<IntLit, BoolLit, FloatLit, StringLit, VarRef, Call, FieldRef, TempFieldRef,
+               EnumIsVariant, EnumPayload, Construct, Binary, Unary, Prefix, Await, Match>
       node;
+
+  Expr() : node(IntLit{}) {}
 };
+
+struct MatchExprArm : Expr::Match::Arm {};
 
 struct Block {
   Span span{};
@@ -107,6 +162,11 @@ struct Block {
 };
 
 struct Stmt {
+  struct Declare {
+    VarId var{};
+    std::string name;
+    Ty ty = Ty::Unknown();
+  };
   struct Let {
     VarId var{};
     std::string name;
@@ -152,10 +212,20 @@ struct Stmt {
     ExprPtr end;
     Block body;
   };
+  struct While {
+    ExprPtr cond;
+    Block body;
+  };
+  struct Break {};
+  struct Continue {};
 
   Span span{};
   std::vector<std::string> annotations;
-  std::variant<Let, Return, ExprStmt, AssignVar, AssignField, Region, Unsafe, If, For> node;
+  std::variant<Declare, Let, Return, ExprStmt, AssignVar, AssignField, Region, Unsafe, If, For,
+               While, Break, Continue>
+      node;
+
+  Stmt() : node(Declare{}) {}
 };
 
 struct Param {
@@ -183,8 +253,10 @@ struct Function {
   std::vector<std::string> annotations;
   std::string name;
   frontend::QualifiedName qualified_name;
+  std::vector<std::string> type_params;
   std::vector<Param> params;
   Ty ret = Ty::Void();
+  bool is_async = false;
   bool is_extern = false;
   std::optional<Block> body;
 };
@@ -194,6 +266,7 @@ struct StructDef {
   std::vector<std::string> annotations;
   std::string name;
   frontend::QualifiedName qualified_name;
+  std::vector<std::string> type_params;
   std::vector<Field> fields;
 };
 
@@ -202,7 +275,7 @@ struct EnumDef {
   std::vector<std::string> annotations;
   std::string name;
   frontend::QualifiedName qualified_name;
-  std::string type_param;
+  std::vector<std::string> type_params;
   std::vector<Variant> variants;
 };
 

@@ -1,0 +1,8 @@
+id = "RUN-054-zero-payload-contextual-constructors"
+suite = "run"
+command = "run"
+source = "fixtures/zero_payload_contextual_run.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["none", "ok"]

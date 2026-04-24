@@ -1,0 +1,10 @@
+id = "CHK-198-await-nonfuture-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/await_non_future.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T133"
+severity = "error"

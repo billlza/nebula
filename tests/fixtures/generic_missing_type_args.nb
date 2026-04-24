@@ -1,0 +1,7 @@
+struct Box<T> {
+  value: T
+}
+
+fn main(box: Box) -> Int {
+  return 0
+}

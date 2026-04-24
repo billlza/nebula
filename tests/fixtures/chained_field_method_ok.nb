@@ -1,0 +1,23 @@
+struct Inner {
+  value: Int
+}
+
+struct Outer {
+  inner: Inner
+}
+
+fn Inner_is_two(self: Inner) -> Bool {
+  return self.value == 2
+}
+
+fn main() -> Void {
+  let o = Outer(Inner(1))
+  let x = o.inner.value
+  o.inner.value = x + 1
+  o.inner.value += 0
+  if o.inner.is_two() {
+    print("ok")
+  } else {
+    print("bad")
+  }
+}

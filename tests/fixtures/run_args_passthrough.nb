@@ -1,0 +1,16 @@
+fn main() -> Int {
+  if argc() != 3 {
+    print("argc-bad")
+    return 1
+  }
+  if argv(1) != "alpha" {
+    print("argv1-bad")
+    return 1
+  }
+  if argv(2) != "beta" {
+    print("argv2-bad")
+    return 1
+  }
+  print("argv-ok")
+  return 0
+}

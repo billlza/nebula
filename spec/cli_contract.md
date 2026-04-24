@@ -1,4 +1,4 @@
-# CLI contract (compat entry, v1.0.0)
+# CLI contract (compat entry)
 
 This file is intentionally minimal.
 
@@ -14,5 +14,7 @@ This file is intentionally minimal.
 - Parse/option errors: exit code `2`
 - `--help|-h` and `--version`: exit code `0`
 - `run`: returns child exit code once execution starts
+- Default host compiler contract: `clang++` is the official release default; there is no silent
+  `g++` fallback
 
 For all details, use `spec/tooling_cli.md`.

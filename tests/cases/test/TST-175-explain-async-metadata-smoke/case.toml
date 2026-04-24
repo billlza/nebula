@@ -1,0 +1,14 @@
+id = "TST-175-explain-async-metadata-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" explain \"$NEBULA_REPO_ROOT/tests/fixtures/async_main_run.nb\" --file \"$NEBULA_REPO_ROOT/tests/fixtures/async_main_run.nb\" --format json > work/explain_async.json"
+expect_rc = 0
+must_exist = ["work/explain_async.json"]
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport json\nfrom pathlib import Path\n\npayload = json.loads(Path('work/explain_async.json').read_text(encoding='utf-8'))\nentries = payload.get('async', [])\nif not entries:\n    raise SystemExit('missing async explain entries')\nby_kind = {entry['kind']: entry for entry in entries if 'kind' in entry}\nfor required in ['function', 'await', 'spawn', 'join']:\n    if required not in by_kind:\n        raise SystemExit('missing async entry: {}'.format(required))\nif by_kind['function'].get('allocation') != 'async-frame':\n    raise SystemExit('unexpected function allocation: {}'.format(by_kind['function']))\nif by_kind['await'].get('allocation') != 'async-frame' or not by_kind['await'].get('suspension_point'):\n    raise SystemExit('unexpected await entry: {}'.format(by_kind['await']))\nif by_kind['spawn'].get('allocation') != 'task-state' or not by_kind['spawn'].get('task_boundary'):\n    raise SystemExit('unexpected spawn entry: {}'.format(by_kind['spawn']))\nif by_kind['join'].get('allocation') != 'existing-task-state' or not by_kind['join'].get('task_boundary'):\n    raise SystemExit('unexpected join entry: {}'.format(by_kind['join']))\nprint('explain-async-ok')\nPY"
+expect_rc = 0
+expect_stdout_contains = ["explain-async-ok"]

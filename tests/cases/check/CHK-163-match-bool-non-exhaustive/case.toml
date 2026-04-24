@@ -1,0 +1,14 @@
+id = "CHK-163-match-bool-non-exhaustive"
+suite = "check"
+command = "check"
+source = "fixtures/match_bool_non_exhaustive.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T114"
+stage = "build"
+
+[[expect_diag]]
+code = "NBL-T030"
+stage = "build"

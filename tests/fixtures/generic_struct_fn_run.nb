@@ -1,0 +1,23 @@
+struct Pair<T, U> {
+  first: T
+  second: U
+}
+
+fn swap<T, U>(pair: Pair<T, U>) -> Pair<U, T> {
+  return Pair(pair.second, pair.first)
+}
+
+fn id<T>(value: T) -> T {
+  return value
+}
+
+fn main() -> Void {
+  let pair = Pair(7, true)
+  let swapped = swap(pair)
+  expect_eq(id(swapped.second), 7)
+  if swapped.first {
+    print("ok")
+  } else {
+    print("bad")
+  }
+}

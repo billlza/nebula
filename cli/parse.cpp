@@ -17,7 +17,8 @@ void print_usage() {
   std::cerr << "nebula " << kNebulaVersion << R"(
 
 USAGE:
-  nebula check <path> [--mode debug|release] [--profile auto|fast|deep] [--diag-format text|json]
+  nebula check <path> [--mode debug|release] [--profile auto|fast|deep|hosted|system] [--diag-format text|json]
+                     [--target host|freestanding|<triple>] [--no-std] [--panic abort|trap|unwind]
                      [--analysis-tier basic|smart|deep] [--diag-view raw|grouped]
                      [--warn-policy strict|balanced|lenient] [--diag-budget-ms MS]
                      [--diag-grouping-delay-ms MS]
@@ -26,7 +27,8 @@ USAGE:
                      [--root-cause-top-k N] [--root-cause-min-covered N]
                      [--cache-report on|off] [--cache-report-format text|json]
                      [--warnings-as-errors] [--strict-region] [--dump-ownership] [--dump-cfg-ir]
-  nebula build <path> [--mode debug|release] [--profile auto|fast|deep] [--diag-format text|json]
+  nebula build <path> [--mode debug|release] [--profile auto|fast|deep|hosted|system] [--diag-format text|json]
+                     [--target host|freestanding|<triple>] [--no-std] [--panic abort|trap|unwind]
                      [--analysis-tier basic|smart|deep] [--diag-view raw|grouped]
                      [--warn-policy strict|balanced|lenient] [--diag-budget-ms MS]
                      [--diag-grouping-delay-ms MS]
@@ -35,7 +37,9 @@ USAGE:
                      [--root-cause-top-k N] [--root-cause-min-covered N]
                      [--cache-report on|off] [--cache-report-format text|json]
                      [-o|--out PATH] [--out-dir DIR] [--emit-cpp]
-  nebula run <path> [--mode debug|release] [--profile auto|fast|deep] [--diag-format text|json]
+                     [--emit executable|staticlib|sharedlib]
+  nebula run <path> [--mode debug|release] [--profile auto|fast|deep|hosted|system] [--diag-format text|json]
+                   [--target host|freestanding|<triple>] [--no-std] [--panic abort|trap|unwind]
                    [--analysis-tier basic|smart|deep] [--smart on|off]
                    [--diag-view raw|grouped] [--warn-policy strict|balanced|lenient]
                    [--warn-class <class>=on|off]...
@@ -51,6 +55,7 @@ USAGE:
                    [--cache-report on|off] [--cache-report-format text|json]
                    [--preflight fast|off] [--run-gate high|all|none] [--reuse] [--no-build]
                    [-o|--out PATH] [--out-dir DIR]
+                   [-- <program-args...>]
   nebula test [--dir PATH] [--mode debug|release] [--profile auto|fast|deep] [--diag-format text|json]
               [--analysis-tier basic|smart|deep] [--diag-view raw|grouped]
               [--warn-policy strict|balanced|lenient] [--diag-budget-ms MS]
@@ -67,15 +72,20 @@ USAGE:
                [--max-root-causes N] [--root-cause-v2 auto|on|off]
                [--root-cause-top-k N] [--root-cause-min-covered N]
                [--cache-report on|off] [--cache-report-format text|json]
-  nebula new <path>
+  nebula new <path> [--template basic|cli|http-service|backend-service|control-plane-workspace]
   nebula add <project-or-manifest> <name> <version>
   nebula add <project-or-manifest> <name> --path <dir>
   nebula add <project-or-manifest> <name> --git <url> --rev <rev>
   nebula publish <project-or-manifest> [--force]
+                 [--registry-url URL] [--registry-token TOKEN] [--registry-timeout-seconds N]
   nebula fetch <project-or-manifest>
+               [--registry-url URL] [--registry-token TOKEN] [--registry-timeout-seconds N]
+               [--registry-root PATH]
   nebula update <project-or-manifest>
+                [--registry-url URL] [--registry-token TOKEN] [--registry-timeout-seconds N]
+                [--registry-root PATH]
   nebula fmt <file-or-dir>
-  nebula explain <path> [--file PATH] [--line N] [--col N] [--format text|json]
+  nebula explain <path> [--file PATH] [--line N] [--col N] [--symbol NAME] [--format text|json]
   nebula lsp
 )";
 }
@@ -106,6 +116,39 @@ static bool parse_profile(std::string_view s, AnalysisProfile& out) {
     return true;
   }
   return false;
+}
+
+static bool parse_runtime_profile(std::string_view s, RuntimeProfile& out) {
+  if (s == "hosted") {
+    out = RuntimeProfile::Hosted;
+    return true;
+  }
+  if (s == "system") {
+    out = RuntimeProfile::System;
+    return true;
+  }
+  return false;
+}
+
+static bool parse_panic_policy(std::string_view s, PanicPolicy& out) {
+  if (s == "abort") {
+    out = PanicPolicy::Abort;
+    return true;
+  }
+  if (s == "trap") {
+    out = PanicPolicy::Trap;
+    return true;
+  }
+  if (s == "unwind") {
+    out = PanicPolicy::Unwind;
+    return true;
+  }
+  return false;
+}
+
+static bool target_implies_system_profile(std::string_view s) {
+  return s == "system" || s == "freestanding" || s.find("-none") != std::string_view::npos ||
+         s.find("unknown-none") != std::string_view::npos;
 }
 
 static bool parse_diag_format(std::string_view s, DiagFormat& out) {
@@ -271,6 +314,22 @@ static bool parse_cache_report_format(std::string_view s, CacheReportFormat& out
   return false;
 }
 
+static bool parse_build_artifact_kind(std::string_view s, BuildArtifactKind& out) {
+  if (s == "exe" || s == "executable") {
+    out = BuildArtifactKind::Executable;
+    return true;
+  }
+  if (s == "staticlib") {
+    out = BuildArtifactKind::StaticLib;
+    return true;
+  }
+  if (s == "sharedlib") {
+    out = BuildArtifactKind::SharedLib;
+    return true;
+  }
+  return false;
+}
+
 static bool parse_warn_class(std::string_view s, std::uint32_t& out_mask) {
   if (s == "api" || s == "api-deprecation") {
     out_mask = kWarnClassApi;
@@ -348,21 +407,35 @@ bool parse_cli_options(const std::vector<std::string>& args,
     };
 
     if (tok == "--") {
-      if (i + 1 < args.size()) {
-        err = "unexpected positional argument: " + args[i + 1];
+      if (!run_only_options_allowed) {
+        err = "unexpected positional argument: --";
         return false;
       }
+      opt.run_args.assign(args.begin() + static_cast<std::ptrdiff_t>(i + 1), args.end());
       break;
     } else if (tok == "--warnings-as-errors") {
       opt.warnings_as_errors = true;
     } else if (tok == "--strict-region") {
       opt.strict_region = true;
+    } else if (tok == "--no-std") {
+      opt.no_std = true;
     } else if (tok == "--dump-ownership") {
       opt.dump_ownership = true;
     } else if (tok == "--dump-cfg-ir") {
       opt.dump_cfg_ir = true;
     } else if (tok == "--emit-cpp") {
       opt.emit_cpp = true;
+    } else if (tok == "--emit") {
+      if (cmd != "build") {
+        err = "unknown option: " + tok;
+        return false;
+      }
+      auto value = next_value("--emit");
+      if (!value.has_value()) return false;
+      if (!parse_build_artifact_kind(*value, opt.artifact_kind)) {
+        err = "invalid --emit value: " + *value;
+        return false;
+      }
     } else if (tok == "--reuse") {
       if (!run_only_options_allowed) {
         err = "unknown option: " + tok;
@@ -385,11 +458,45 @@ bool parse_cli_options(const std::vector<std::string>& args,
     } else if (tok == "--profile") {
       auto value = next_value("--profile");
       if (!value.has_value()) return false;
-      if (!parse_profile(*value, opt.analysis_profile)) {
+      if (parse_profile(*value, opt.analysis_profile)) {
+        opt.profile_explicit = true;
+      } else if (parse_runtime_profile(*value, opt.runtime_profile)) {
+        opt.runtime_profile_explicit = true;
+        if (opt.runtime_profile == RuntimeProfile::System) opt.no_std = true;
+      } else {
         err = "invalid --profile value: " + *value;
         return false;
       }
-      opt.profile_explicit = true;
+    } else if (tok == "--runtime-profile") {
+      auto value = next_value("--runtime-profile");
+      if (!value.has_value()) return false;
+      if (!parse_runtime_profile(*value, opt.runtime_profile)) {
+        err = "invalid --runtime-profile value: " + *value;
+        return false;
+      }
+      opt.runtime_profile_explicit = true;
+      if (opt.runtime_profile == RuntimeProfile::System) opt.no_std = true;
+    } else if (tok == "--target") {
+      auto value = next_value("--target");
+      if (!value.has_value()) return false;
+      if (value->empty()) {
+        err = "invalid --target value: " + *value;
+        return false;
+      }
+      opt.target = *value;
+      opt.target_explicit = true;
+      if (target_implies_system_profile(*value)) {
+        opt.runtime_profile = RuntimeProfile::System;
+        opt.no_std = true;
+      }
+    } else if (tok == "--panic") {
+      auto value = next_value("--panic");
+      if (!value.has_value()) return false;
+      if (!parse_panic_policy(*value, opt.panic_policy)) {
+        err = "invalid --panic value: " + *value;
+        return false;
+      }
+      opt.panic_policy_explicit = true;
     } else if (tok == "--diag-format") {
       auto value = next_value("--diag-format");
       if (!value.has_value()) return false;
@@ -657,6 +764,13 @@ bool parse_cli_options(const std::vector<std::string>& args,
       err = "unexpected positional argument: " + tok;
       return false;
     }
+  }
+
+  if (effective_no_std(opt.runtime_profile, opt.no_std) &&
+      panic_policy_requires_host_unwind(opt.panic_policy)) {
+    err = "--panic unwind requires the hosted runtime profile; use --panic abort or --panic trap "
+          "for system/no-std builds";
+    return false;
   }
 
   return true;

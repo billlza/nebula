@@ -1,0 +1,8 @@
+id = "RUN-058-zero-payload-function-name-precedence"
+suite = "run"
+command = "run"
+source = "fixtures/zero_payload_function_name_precedence.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+
+expect_stdout_contains = ["ok"]

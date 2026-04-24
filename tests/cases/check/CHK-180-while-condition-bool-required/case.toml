@@ -1,0 +1,10 @@
+id = "CHK-180-while-condition-bool-required"
+suite = "check"
+command = "check"
+source = "fixtures/while_condition_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T118"
+severity = "error"

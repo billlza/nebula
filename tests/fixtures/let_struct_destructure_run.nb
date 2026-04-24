@@ -1,0 +1,16 @@
+struct Pair {
+  x: Int
+  y: Int
+  z: Int
+}
+
+fn make_pair() -> Pair {
+  return Pair(1, 2, 3)
+}
+
+fn main() -> Void {
+  let { x, y: y0, z: _ } = make_pair()
+  expect_eq(x, 1)
+  expect_eq(y0, 2)
+  print("ok")
+}

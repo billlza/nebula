@@ -1,6 +1,6 @@
 module main
-import io
+import app
 
-fn main() -> Void {
-  greet("nebula")
+fn main() -> Int {
+  return run()
 }

@@ -1,0 +1,10 @@
+id = "CHK-172-match-struct-payload-duplicate-field"
+suite = "check"
+command = "check"
+source = "fixtures/match_struct_payload_duplicate_field.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T117"
+stage = "build"

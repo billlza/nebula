@@ -1,0 +1,7 @@
+id = "RUN-074-std-http-route-param"
+suite = "run"
+command = "run"
+source = "fixtures/std_http_route_param.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["route-ok"]

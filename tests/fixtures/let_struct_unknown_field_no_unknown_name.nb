@@ -1,0 +1,9 @@
+struct Point {
+  x: Int
+}
+
+fn main() -> Int {
+  let p = Point(1)
+  let { y } = p
+  return y
+}

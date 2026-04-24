@@ -1,0 +1,37 @@
+enum Result<T, E> {
+  Ok(T)
+  Err(E)
+}
+
+fn ok_true() -> Result<Bool, String> {
+  return Ok(true)
+}
+
+fn drive() -> Result<Int, String> {
+  let count = 0
+  while ok_true()? {
+    count = count + 1
+    break
+  }
+
+  if true && ok_true()? {
+    return Ok(count + 1)
+  } else {
+    return Err("bad")
+  }
+}
+
+fn main() -> Void {
+  match drive() {
+    Ok(v) => {
+      if v == 2 {
+        print("control-ok")
+      } else {
+        print("bad")
+      }
+    },
+    Err(msg) => {
+      print(msg)
+    },
+  }
+}

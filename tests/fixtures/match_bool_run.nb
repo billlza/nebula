@@ -1,0 +1,11 @@
+fn main() -> Void {
+  let flag = true
+  match flag {
+    true => {
+      print("yes")
+    }
+    false => {
+      print("no")
+    }
+  }
+}

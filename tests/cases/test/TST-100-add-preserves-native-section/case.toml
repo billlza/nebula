@@ -1,0 +1,18 @@
+id = "TST-100-add-preserves-native-section"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/native_add_preserve')\napp = root / 'app'\ndep = root / 'dep'\nfor path in [app / 'src', app / 'native' / 'include', dep / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"native-add-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[native]\\nc_sources = [\"native/native_offset.c\"]\\ncxx_sources = [\"native/native_bridge.cpp\"]\\ninclude_dirs = [\"native/include\"]\\ndefines = [\"NATIVE_OFFSET=3\"]\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\n\\nfn main() -> Void {\\n  print(\"ok\")\\n}\\n', encoding='utf-8')\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nfn dep_value() -> Int {\\n  return 1\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "add"
+args = ["work/native_add_preserve/app", "dep", "--path", "../dep"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F '[native]' work/native_add_preserve/app/nebula.toml && grep -F 'c_sources = [\"native/native_offset.c\"]' work/native_add_preserve/app/nebula.toml && grep -F 'cxx_sources = [\"native/native_bridge.cpp\"]' work/native_add_preserve/app/nebula.toml && grep -F 'include_dirs = [\"native/include\"]' work/native_add_preserve/app/nebula.toml && grep -F 'defines = [\"NATIVE_OFFSET=3\"]' work/native_add_preserve/app/nebula.toml && grep -F 'dep = { path = \"../dep\" }' work/native_add_preserve/app/nebula.toml"
+expect_rc = 0

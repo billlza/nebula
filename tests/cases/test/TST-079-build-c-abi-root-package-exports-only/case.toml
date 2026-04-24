@@ -1,0 +1,22 @@
+id = "TST-079-build-c-abi-root-package-exports-only"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/cabi_root_only')\ndep = root / 'dep-lib'\napp = root / 'app'\n(dep / 'src').mkdir(parents=True, exist_ok=True)\n(app / 'src').mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-lib\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(dep / 'src' / 'main.nb').write_text('@export\\n@abi_c\\nfn dep_value() -> Int {\\n  return 7\\n}\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"root-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = { path = \"../dep-lib\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('import dep::main\\n\\nfn main() -> Int {\\n  return dep_value()\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY fetch work/cabi_root_only/app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY build work/cabi_root_only/app --emit staticlib > work/cabi-root-only.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-CABI-NOEXPORT' work/cabi-root-only.out && grep -F 'no @export @abi_c functions were found' work/cabi-root-only.out"
+expect_rc = 0

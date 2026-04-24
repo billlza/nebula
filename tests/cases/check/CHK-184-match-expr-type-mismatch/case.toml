@@ -1,0 +1,10 @@
+id = "CHK-184-match-expr-type-mismatch"
+suite = "check"
+command = "check"
+source = "fixtures/match_expr_type_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T121"
+severity = "error"

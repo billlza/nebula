@@ -1,0 +1,10 @@
+id = "CHK-191-c-abi-missing-pair-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_missing_pair.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T129"
+severity = "error"

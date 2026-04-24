@@ -1,0 +1,11 @@
+id = "CHK-168-temp-postfix-assign-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/temp_postfix_assign_bad.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["temporary-base assignment is not supported"]
+
+[[expect_diag]]
+code = "NBL-PAR900"
+stage = "build"

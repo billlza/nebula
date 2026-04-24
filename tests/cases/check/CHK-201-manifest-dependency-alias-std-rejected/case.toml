@@ -1,0 +1,11 @@
+id = "CHK-201-manifest-dependency-alias-std-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/project_reserved_std_alias"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-MANIFEST-STD"
+stage = "build"
+category = "cli"

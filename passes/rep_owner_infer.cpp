@@ -223,6 +223,12 @@ static void collect_var_refs(const Expr& e, std::unordered_set<VarId>& out) {
           if (n.var != 0) out.insert(n.var);
         } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
           if (n.base_var != 0) out.insert(n.base_var);
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          collect_var_refs(*n.base, out);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          collect_var_refs(*n.subject, out);
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          collect_var_refs(*n.subject, out);
         } else if constexpr (std::is_same_v<N, Expr::Call>) {
           for (const auto& a : n.args) collect_var_refs(*a, out);
         } else if constexpr (std::is_same_v<N, Expr::Construct>) {
@@ -311,7 +317,9 @@ static void gather_meta_and_initial_decisions_in_stmt(FuncCtx& ctx, const Stmt& 
   std::visit(
       [&](auto&& st) {
         using S = std::decay_t<decltype(st)>;
-        if constexpr (std::is_same_v<S, Stmt::Let>) {
+        if constexpr (std::is_same_v<S, Stmt::Declare>) {
+          ctx.meta[st.var].span = s.span;
+        } else if constexpr (std::is_same_v<S, Stmt::Let>) {
           // Dependencies of RHS
           std::unordered_set<VarId> refs;
           collect_var_refs(*st.value, refs);
@@ -392,6 +400,11 @@ static void gather_meta_and_initial_decisions_in_stmt(FuncCtx& ctx, const Stmt& 
           known[st.var] = StorageDecision{RepKind::Stack, OwnerKind::None, ""};
           ctx.out.vars[st.var] = StorageDecision{RepKind::Stack, OwnerKind::None, ""};
           gather_meta_and_initial_decisions_in_block(ctx, st.body, known);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          gather_meta_and_initial_decisions_in_block(ctx, st.body, known);
+        } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                             std::is_same_v<S, Stmt::Continue>) {
+          // no-op
         }
       },
       s.node);
@@ -462,6 +475,15 @@ static void scan_expr_for_calls_in_region(FuncCtx& ctx, const Expr& e,
           scan_expr_for_calls_in_region(ctx, *n.inner, seeds);
         } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
           scan_expr_for_calls_in_region(ctx, *n.inner, seeds);
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          scan_expr_for_calls_in_region(ctx, *n.base, seeds);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          scan_expr_for_calls_in_region(ctx, *n.subject, seeds);
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          scan_expr_for_calls_in_region(ctx, *n.subject, seeds);
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          scan_expr_for_calls_in_region(ctx, *n.subject, seeds);
+          for (const auto& arm : n.arms) scan_expr_for_calls_in_region(ctx, *arm->value, seeds);
         } else {
           // literals/varref: nothing
         }
@@ -477,7 +499,8 @@ static void gather_escape_seeds_in_stmt(FuncCtx& ctx, const Stmt& s,
   std::visit(
       [&](auto&& st) {
         using S = std::decay_t<decltype(st)>;
-        if constexpr (std::is_same_v<S, Stmt::Let>) {
+        if constexpr (std::is_same_v<S, Stmt::Declare>) {
+        } else if constexpr (std::is_same_v<S, Stmt::Let>) {
           // Calls inside RHS might cause escape of arguments.
           scan_expr_for_calls_in_region(ctx, *st.value, seeds);
         } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
@@ -589,6 +612,12 @@ static void gather_escape_seeds_in_stmt(FuncCtx& ctx, const Stmt& s,
           scan_expr_for_calls_in_region(ctx, *st.start, seeds);
           scan_expr_for_calls_in_region(ctx, *st.end, seeds);
           gather_escape_seeds(ctx, st.body, seeds);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          scan_expr_for_calls_in_region(ctx, *st.cond, seeds);
+          gather_escape_seeds(ctx, st.body, seeds);
+        } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                             std::is_same_v<S, Stmt::Continue>) {
+          // no-op
         }
       },
       s.node);
@@ -624,6 +653,7 @@ RepOwnerResult run_rep_owner_infer(const nebula::nir::Program& p, const EscapeAn
   for (const auto& item : p.items) {
     if (!std::holds_alternative<nebula::nir::Function>(item.node)) continue;
     const auto& fn = std::get<nebula::nir::Function>(item.node);
+    if (fn.is_extern) continue;
     local_functions.insert(nebula::nir::function_identity(fn));
   }
 

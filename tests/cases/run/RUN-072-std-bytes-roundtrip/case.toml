@@ -1,0 +1,7 @@
+id = "RUN-072-std-bytes-roundtrip"
+suite = "run"
+command = "run"
+source = "fixtures/std_bytes_roundtrip.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["nebula"]

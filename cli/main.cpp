@@ -35,6 +35,7 @@
 #include "nir/cfg_ir.hpp"
 #include "nir/lower.hpp"
 #include "passes/escape_analysis.hpp"
+#include "passes/async_explain.hpp"
 #include "passes/borrow_xstmt.hpp"
 #include "passes/call_target_resolver.hpp"
 #include "passes/epistemic_lint.hpp"
@@ -282,6 +283,7 @@ static const char* warning_reason_for_diag(const nebula::frontend::Diagnostic& d
   if (d.code == "NBL-R001") return "region-escape-risk";
   if (d.code == "NBL-U001") return "unsafe-call-boundary";
   if (d.code == "NBL-U002") return "unsafe-annotation-misuse";
+  if (d.code == "NBL-U003") return "external-contract-misuse";
   if (d.code.rfind("NBL-U", 0) == 0 || d.code.rfind("NBL-R", 0) == 0 || d.code.rfind("NBL-S", 0) == 0) {
     return "safety-contract-general";
   }
@@ -465,12 +467,16 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
   popt.mode = opt.mode;
   popt.profile = resolve_profile(opt.mode, requested);
   popt.analysis_tier = resolve_analysis_tier(opt.mode, opt.analysis_tier);
-  popt.strict_region = opt.strict_region;
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
   popt.warnings_as_errors = opt.warnings_as_errors;
+  popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+  popt.runtime_profile = opt.runtime_profile;
+  popt.panic_policy = opt.panic_policy;
   popt.include_lint = should_include_lint_in_build_stage(opt);
   popt.budget_ms = opt.diag_budget_ms;
   popt.source_path = loaded.entry_file.string();
   popt.cache_key_source = loaded.cache_key_source;
+  popt.target = opt.target;
   popt.stage = nebula::frontend::DiagnosticStage::Build;
 
   analysis = run_compile_pipeline(loaded.compile_sources, popt);
@@ -488,7 +494,10 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
 
   nebula::codegen::EmitOptions eopt;
   eopt.main_mode = nebula::codegen::MainMode::RunTests;
-  eopt.strict_region = opt.strict_region;
+  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  eopt.runtime_profile = opt.runtime_profile;
+  eopt.target = opt.target;
+  eopt.panic_policy = opt.panic_policy;
   const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
 
   if (!write_text_file(out_cpp, cpp)) {
@@ -502,7 +511,8 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
   }
 
   std::cerr << "wrote: " << out_cpp.string() << "\n";
-  if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Test, loaded.host_cxx_sources) != 0) {
+  if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Test, loaded.host_cxx_sources,
+                  loaded.native_inputs) != 0) {
     return 1;
   }
   return run_command({out_bin.string()}) == 0 ? 0 : 1;
@@ -526,7 +536,10 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
 
   nebula::codegen::EmitOptions eopt;
   eopt.main_mode = nebula::codegen::MainMode::RunBench;
-  eopt.strict_region = opt.strict_region;
+  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  eopt.runtime_profile = opt.runtime_profile;
+  eopt.target = opt.target;
+  eopt.panic_policy = opt.panic_policy;
   const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
 
   if (!write_text_file(out_cpp, cpp)) {
@@ -540,7 +553,8 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
   }
 
   std::cerr << "wrote: " << out_cpp.string() << "\n";
-  if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Bench, loaded.host_cxx_sources) != 0) {
+  if (compile_cpp(opt, out_cpp, out_bin, CompileFlavor::Bench, loaded.host_cxx_sources,
+                  loaded.native_inputs) != 0) {
     return 1;
   }
 
@@ -700,7 +714,9 @@ static std::unordered_map<nebula::nir::VarId, std::string> collect_var_names(con
       std::visit(
           [&](auto&& st) {
             using S = std::decay_t<decltype(st)>;
-            if constexpr (std::is_same_v<S, nebula::nir::Stmt::Let>) {
+            if constexpr (std::is_same_v<S, nebula::nir::Stmt::Declare>) {
+              out.insert({st.var, st.name});
+            } else if constexpr (std::is_same_v<S, nebula::nir::Stmt::Let>) {
               out.insert({st.var, st.name});
             } else if constexpr (std::is_same_v<S, nebula::nir::Stmt::For>) {
               out.insert({st.var, st.var_name});
@@ -814,6 +830,17 @@ static void enrich_diagnostic(nebula::frontend::Diagnostic& d,
     if (d.suggestions.empty()) {
       d.suggestions.push_back("remove @unsafe from non-function item");
       d.suggestions.push_back("apply @unsafe to a function declaration instead");
+    }
+  } else if (d.code == "NBL-U003") {
+    if (d.cause.empty()) {
+      d.cause = "external escape/ownership contract is invalid or attached to the wrong boundary";
+    }
+    if (d.impact.empty()) {
+      d.impact = "opaque external calls would be analyzed with the wrong ownership and escape assumptions";
+    }
+    if (d.suggestions.empty()) {
+      d.suggestions.push_back("apply external contract annotations only to extern fn boundaries");
+      d.suggestions.push_back("use valid param indices and one escape state per parameter");
     }
   } else if (d.code == "NBL-T090") {
     if (d.cause.empty()) {
@@ -2680,9 +2707,35 @@ static void summarize_diag_levels(CompilePipelineResult& res) {
 }
 
 constexpr int kCompilePipelineCompilerSchemaVersion = 1;
-constexpr int kCompilePipelineCacheSchemaVersion = 2;
+constexpr int kCompilePipelineCacheSchemaVersion = 3;
 constexpr const char* kDiskCacheMagic = "NBLDC8";
-constexpr int kArtifactMetaVersion = 2;
+constexpr int kArtifactMetaVersion = 4;
+
+static const char* artifact_kind_name(BuildArtifactKind kind) {
+  switch (kind) {
+  case BuildArtifactKind::Executable: return "executable";
+  case BuildArtifactKind::StaticLib: return "staticlib";
+  case BuildArtifactKind::SharedLib: return "sharedlib";
+  }
+  return "executable";
+}
+
+static const char* runtime_profile_name(RuntimeProfile profile) {
+  switch (profile) {
+  case RuntimeProfile::Hosted: return "hosted";
+  case RuntimeProfile::System: return "system";
+  }
+  return "hosted";
+}
+
+static const char* panic_policy_name(PanicPolicy policy) {
+  switch (policy) {
+  case PanicPolicy::Abort: return "abort";
+  case PanicPolicy::Trap: return "trap";
+  case PanicPolicy::Unwind: return "unwind";
+  }
+  return "abort";
+}
 
 static std::string source_identity_seed(std::string_view path, std::string_view text) {
   std::ostringstream os;
@@ -2704,6 +2757,10 @@ static std::string compile_pipeline_cache_key(const std::string& src,
      << "|strict=" << (opt.strict_region ? 1 : 0)
      << "|werr=" << (opt.warnings_as_errors ? 1 : 0)
      << "|lint=" << (opt.include_lint ? 1 : 0)
+     << "|no_std=" << (opt.no_std ? 1 : 0)
+     << "|runtime_profile=" << static_cast<int>(opt.runtime_profile)
+     << "|target_h=" << hash_source(opt.target)
+     << "|panic=" << static_cast<int>(opt.panic_policy)
      << "|budget=" << opt.budget_ms;
   return os.str();
 }
@@ -3465,6 +3522,9 @@ CompilePipelineResult run_compile_pipeline(const std::vector<nebula::frontend::S
       nebula::codegen::EmitOptions eopt;
       eopt.main_mode = nebula::codegen::MainMode::CallMainIfPresent;
       eopt.strict_region = opt.strict_region;
+      eopt.runtime_profile = opt.runtime_profile;
+      eopt.target = opt.target;
+      eopt.panic_policy = opt.panic_policy;
       out.cached_cpp = nebula::codegen::emit_cpp23(*out.nir_prog, *out.rep_owner, eopt);
       out.has_cached_cpp = true;
     }
@@ -3569,7 +3629,12 @@ CompilePipelineResult run_compile_pipeline(const std::vector<nebula::frontend::S
       return result;
     }
 
-    auto nir_prog = nebula::nir::lower_to_nir(tc.programs);
+    result.typed_programs =
+        std::make_shared<std::vector<nebula::frontend::TProgram>>(std::move(tc.programs));
+
+    auto nir_prog = nebula::nir::lower_to_nir(*result.typed_programs);
+    result.async_explain =
+        std::make_shared<nebula::passes::AsyncExplainResult>(nebula::passes::run_async_explain(nir_prog));
     for (const auto& it : nir_prog.items) {
       if (!std::holds_alternative<nebula::nir::Function>(it.node)) continue;
       const auto& fn = std::get<nebula::nir::Function>(it.node);
@@ -3687,6 +3752,133 @@ static std::string default_cxx() {
   return "clang++";
 }
 
+static std::vector<std::string> executable_probe_candidates(std::string_view command) {
+  std::vector<std::string> out;
+  out.emplace_back(command);
+#if defined(_WIN32)
+  const fs::path base(command);
+  if (base.extension().empty()) {
+    for (const char* ext : {".exe", ".cmd", ".bat"}) {
+      out.push_back(base.string() + ext);
+    }
+  }
+#endif
+  return out;
+}
+
+std::optional<fs::path> find_executable_on_path(std::string_view command) {
+  if (command.empty()) return std::nullopt;
+  for (const auto& candidate_name : executable_probe_candidates(command)) {
+    const fs::path candidate(candidate_name);
+    if (candidate.has_parent_path()) {
+      if (::access(candidate.c_str(), X_OK) == 0) {
+        return fs::absolute(candidate).lexically_normal();
+      }
+      continue;
+    }
+
+    const char* path_env = std::getenv("PATH");
+    if (path_env == nullptr || *path_env == '\0') continue;
+    std::stringstream ss(path_env);
+    std::string segment;
+#if defined(_WIN32)
+    const char separator = ';';
+#else
+    const char separator = ':';
+#endif
+    while (std::getline(ss, segment, separator)) {
+      if (segment.empty()) continue;
+      const fs::path entry = fs::path(segment) / candidate;
+      if (::access(entry.c_str(), X_OK) == 0) {
+        return fs::absolute(entry).lexically_normal();
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+static std::optional<nebula::frontend::Diagnostic> validate_runtime_include_root(const CliOptions& opt) {
+  if (!opt.include_root.empty() &&
+      fs::exists(opt.include_root / "runtime" / "nebula_runtime.hpp")) {
+    return std::nullopt;
+  }
+  return make_cli_diag(
+      nebula::frontend::Severity::Error, "NBL-CLI-RUNTIME-MISSING",
+      "nebula installation is incomplete: runtime headers are unavailable for code generation",
+      nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+      opt.include_root_error.empty()
+          ? "code generation requires include/runtime/nebula_runtime.hpp"
+          : opt.include_root_error,
+      "build/run/test/bench cannot compile generated C++ without the Nebula runtime headers",
+      {"reinstall Nebula using the official release asset, installer, or Homebrew formula",
+       "or keep the full install tree instead of copying only the nebula binary"});
+}
+
+static std::optional<nebula::frontend::Diagnostic> validate_host_cpp_compiler() {
+  const std::string cxx = default_cxx();
+  const fs::path candidate(cxx);
+  const bool looks_like_path =
+      cxx.find('/') != std::string::npos || cxx.find('\\') != std::string::npos;
+  const bool explicit_path = candidate.has_parent_path() || looks_like_path;
+  if (cxx.find_first_of(" \t\r\n") != std::string::npos && !explicit_path) {
+    return make_cli_diag(
+        nebula::frontend::Severity::Error, "NBL-CLI-CXX-INVALID",
+        "host C++ compiler setting must name a single executable: " + cxx,
+        nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+        "nebula does not parse shell command strings from CXX",
+        "build/run/test/bench cannot safely invoke the configured compiler",
+        {"set CXX to an executable path such as /usr/bin/clang++",
+         "or unset CXX to use the default compiler"});
+  }
+  const auto resolved = find_executable_on_path(cxx);
+  if (resolved.has_value()) return std::nullopt;
+
+  if (explicit_path) {
+    return make_cli_diag(
+        nebula::frontend::Severity::Error, "NBL-CLI-CXX-NOTEXEC",
+        "configured host C++ compiler is missing or not executable: " + cxx,
+        nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+        "nebula uses the CXX environment variable for host compilation when it is set",
+        "build/run/test/bench cannot invoke the configured host compiler",
+        {"fix CXX to point at a working C++23 compiler", "or unset CXX to use the default compiler"});
+  }
+
+  return make_cli_diag(
+      nebula::frontend::Severity::Error, "NBL-CLI-CXX-MISSING",
+      "host C++ compiler not found on PATH: " + cxx,
+      nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+      "nebula lowers programs to C++ and expects a host compiler on PATH",
+      "build/run/test/bench cannot compile generated C++",
+      {"install a C++23 compiler such as clang++", "or set CXX to a working compiler path"});
+}
+
+static std::string default_archiver() {
+  if (auto llvm_ar = find_executable_on_path("llvm-ar"); llvm_ar.has_value()) {
+    return llvm_ar->string();
+  }
+  return "ar";
+}
+
+static std::optional<nebula::frontend::Diagnostic> validate_archiver_tool() {
+  const std::string ar = default_archiver();
+  if (find_executable_on_path(ar).has_value()) return std::nullopt;
+  return make_cli_diag(
+      nebula::frontend::Severity::Error, "NBL-CLI-AR-MISSING",
+      "archiver not found on PATH: " + ar,
+      nebula::frontend::DiagnosticStage::Build, nebula::frontend::DiagnosticRisk::High,
+      "building a static library requires an archive tool such as llvm-ar or ar",
+      "static library build cannot pack compiled object files",
+      {"install llvm-ar or ar", "or build with --emit sharedlib instead"});
+}
+
+static const char* shared_library_link_flag() {
+#if defined(__APPLE__)
+  return "-dynamiclib";
+#else
+  return "-shared";
+#endif
+}
+
 static std::vector<std::string> compile_flags_for(const CliOptions& opt, CompileFlavor flavor) {
   if (flavor == CompileFlavor::Test) {
     return {"-O1", "-g", "-fno-omit-frame-pointer", "-fsanitize=address,undefined"};
@@ -3704,21 +3896,127 @@ int compile_cpp(const CliOptions& opt,
                 const fs::path& cpp_path,
                 const fs::path& out_bin,
                 CompileFlavor flavor,
-                const std::vector<fs::path>& extra_sources) {
+                const std::vector<fs::path>& extra_sources,
+                const NativeBuildInputs& native_inputs,
+                BuildArtifactKind artifact_kind) {
+  std::vector<nebula::frontend::Diagnostic> preflight_diags;
+  if (auto diag = validate_runtime_include_root(opt); diag.has_value()) {
+    preflight_diags.push_back(std::move(*diag));
+  }
+  if (auto diag = validate_host_cpp_compiler(); diag.has_value()) {
+    preflight_diags.push_back(std::move(*diag));
+  }
+  if (artifact_kind == BuildArtifactKind::StaticLib) {
+    if (auto diag = validate_archiver_tool(); diag.has_value()) {
+      preflight_diags.push_back(std::move(*diag));
+    }
+  }
+  if (!preflight_diags.empty()) {
+    emit_diagnostics(preflight_diags, opt, std::cerr);
+    return 1;
+  }
+
   if (out_bin.has_parent_path()) fs::create_directories(out_bin.parent_path());
+  const auto flags = compile_flags_for(opt, flavor);
+
+  auto append_common_compile_args = [&](std::vector<std::string>& cmd) {
+    for (const auto& flag : flags) cmd.push_back(flag);
+    cmd.push_back("-I" + opt.include_root.string());
+  };
+  auto append_source_compile_args = [&](std::vector<std::string>& cmd, const NativeSourceInput& input) {
+    append_common_compile_args(cmd);
+    for (const auto& include_dir : input.include_dirs) cmd.push_back("-I" + include_dir.string());
+    for (const auto& define : input.defines) cmd.push_back("-D" + define);
+    for (const auto& flag : input.extra_flags) cmd.push_back(flag);
+  };
+
+  const bool has_extra_sources = !extra_sources.empty() || !native_inputs.sources.empty();
+  const bool needs_object_pipeline = artifact_kind != BuildArtifactKind::Executable || has_extra_sources;
+
+  if (!needs_object_pipeline) {
+    std::vector<std::string> cmd;
+    cmd.push_back(default_cxx());
+    cmd.push_back("-std=c++23");
+    append_common_compile_args(cmd);
+    cmd.push_back(cpp_path.string());
+#if defined(_WIN32)
+    cmd.push_back("-lws2_32");
+#endif
+    cmd.push_back("-o");
+    cmd.push_back(out_bin.string());
+    return run_command(cmd);
+  }
+
+  struct CompileUnit {
+    fs::path source;
+    NativeSourceLanguage language = NativeSourceLanguage::Cxx;
+    const NativeSourceInput* native_input = nullptr;
+  };
+
+  const fs::path obj_dir = out_bin.parent_path() / ".nebula-obj" / out_bin.stem();
+  fs::create_directories(obj_dir);
+  std::vector<CompileUnit> sources;
+  sources.push_back({cpp_path, NativeSourceLanguage::Cxx, nullptr});
+  for (const auto& extra : extra_sources) sources.push_back({extra, NativeSourceLanguage::Cxx, nullptr});
+  for (const auto& input : native_inputs.sources) {
+    sources.push_back({input.path, input.language, &input});
+  }
+
+  std::vector<fs::path> objects;
+  objects.reserve(sources.size());
+  for (std::size_t i = 0; i < sources.size(); ++i) {
+    const fs::path obj = obj_dir / (sources[i].source.stem().string() + "_" + std::to_string(i) + ".o");
+    std::vector<std::string> compile_cmd;
+    compile_cmd.push_back(default_cxx());
+    if (sources[i].language == NativeSourceLanguage::C) {
+      compile_cmd.push_back("-x");
+      compile_cmd.push_back("c");
+      compile_cmd.push_back("-std=c11");
+    } else if (sources[i].language == NativeSourceLanguage::Asm) {
+      compile_cmd.push_back("-x");
+      compile_cmd.push_back("assembler-with-cpp");
+    } else {
+      compile_cmd.push_back("-std=c++23");
+    }
+    if (sources[i].native_input != nullptr) {
+      append_source_compile_args(compile_cmd, *sources[i].native_input);
+    } else {
+      append_common_compile_args(compile_cmd);
+    }
+#if !defined(_WIN32)
+    if (artifact_kind != BuildArtifactKind::Executable) compile_cmd.push_back("-fPIC");
+#endif
+    compile_cmd.push_back("-c");
+    compile_cmd.push_back(sources[i].source.string());
+    compile_cmd.push_back("-o");
+    compile_cmd.push_back(obj.string());
+    if (run_command(compile_cmd) != 0) return 1;
+    objects.push_back(obj);
+  }
+
+  if (artifact_kind == BuildArtifactKind::StaticLib) {
+    std::vector<std::string> archive_cmd;
+    archive_cmd.push_back(default_archiver());
+    archive_cmd.push_back("rcs");
+    archive_cmd.push_back(out_bin.string());
+    for (const auto& obj : objects) archive_cmd.push_back(obj.string());
+    return run_command(archive_cmd);
+  }
+
   std::vector<std::string> cmd;
   cmd.push_back(default_cxx());
-  cmd.push_back("-std=c++23");
-  for (const auto& flag : compile_flags_for(opt, flavor)) cmd.push_back(flag);
-  fs::path include_root = opt.repo_root;
-  const fs::path generated_include =
-      opt.repo_root / "build" / "generated" / "include" / "runtime" / "nebula_runtime.hpp";
-  if (fs::exists(generated_include)) {
-    include_root = opt.repo_root / "build" / "generated" / "include";
+  if (artifact_kind == BuildArtifactKind::SharedLib) {
+    cmd.push_back(shared_library_link_flag());
+#if defined(_WIN32)
+    const fs::path import_lib = out_bin.parent_path() / ("lib" + out_bin.stem().string() + ".dll.a");
+    cmd.push_back("-Wl,--out-implib," + import_lib.string());
+#endif
   }
-  cmd.push_back("-I" + include_root.string());
-  cmd.push_back(cpp_path.string());
-  for (const auto& extra : extra_sources) cmd.push_back(extra.string());
+  for (const auto& flag : flags) cmd.push_back(flag);
+  for (const auto& obj : objects) cmd.push_back(obj.string());
+#if defined(_WIN32)
+  cmd.push_back("-lws2_32");
+#endif
   cmd.push_back("-o");
   cmd.push_back(out_bin.string());
   return run_command(cmd);
@@ -3775,10 +4073,15 @@ ArtifactMeta expected_meta_for(const CliOptions& opt,
   case AnalysisProfile::Fast: m.profile = "fast"; break;
   case AnalysisProfile::Deep: m.profile = "deep"; break;
   }
+  m.artifact_kind = artifact_kind_name(opt.artifact_kind);
   m.compiler_schema_version = kCompilePipelineCompilerSchemaVersion;
   m.cache_schema_version = kCompilePipelineCacheSchemaVersion;
-  m.strict_region = opt.strict_region;
+  m.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
   m.warnings_as_errors = opt.warnings_as_errors;
+  m.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+  m.runtime_profile = runtime_profile_name(opt.runtime_profile);
+  m.target = opt.target;
+  m.panic_policy = panic_policy_name(opt.panic_policy);
   return m;
 }
 
@@ -3789,10 +4092,15 @@ bool write_artifact_meta(const fs::path& artifact, const ArtifactMeta& m) {
   out << "source_hash=" << m.source_hash << "\n";
   out << "mode=" << m.mode << "\n";
   out << "profile=" << m.profile << "\n";
+  out << "artifact_kind=" << m.artifact_kind << "\n";
   out << "compiler_schema_version=" << m.compiler_schema_version << "\n";
   out << "cache_schema_version=" << m.cache_schema_version << "\n";
   out << "strict_region=" << (m.strict_region ? "1" : "0") << "\n";
   out << "warnings_as_errors=" << (m.warnings_as_errors ? "1" : "0") << "\n";
+  out << "no_std=" << (m.no_std ? "1" : "0") << "\n";
+  out << "runtime_profile=" << m.runtime_profile << "\n";
+  out << "target=" << m.target << "\n";
+  out << "panic_policy=" << m.panic_policy << "\n";
   return true;
 }
 
@@ -3812,21 +4120,32 @@ std::optional<ArtifactMeta> read_artifact_meta(const fs::path& artifact) {
     if (key == "source_hash") m.source_hash = value;
     if (key == "mode") m.mode = value;
     if (key == "profile") m.profile = value;
+    if (key == "artifact_kind") m.artifact_kind = value;
     if (key == "compiler_schema_version") m.compiler_schema_version = std::atoi(value.c_str());
     if (key == "cache_schema_version") m.cache_schema_version = std::atoi(value.c_str());
     if (key == "strict_region") m.strict_region = (value == "1");
     if (key == "warnings_as_errors") m.warnings_as_errors = (value == "1");
+    if (key == "no_std") m.no_std = (value == "1");
+    if (key == "runtime_profile") m.runtime_profile = value;
+    if (key == "target") m.target = value;
+    if (key == "panic_policy") m.panic_policy = value;
   }
   if (version != kArtifactMetaVersion) return std::nullopt;
-  if (m.source_hash.empty() || m.mode.empty() || m.profile.empty()) return std::nullopt;
+  if (m.source_hash.empty() || m.mode.empty() || m.profile.empty() || m.artifact_kind.empty()) {
+    return std::nullopt;
+  }
+  if (m.runtime_profile.empty() || m.target.empty() || m.panic_policy.empty()) return std::nullopt;
   return m;
 }
 
 bool artifact_meta_matches(const ArtifactMeta& lhs, const ArtifactMeta& rhs) {
   return lhs.source_hash == rhs.source_hash && lhs.mode == rhs.mode && lhs.profile == rhs.profile &&
+         lhs.artifact_kind == rhs.artifact_kind &&
          lhs.compiler_schema_version == rhs.compiler_schema_version &&
          lhs.cache_schema_version == rhs.cache_schema_version &&
-         lhs.strict_region == rhs.strict_region && lhs.warnings_as_errors == rhs.warnings_as_errors;
+         lhs.strict_region == rhs.strict_region && lhs.warnings_as_errors == rhs.warnings_as_errors &&
+         lhs.no_std == rhs.no_std && lhs.runtime_profile == rhs.runtime_profile &&
+         lhs.target == rhs.target && lhs.panic_policy == rhs.panic_policy;
 }
 
 static bool preflight_gate_blocks(const nebula::frontend::Diagnostic& d, const CliOptions& opt) {
@@ -3953,8 +4272,11 @@ int run_preflight_if_enabled(const fs::path& file,
   popt.mode = BuildMode::Debug;
   popt.profile = AnalysisProfile::Fast;
   popt.analysis_tier = AnalysisTier::Basic;
-  popt.strict_region = opt.strict_region;
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
   popt.warnings_as_errors = opt.warnings_as_errors;
+  popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+  popt.runtime_profile = opt.runtime_profile;
+  popt.panic_policy = opt.panic_policy;
   popt.include_lint = true;
   popt.allow_cross_stage_reuse = (opt.cross_stage_reuse == CrossStageReuseMode::Safe);
   popt.disk_cache_enabled = (opt.disk_cache == DiskCacheMode::On);
@@ -3965,6 +4287,7 @@ int run_preflight_if_enabled(const fs::path& file,
   popt.budget_ms = opt.diag_budget_ms;
   popt.source_path = file.string();
   popt.cache_key_source = cache_key_source;
+  popt.target = opt.target;
   popt.stage = nebula::frontend::DiagnosticStage::Preflight;
 
   auto preflight = run_compile_pipeline(sources, popt);
@@ -3992,7 +4315,9 @@ struct CacheReportScope {
 
 int cmd_check(const fs::path& file, const CliOptions& opt) {
   CacheReportScope cache_scope(opt);
-  auto loaded = load_compile_input(file, nebula::frontend::DiagnosticStage::Build);
+  auto loaded = load_compile_input(file,
+                                   nebula::frontend::DiagnosticStage::Build,
+                                   load_compile_options_from_cli(opt));
   if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
   if (!loaded.ok) {
     return 1;
@@ -4006,14 +4331,18 @@ int cmd_check(const fs::path& file, const CliOptions& opt) {
   popt.mode = opt.mode;
   popt.profile = resolved;
   popt.analysis_tier = tier;
-  popt.strict_region = opt.strict_region;
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
   popt.warnings_as_errors = opt.warnings_as_errors;
+  popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+  popt.runtime_profile = opt.runtime_profile;
+  popt.panic_policy = opt.panic_policy;
   popt.include_lint = true;
   popt.dump_ownership = opt.dump_ownership;
   popt.dump_cfg_ir = opt.dump_cfg_ir;
   popt.budget_ms = opt.diag_budget_ms;
   popt.source_path = effective_file.string();
   popt.cache_key_source = loaded.cache_key_source;
+  popt.target = opt.target;
   popt.stage = nebula::frontend::DiagnosticStage::Build;
 
   auto result = run_compile_pipeline(loaded.compile_sources, popt);
@@ -4033,14 +4362,18 @@ int cmd_check(const fs::path& file, const CliOptions& opt) {
 }
 
 static int cmd_test_project_target(const fs::path& target, const CliOptions& opt) {
-  auto loaded = load_compile_input(target, nebula::frontend::DiagnosticStage::Build);
+  auto loaded = load_compile_input(target,
+                                   nebula::frontend::DiagnosticStage::Build,
+                                   load_compile_options_from_cli(opt));
   if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
   if (!loaded.ok) return 1;
   return cmd_test_project_target(opt, loaded);
 }
 
 static int cmd_bench_project_target(const fs::path& target, const CliOptions& opt) {
-  auto loaded = load_compile_input(target, nebula::frontend::DiagnosticStage::Build);
+  auto loaded = load_compile_input(target,
+                                   nebula::frontend::DiagnosticStage::Build,
+                                   load_compile_options_from_cli(opt));
   if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
   if (!loaded.ok) return 1;
   return cmd_bench_project_target(opt, loaded);
@@ -4068,10 +4401,11 @@ int cmd_test(const CliOptions& opt) {
   const AnalysisTier tier = resolve_analysis_tier(opt.mode, opt.analysis_tier);
 
   for (const auto& file : files) {
-    std::string src;
-    std::vector<nebula::frontend::Diagnostic> io_diags;
-    if (!read_source(file, src, io_diags, nebula::frontend::DiagnosticStage::Build)) {
-      emit_diagnostics(io_diags, opt, std::cerr);
+    auto loaded = load_compile_input(file,
+                                     nebula::frontend::DiagnosticStage::Build,
+                                     load_compile_options_from_cli(opt));
+    if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
+    if (!loaded.ok) {
       failed = 1;
       continue;
     }
@@ -4080,16 +4414,19 @@ int cmd_test(const CliOptions& opt) {
     popt.mode = opt.mode;
     popt.profile = resolved_profile;
     popt.analysis_tier = tier;
-    popt.strict_region = opt.strict_region;
+    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
     popt.warnings_as_errors = opt.warnings_as_errors;
+    popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+    popt.runtime_profile = opt.runtime_profile;
+    popt.panic_policy = opt.panic_policy;
     popt.include_lint = should_include_lint_in_build_stage(opt);
     popt.budget_ms = opt.diag_budget_ms;
     popt.source_path = file.string();
-    popt.cache_key_source = source_identity_seed(file.string(), src);
+    popt.cache_key_source = loaded.cache_key_source;
+    popt.target = opt.target;
     popt.stage = nebula::frontend::DiagnosticStage::Build;
 
-    auto analysis = run_compile_pipeline(
-        std::vector<nebula::frontend::SourceFile>{{file.string(), src, {}, {}, {}}}, popt);
+    auto analysis = run_compile_pipeline(loaded.compile_sources, popt);
     emit_diagnostics(analysis.diags, opt, std::cerr);
     if (analysis.has_error || !analysis.nir_prog || !analysis.rep_owner) {
       failed = 1;
@@ -4103,7 +4440,10 @@ int cmd_test(const CliOptions& opt) {
 
     nebula::codegen::EmitOptions eopt;
     eopt.main_mode = nebula::codegen::MainMode::RunTests;
-    eopt.strict_region = opt.strict_region;
+    eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    eopt.runtime_profile = opt.runtime_profile;
+    eopt.target = opt.target;
+    eopt.panic_policy = opt.panic_policy;
     const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
 
     if (!write_text_file(out_cpp, cpp)) {
@@ -4157,10 +4497,11 @@ int cmd_bench(const CliOptions& opt) {
   const AnalysisTier tier = resolve_analysis_tier(opt.mode, opt.analysis_tier);
 
   for (const auto& file : files) {
-    std::string src;
-    std::vector<nebula::frontend::Diagnostic> io_diags;
-    if (!read_source(file, src, io_diags, nebula::frontend::DiagnosticStage::Build)) {
-      emit_diagnostics(io_diags, opt, std::cerr);
+    auto loaded = load_compile_input(file,
+                                     nebula::frontend::DiagnosticStage::Build,
+                                     load_compile_options_from_cli(opt));
+    if (!loaded.diags.empty()) emit_diagnostics(loaded.diags, opt, std::cerr);
+    if (!loaded.ok) {
       failed = 1;
       continue;
     }
@@ -4169,16 +4510,19 @@ int cmd_bench(const CliOptions& opt) {
     popt.mode = opt.mode;
     popt.profile = resolved_profile;
     popt.analysis_tier = tier;
-    popt.strict_region = opt.strict_region;
+    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
     popt.warnings_as_errors = opt.warnings_as_errors;
+    popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
+    popt.runtime_profile = opt.runtime_profile;
+    popt.panic_policy = opt.panic_policy;
     popt.include_lint = should_include_lint_in_build_stage(opt);
     popt.budget_ms = opt.diag_budget_ms;
     popt.source_path = file.string();
-    popt.cache_key_source = source_identity_seed(file.string(), src);
+    popt.cache_key_source = loaded.cache_key_source;
+    popt.target = opt.target;
     popt.stage = nebula::frontend::DiagnosticStage::Build;
 
-    auto analysis = run_compile_pipeline(
-        std::vector<nebula::frontend::SourceFile>{{file.string(), src, {}, {}, {}}}, popt);
+    auto analysis = run_compile_pipeline(loaded.compile_sources, popt);
     emit_diagnostics(analysis.diags, opt, std::cerr);
     if (analysis.has_error || !analysis.nir_prog || !analysis.rep_owner) {
       failed = 1;
@@ -4192,7 +4536,10 @@ int cmd_bench(const CliOptions& opt) {
 
     nebula::codegen::EmitOptions eopt;
     eopt.main_mode = nebula::codegen::MainMode::RunBench;
-    eopt.strict_region = opt.strict_region;
+    eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    eopt.runtime_profile = opt.runtime_profile;
+    eopt.target = opt.target;
+    eopt.panic_policy = opt.panic_policy;
     const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
 
     if (!write_text_file(out_cpp, cpp)) {

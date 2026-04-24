@@ -1,0 +1,19 @@
+struct Pair {
+  x: Int
+  y: Int
+}
+
+enum Boxed<T> {
+  Item(T)
+}
+
+fn sum_pair(value: Boxed<Pair>) -> Int {
+  return match value {
+    Item({ x, y }) => x + y,
+  }
+}
+
+fn main() -> Void {
+  expect_eq(sum_pair(Item(Pair(3, 4))), 7)
+  print("ok")
+}

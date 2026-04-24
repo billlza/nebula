@@ -1,0 +1,166 @@
+id = "TST-262-std-process-preview-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import platform
+import subprocess
+from pathlib import Path
+
+system = platform.system().lower()
+if system.startswith(('windows', 'msys', 'mingw', 'cygwin')):
+    print('std-process-skip-unsupported-host')
+    raise SystemExit(0)
+
+root = Path('work/std_process_preview')
+(root / 'src').mkdir(parents=True, exist_ok=True)
+(root / 'cwd').mkdir(parents=True, exist_ok=True)
+(root / 'nebula.toml').write_text('''schema_version = 1
+
+[package]
+name = "std-process-preview"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+''', encoding='utf-8')
+(root / 'src' / 'main.nb').write_text('''module main
+import std::bytes
+import std::json
+import std::process
+
+fn env_one() -> Json {
+  let builder = array_builder()
+  return array_build(array_push(builder, env_pair("NEBULA_PROCESS_SMOKE", "env-ok")))
+}
+
+fn expect_process_ok(label: String, output: ProcessOutput) -> Bool {
+  if output.exit_code != 0 || output.signal != 0 || output.timed_out {
+    print(label)
+    print("bad-process-status")
+    return false
+  }
+  return true
+}
+
+fn main() -> Int {
+  let ok = true
+
+  match run(command("/bin/echo", arg_list1("$HOME"), "", empty_env(), true, from_string(""), 1000, 1024, 1024)) {
+    Ok(out) => {
+      if !expect_process_ok("echo", out) || to_string(out.stdout) != "$HOME\\n" {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/bin/cat", empty_args(), "", empty_env(), true, from_string("stdin-ok"), 1000, 1024, 1024)) {
+    Ok(out) => {
+      if !expect_process_ok("cat", out) || to_string(out.stdout) != "stdin-ok" {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/bin/sh", arg_list2("-c", "test $(basename $PWD) = cwd"), "work/std_process_preview/cwd", empty_env(), true, from_string(""), 1000, 1024, 1024)) {
+    Ok(out) => {
+      if !expect_process_ok("cwd", out) {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/bin/sh", arg_list2("-c", "printf %s $NEBULA_PROCESS_SMOKE"), "", env_one(), true, from_string(""), 1000, 4096, 1024)) {
+    Ok(out) => {
+      if !expect_process_ok("env", out) || to_string(out.stdout) != "env-ok" {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/bin/sh", arg_list2("-c", "echo err >&2; exit 7"), "", empty_env(), true, from_string(""), 1000, 1024, 1024)) {
+    Ok(out) => {
+      if out.exit_code != 7 || to_string(out.stderr) != "err\\n" {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/bin/echo", arg_list1("abcdef"), "", empty_env(), true, from_string(""), 1000, 3, 1024)) {
+    Ok(out) => {
+      if to_string(out.stdout) != "abc" {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/bin/sleep", arg_list1("2"), "", empty_env(), true, from_string(""), 100, 1024, 1024)) {
+    Ok(out) => {
+      if !out.timed_out || out.signal == 0 {
+        ok = false
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      ok = false
+    }
+  }
+
+  match run(command("/no/such/nebula-process", empty_args(), "", empty_env(), true, from_string(""), 1000, 1024, 1024)) {
+    Ok(_) => {
+      ok = false
+    }
+    Err(_) => {}
+  }
+
+  if ok {
+    print("std-process-ok")
+    return 0
+  }
+  print("std-process-bad")
+  return 1
+}
+''', encoding='utf-8')
+
+update = subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], capture_output=True, text=True, env=os.environ.copy())
+print(update.stdout, end='')
+print(update.stderr, end='')
+if update.returncode != 0:
+    raise SystemExit(update.returncode)
+run = subprocess.run([os.environ['NEBULA_BINARY'], 'run', str(root), '--run-gate', 'none'], capture_output=True, text=True, env=os.environ.copy())
+print(run.stdout, end='')
+print(run.stderr, end='')
+if run.returncode != 0:
+    raise SystemExit(run.returncode)
+if 'std-process-ok' not in run.stdout:
+    raise SystemExit('std-process-ok missing from output')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["std-process-ok"]

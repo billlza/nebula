@@ -1,0 +1,13 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn None() -> Int {
+  return 42
+}
+
+fn main() -> Void {
+  expect_eq(None(), 42)
+  print("ok")
+}

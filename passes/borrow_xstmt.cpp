@@ -81,16 +81,34 @@ static std::string alias_to_string(const AliasKey& key) {
   return key.base_name;
 }
 
+static bool field_path_overlaps(std::string_view lhs, std::string_view rhs) {
+  if (lhs == rhs) return true;
+  if (lhs.size() < rhs.size()) {
+    return rhs.substr(0, lhs.size()) == lhs && rhs[lhs.size()] == '.';
+  }
+  if (rhs.size() < lhs.size()) {
+    return lhs.substr(0, rhs.size()) == rhs && lhs[rhs.size()] == '.';
+  }
+  return false;
+}
+
 static bool alias_overlaps(const AliasKey& lhs, const AliasKey& rhs) {
   if (lhs.base_var == 0 || rhs.base_var == 0) return false;
   if (lhs.base_var != rhs.base_var) return false;
   if (lhs.kind == AliasKey::Kind::Whole || rhs.kind == AliasKey::Kind::Whole) return true;
-  return lhs.field == rhs.field;
+  return field_path_overlaps(lhs.field, rhs.field);
 }
 
 static std::string overlap_label(const AliasKey& lhs, const AliasKey& rhs) {
   if (lhs.base_var != rhs.base_var) return alias_to_string(lhs);
   if (lhs.kind == AliasKey::Kind::Whole || rhs.kind == AliasKey::Kind::Whole) return lhs.base_name;
+  if (lhs.field == rhs.field) return lhs.base_name + "." + lhs.field;
+  if (lhs.field.size() < rhs.field.size() && field_path_overlaps(lhs.field, rhs.field)) {
+    return lhs.base_name + "." + lhs.field;
+  }
+  if (rhs.field.size() < lhs.field.size() && field_path_overlaps(lhs.field, rhs.field)) {
+    return rhs.base_name + "." + rhs.field;
+  }
   return lhs.base_name + "." + lhs.field;
 }
 
@@ -210,6 +228,12 @@ private:
             return origin_for_var(n.var);
           } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
             return origin_for_var(n.base_var);
+          } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+            return origin_from_expr(*n.base);
+          } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+            return origin_from_expr(*n.subject);
+          } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+            return origin_from_expr(*n.subject);
           } else if constexpr (std::is_same_v<N, Expr::Binary>) {
             VarOrigin out = origin_from_expr(*n.lhs);
             merge_origin(out, origin_from_expr(*n.rhs));
@@ -470,6 +494,8 @@ private:
             (void)check_conflict(AccessKind::Read, access, e.span);
           } else if constexpr (std::is_same_v<N, Expr::Call>) {
             analyze_call(n, pending);
+          } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+            analyze_expr(*n.base, pending);
           } else if constexpr (std::is_same_v<N, Expr::Construct>) {
             for (const auto& a : n.args) analyze_expr(*a, pending);
           } else if constexpr (std::is_same_v<N, Expr::Binary>) {
@@ -479,6 +505,13 @@ private:
             analyze_expr(*n.inner, pending);
           } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
             analyze_expr(*n.inner, pending);
+          } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+            analyze_expr(*n.subject, pending);
+          } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+            analyze_expr(*n.subject, pending);
+          } else if constexpr (std::is_same_v<N, Expr::Match>) {
+            analyze_expr(*n.subject, pending);
+            for (const auto& arm : n.arms) analyze_expr(*arm->value, pending);
           } else {
             // literals
           }
@@ -492,7 +525,9 @@ private:
     std::visit(
         [&](auto&& st) {
           using S = std::decay_t<decltype(st)>;
-          if constexpr (std::is_same_v<S, Stmt::Let>) {
+          if constexpr (std::is_same_v<S, Stmt::Declare>) {
+            var_origins_.erase(st.var);
+          } else if constexpr (std::is_same_v<S, Stmt::Let>) {
             analyze_expr(*st.value, pending);
             var_origins_[st.var] = origin_for_assignment_rhs(*st.value);
           } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
@@ -525,6 +560,12 @@ private:
             analyze_expr(*st.end, pending);
             var_origins_.erase(st.var);
             analyze_block(st.body, true);
+          } else if constexpr (std::is_same_v<S, Stmt::While>) {
+            analyze_expr(*st.cond, pending);
+            analyze_block(st.body, true);
+          } else if constexpr (std::is_same_v<S, Stmt::Break> ||
+                               std::is_same_v<S, Stmt::Continue>) {
+            // no-op
           }
         },
         s.node);

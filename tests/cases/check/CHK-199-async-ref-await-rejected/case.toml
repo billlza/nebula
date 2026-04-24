@@ -1,0 +1,10 @@
+id = "CHK-199-async-ref-await-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/async_ref_await_bad.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T134"
+severity = "error"

@@ -1,0 +1,12 @@
+module log
+
+extern fn __nebula_rt_log_info(msg: String) -> Void
+extern fn __nebula_rt_log_error(msg: String) -> Void
+
+fn info(msg: String) -> Void {
+  __nebula_rt_log_info(msg)
+}
+
+fn error(msg: String) -> Void {
+  __nebula_rt_log_error(msg)
+}

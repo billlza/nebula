@@ -1,0 +1,18 @@
+struct Inner {
+  a: Int
+  b: Int
+}
+
+struct Outer {
+  inner: Inner
+}
+
+fn touch(ref p: Inner, x: Int) -> Int {
+  p.a = p.a + x
+  return p.a
+}
+
+fn ref_chained_field_prefix_overlap() -> Int {
+  let o = Outer(Inner(1, 2))
+  return touch(o.inner, o.inner.a)
+}

@@ -1,0 +1,12 @@
+id = "CHK-151-extern-ref-opaque-external-conservative"
+suite = "check"
+command = "check"
+source = "fixtures/extern_ref_opaque_external.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T093"
+severity = "error"
+category = "typecheck"
+risk = "high"

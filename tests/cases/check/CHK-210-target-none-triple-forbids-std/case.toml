@@ -1,0 +1,11 @@
+id = "CHK-210-target-none-triple-forbids-std"
+suite = "check"
+command = "check"
+source = "fixtures/system_forbidden_std.nb"
+args = ["--target", "x86_64-unknown-none", "--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+severity = "error"
+stage = "build"

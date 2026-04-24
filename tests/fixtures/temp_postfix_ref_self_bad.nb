@@ -1,0 +1,17 @@
+struct Box {
+  x: Int
+}
+
+fn Box_bump(ref self: Box) -> Int {
+  self.x = self.x + 1
+  return self.x
+}
+
+fn make_box() -> Box {
+  return Box(1)
+}
+
+fn main() -> Void {
+  let n = make_box().bump()
+  print("bad")
+}

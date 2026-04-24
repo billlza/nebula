@@ -1,5 +1,14 @@
 module io
+import std::fs
+import std::result
 
-fn greet(name: String) -> Void {
-  print(name)
+fn copy_file(input: String, output: String) -> Result<Void, String> {
+  match read_bytes(input) {
+    Ok(data) => {
+      return write_bytes(output, data)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
 }

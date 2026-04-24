@@ -1,0 +1,23 @@
+enum Sign<T> {
+  Pos(T)
+  Neg(T)
+}
+
+fn abs_value(x: Sign<Int>) -> Int {
+  match x {
+    Pos(value) => {
+      return value
+    }
+    Neg(value) => {
+      return 0 - value
+    }
+  }
+}
+
+fn main() -> Void {
+  let a = abs_value(Pos(7))
+  let b = abs_value(Neg(-3))
+  expect_eq(a, 7)
+  expect_eq(b, 3)
+  print("ok")
+}

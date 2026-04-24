@@ -1,0 +1,22 @@
+id = "TST-083-build-staticlib-missing-archiver-diagnostic"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/cabi_no_ar && cp -R \"$NEBULA_REPO_ROOT/examples/c_abi_export\" work/cabi_no_ar"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport os\nimport shutil\nfrom pathlib import Path\ncxx = os.environ.get('CXX') or shutil.which('clang++') or shutil.which('c++')\nif not cxx:\n    raise SystemExit('no clang++/c++ found for archiver-missing smoke')\nPath('work/cabi_no_ar/cxx_path.txt').write_text(cxx, encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "PATH='' CXX=\"$(cat work/cabi_no_ar/cxx_path.txt)\" $NEBULA_BINARY build work/cabi_no_ar --emit staticlib > work/cabi-no-ar.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-AR-MISSING' work/cabi-no-ar.out && grep -F 'install llvm-ar or ar' work/cabi-no-ar.out"
+expect_rc = 0

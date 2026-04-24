@@ -1,0 +1,19 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn make() -> Option<Int> {
+  return shared None
+}
+
+fn main() -> Void {
+  match make() {
+    None => {
+      print("shared-ok")
+    }
+    Some(v) => {
+      print("bad")
+    }
+  }
+}

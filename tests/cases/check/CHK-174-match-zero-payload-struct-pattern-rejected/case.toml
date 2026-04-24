@@ -1,0 +1,10 @@
+id = "CHK-174-match-zero-payload-struct-pattern-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/match_zero_payload_struct_pattern_bad.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T115"
+stage = "build"

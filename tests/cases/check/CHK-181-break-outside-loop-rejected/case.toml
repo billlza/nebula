@@ -1,0 +1,10 @@
+id = "CHK-181-break-outside-loop-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/break_outside_loop.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T119"
+severity = "error"

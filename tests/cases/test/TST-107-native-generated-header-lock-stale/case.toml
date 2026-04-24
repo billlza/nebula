@@ -1,0 +1,28 @@
+id = "TST-107-native-generated-header-lock-stale"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/native_generated_stale')\ndep = root / 'dep'\napp = root / 'app'\nfor path in [dep / 'src', dep / 'native' / 'templates', dep / 'native', app / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-generated\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[[native.sources]]\\npath = \"native/bridge.cpp\"\\nlanguage = \"cxx\"\\n\\n[[native.generated_headers]]\\nout = \"cfg/config.h\"\\ntemplate = \"native/templates/config.h.in\"\\nvalues = { MAGIC = \"41\" }\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn generated_value() -> Int\\n\\nfn dep_value() -> Int {\\n  return generated_value()\\n}\\n', encoding='utf-8')\n(dep / 'native' / 'templates' / 'config.h.in').write_text('#pragma once\\n#define MAGIC @MAGIC@\\n', encoding='utf-8')\n(dep / 'native' / 'bridge.cpp').write_text('#include <cstdint>\\n#include \"cfg/config.h\"\\nstd::int64_t generated_value() { return MAGIC + 1; }\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"generated-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ndep = { path = \"../dep\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  print(dep_value())\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/native_generated_stale/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport os\nlock = Path('work/native_generated_stale/app/nebula.lock')\ntemplate = Path('work/native_generated_stale/dep/native/templates/config.h.in')\ntemplate.write_text('#pragma once\\n#define MAGIC @MAGIC@\\n#define EXTRA 1\\n', encoding='utf-8')\nlock_mtime = lock.stat().st_mtime\nos.utime(template, (lock_mtime - 60, lock_mtime - 60))\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY check work/native_generated_stale/app --diag-format json > work/native-generated-stale.json 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-CLI-LOCK-STALE\"' work/native-generated-stale.json"
+expect_rc = 0

@@ -1,0 +1,11 @@
+@export
+@abi_c
+fn triple(x: Int) -> Int {
+  return x * 3
+}
+
+@export
+@abi_c
+fn always() -> Bool {
+  return true
+}

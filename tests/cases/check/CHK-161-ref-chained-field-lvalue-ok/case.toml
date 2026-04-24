@@ -1,0 +1,15 @@
+id = "CHK-161-ref-chained-field-lvalue-ok"
+suite = "check"
+command = "check"
+source = "fixtures/ref_chained_field_lvalue_ok.nb"
+args = ["--diag-format", "json"]
+expect_rc = 0
+
+[[forbid_diag]]
+code = "NBL-T090"
+
+[[forbid_diag]]
+code = "NBL-T091"
+
+[[forbid_diag]]
+code = "NBL-T092"

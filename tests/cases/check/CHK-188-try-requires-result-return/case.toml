@@ -1,0 +1,10 @@
+id = "CHK-188-try-requires-result-return"
+suite = "check"
+command = "check"
+source = "fixtures/result_try_nonresult_return.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T125"
+severity = "error"

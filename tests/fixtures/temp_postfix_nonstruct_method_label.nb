@@ -1,0 +1,7 @@
+fn make_int() -> Int {
+  return 1
+}
+
+fn main() -> Int {
+  return make_int().len()
+}

@@ -1,0 +1,11 @@
+id = "CHK-205-system-forbids-hosted-std"
+suite = "check"
+command = "check"
+source = "fixtures/system_forbidden_std.nb"
+args = ["--target", "system", "--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+severity = "error"
+stage = "build"

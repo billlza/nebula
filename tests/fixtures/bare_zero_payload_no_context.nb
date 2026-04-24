@@ -1,0 +1,8 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn main() -> Void {
+  let x = None
+}

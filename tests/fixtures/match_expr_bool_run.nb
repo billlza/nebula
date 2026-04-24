@@ -1,0 +1,12 @@
+fn choose(flag: Bool) -> Int {
+  return match flag {
+    true => 7,
+    false => 9,
+  }
+}
+
+fn main() -> Void {
+  expect_eq(choose(true), 7)
+  expect_eq(choose(false), 9)
+  print("ok")
+}

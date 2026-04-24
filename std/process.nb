@@ -1,0 +1,72 @@
+module process
+import std::bytes
+import std::json
+import std::result
+
+struct ProcessCommand {
+  program: String
+  args: Json
+  cwd: String
+  env: Json
+  inherit_env: Bool
+  stdin: Bytes
+  timeout_ms: Int
+  max_stdout_bytes: Int
+  max_stderr_bytes: Int
+}
+
+struct ProcessOutput {
+  exit_code: Int
+  signal: Int
+  timed_out: Bool
+  stdout: Bytes
+  stderr: Bytes
+}
+
+extern fn __nebula_rt_process_run(command: ProcessCommand) -> Result<ProcessOutput, String>
+
+fn empty_args() -> Json {
+  return array_build(array_builder())
+}
+
+fn empty_env() -> Json {
+  return array_build(array_builder())
+}
+
+fn arg_list1(first: String) -> Json {
+  let builder = array_builder()
+  return array_build(array_push(builder, string_value(first)))
+}
+
+fn arg_list2(first: String, second: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(first))
+  return array_build(array_push(builder, string_value(second)))
+}
+
+fn arg_list3(first: String, second: String, third: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(first))
+  builder = array_push(builder, string_value(second))
+  return array_build(array_push(builder, string_value(third)))
+}
+
+fn env_pair(name: String, value: String) -> Json {
+  return object2("name", string_value(name), "value", string_value(value))
+}
+
+fn command(program: String,
+           args: Json,
+           cwd: String,
+           env: Json,
+           inherit_env: Bool,
+           stdin: Bytes,
+           timeout_ms: Int,
+           max_stdout_bytes: Int,
+           max_stderr_bytes: Int) -> ProcessCommand {
+  return ProcessCommand(program, args, cwd, env, inherit_env, stdin, timeout_ms, max_stdout_bytes, max_stderr_bytes)
+}
+
+fn run(command: ProcessCommand) -> Result<ProcessOutput, String> {
+  return __nebula_rt_process_run(command)
+}

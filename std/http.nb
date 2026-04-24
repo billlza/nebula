@@ -1,0 +1,604 @@
+module http
+import std::bytes
+import std::net
+import std::result
+import std::task
+
+enum Method {
+  Get(Void)
+  Head(Void)
+  Post(Void)
+  Put(Void)
+  Delete(Void)
+}
+
+struct Request {
+  method: Method
+  path: String
+  body: Bytes
+}
+
+struct Response {
+  status: Int
+  content_type: String
+  body: Bytes
+}
+
+struct ClientRequest {
+  method: Method
+  authority: String
+  path: String
+  content_type: String
+  body: Bytes
+}
+
+struct ClientResponse {
+  status: Int
+  content_type: String
+  body: Bytes
+}
+
+struct RouteParams2 {
+  first: String
+  second: String
+}
+
+struct RouteParams3 {
+  first: String
+  second: String
+  third: String
+}
+
+extern fn __nebula_rt_http_read_request(self: TcpStream, max_header_bytes: Int, max_body_bytes: Int) -> Future<Result<Request, String>>
+extern fn __nebula_rt_http_header(request: Request, name: String) -> Result<String, String>
+extern fn __nebula_rt_http_header_unique(request: Request, name: String) -> Result<String, String>
+extern fn __nebula_rt_http_content_type(request: Request) -> Result<String, String>
+extern fn __nebula_rt_http_request_close_connection(request: Request) -> Bool
+extern fn __nebula_rt_http_path_matches(pattern: String, path: String) -> Bool
+extern fn __nebula_rt_http_route_param1(pattern: String, path: String) -> Result<String, String>
+extern fn __nebula_rt_http_route_params2(pattern: String, path: String) -> Result<RouteParams2, String>
+extern fn __nebula_rt_http_route_params3(pattern: String, path: String) -> Result<RouteParams3, String>
+extern fn __nebula_rt_http_write_response(self: TcpStream, response: Response) -> Future<Result<Void, String>>
+extern fn __nebula_rt_http_write_response_with_connection(self: TcpStream,
+                                                          response: Response,
+                                                          close_connection: Bool) -> Future<Result<Void, String>>
+extern fn __nebula_rt_http_response1(status: Int,
+                                     content_type: String,
+                                     body: Bytes,
+                                     name1: String,
+                                     value1: String) -> Result<Response, String>
+extern fn __nebula_rt_http_response2(status: Int,
+                                     content_type: String,
+                                     body: Bytes,
+                                     name1: String,
+                                     value1: String,
+                                     name2: String,
+                                     value2: String) -> Result<Response, String>
+extern fn __nebula_rt_http_response3(status: Int,
+                                     content_type: String,
+                                     body: Bytes,
+                                     name1: String,
+                                     value1: String,
+                                     name2: String,
+                                     value2: String,
+                                     name3: String,
+                                     value3: String) -> Result<Response, String>
+extern fn __nebula_rt_http_response_with_header(response: Response,
+                                                name: String,
+                                                value: String) -> Result<Response, String>
+extern fn __nebula_rt_http_response_without_body(response: Response) -> Response
+extern fn __nebula_rt_http_request1(method: Method,
+                                    authority: String,
+                                    path: String,
+                                    content_type: String,
+                                    body: Bytes,
+                                    name1: String,
+                                    value1: String) -> Result<ClientRequest, String>
+extern fn __nebula_rt_http_request2(method: Method,
+                                    authority: String,
+                                    path: String,
+                                    content_type: String,
+                                    body: Bytes,
+                                    name1: String,
+                                    value1: String,
+                                    name2: String,
+                                    value2: String) -> Result<ClientRequest, String>
+extern fn __nebula_rt_http_request3(method: Method,
+                                    authority: String,
+                                    path: String,
+                                    content_type: String,
+                                    body: Bytes,
+                                    name1: String,
+                                    value1: String,
+                                    name2: String,
+                                    value2: String,
+                                    name3: String,
+                                    value3: String) -> Result<ClientRequest, String>
+extern fn __nebula_rt_http_write_request(self: TcpStream, request: ClientRequest) -> Future<Result<Void, String>>
+extern fn __nebula_rt_http_read_response(self: TcpStream, max_header_bytes: Int, max_body_bytes: Int) -> Future<Result<ClientResponse, String>>
+extern fn __nebula_rt_http_read_response_for(self: TcpStream,
+                                             method: Method,
+                                             max_header_bytes: Int,
+                                             max_body_bytes: Int) -> Future<Result<ClientResponse, String>>
+extern fn __nebula_rt_http_response_header(response: ClientResponse, name: String) -> Result<String, String>
+
+fn TcpStream_read_request(self: TcpStream) -> Future<Result<Request, String>> {
+  return __nebula_rt_http_read_request(self, 8192, 1048576)
+}
+
+fn TcpStream_read_request_limited(self: TcpStream, max_header_bytes: Int, max_body_bytes: Int) -> Future<Result<Request, String>> {
+  return __nebula_rt_http_read_request(self, max_header_bytes, max_body_bytes)
+}
+
+fn Request_close_connection(self: Request) -> Bool {
+  return __nebula_rt_http_request_close_connection(self)
+}
+
+fn TcpStream_write_response(self: TcpStream, response: Response) -> Future<Result<Void, String>> {
+  return __nebula_rt_http_write_response(self, response)
+}
+
+fn TcpStream_write_response_with_connection(self: TcpStream,
+                                            response: Response,
+                                            close_connection: Bool) -> Future<Result<Void, String>> {
+  return __nebula_rt_http_write_response_with_connection(self, response, close_connection)
+}
+
+fn request(method: Method, authority: String, path: String, content_type: String, body: Bytes) -> ClientRequest {
+  return ClientRequest(method, authority, path, content_type, body)
+}
+
+fn get_request(authority: String, path: String) -> ClientRequest {
+  return request(Get, authority, path, "", from_string(""))
+}
+
+fn head_request(authority: String, path: String) -> ClientRequest {
+  return request(Head, authority, path, "", from_string(""))
+}
+
+fn post_request(authority: String, path: String, content_type: String, body: Bytes) -> ClientRequest {
+  return request(Post, authority, path, content_type, body)
+}
+
+fn put_request(authority: String, path: String, content_type: String, body: Bytes) -> ClientRequest {
+  return request(Put, authority, path, content_type, body)
+}
+
+fn delete_request(authority: String, path: String) -> ClientRequest {
+  return request(Delete, authority, path, "", from_string(""))
+}
+
+fn request1(method: Method,
+            authority: String,
+            path: String,
+            content_type: String,
+            body: Bytes,
+            name1: String,
+            value1: String) -> Result<ClientRequest, String> {
+  return __nebula_rt_http_request1(method, authority, path, content_type, body, name1, value1)
+}
+
+fn request2(method: Method,
+            authority: String,
+            path: String,
+            content_type: String,
+            body: Bytes,
+            name1: String,
+            value1: String,
+            name2: String,
+            value2: String) -> Result<ClientRequest, String> {
+  return __nebula_rt_http_request2(method, authority, path, content_type, body, name1, value1, name2, value2)
+}
+
+fn request3(method: Method,
+            authority: String,
+            path: String,
+            content_type: String,
+            body: Bytes,
+            name1: String,
+            value1: String,
+            name2: String,
+            value2: String,
+            name3: String,
+            value3: String) -> Result<ClientRequest, String> {
+  return __nebula_rt_http_request3(method, authority, path, content_type, body, name1, value1, name2, value2, name3, value3)
+}
+
+fn TcpStream_write_request(self: TcpStream, request: ClientRequest) -> Future<Result<Void, String>> {
+  return __nebula_rt_http_write_request(self, request)
+}
+
+fn TcpStream_read_response(self: TcpStream) -> Future<Result<ClientResponse, String>> {
+  return __nebula_rt_http_read_response(self, 8192, 1048576)
+}
+
+fn TcpStream_read_response_limited(self: TcpStream, max_header_bytes: Int, max_body_bytes: Int) -> Future<Result<ClientResponse, String>> {
+  return __nebula_rt_http_read_response(self, max_header_bytes, max_body_bytes)
+}
+
+fn TcpStream_read_response_for(self: TcpStream, method: Method) -> Future<Result<ClientResponse, String>> {
+  return __nebula_rt_http_read_response_for(self, method, 8192, 1048576)
+}
+
+fn TcpStream_read_response_limited_for(self: TcpStream,
+                                       method: Method,
+                                       max_header_bytes: Int,
+                                       max_body_bytes: Int) -> Future<Result<ClientResponse, String>> {
+  return __nebula_rt_http_read_response_for(self, method, max_header_bytes, max_body_bytes)
+}
+
+fn response_header(response: ClientResponse, name: String) -> Result<String, String> {
+  return __nebula_rt_http_response_header(response, name)
+}
+
+fn response(status: Int, content_type: String, body: Bytes) -> Response {
+  return Response(status, content_type, body)
+}
+
+fn response1(status: Int,
+             content_type: String,
+             body: Bytes,
+             name1: String,
+             value1: String) -> Result<Response, String> {
+  return __nebula_rt_http_response1(status, content_type, body, name1, value1)
+}
+
+fn response2(status: Int,
+             content_type: String,
+             body: Bytes,
+             name1: String,
+             value1: String,
+             name2: String,
+             value2: String) -> Result<Response, String> {
+  return __nebula_rt_http_response2(status, content_type, body, name1, value1, name2, value2)
+}
+
+fn response3(status: Int,
+             content_type: String,
+             body: Bytes,
+             name1: String,
+             value1: String,
+             name2: String,
+             value2: String,
+             name3: String,
+             value3: String) -> Result<Response, String> {
+  return __nebula_rt_http_response3(status, content_type, body, name1, value1, name2, value2, name3, value3)
+}
+
+fn with_header(response: Response, name: String, value: String) -> Result<Response, String> {
+  return __nebula_rt_http_response_with_header(response, name, value)
+}
+
+fn with_etag(response: Response, value: String) -> Result<Response, String> {
+  return with_header(response, "ETag", value)
+}
+
+fn response_without_body(response: Response) -> Response {
+  return __nebula_rt_http_response_without_body(response)
+}
+
+fn text_response(status: Int, body: String) -> Response {
+  return response(status, "text/plain; charset=utf-8", from_string(body))
+}
+
+fn ok_text(body: String) -> Response {
+  return text_response(200, body)
+}
+
+fn bad_request_text(body: String) -> Response {
+  return text_response(400, body)
+}
+
+fn method_not_allowed_text(body: String) -> Response {
+  return text_response(405, body)
+}
+
+fn not_found_text(body: String) -> Response {
+  return text_response(404, body)
+}
+
+fn internal_error_text(body: String) -> Response {
+  return text_response(500, body)
+}
+
+fn method_code(method: Method) -> Int {
+  match method {
+    Get => {
+      return 0
+    }
+    Head => {
+      return 1
+    }
+    Post => {
+      return 2
+    }
+    Put => {
+      return 3
+    }
+    Delete => {
+      return 4
+    }
+  }
+}
+
+fn method_is_head(method: Method) -> Bool {
+  match method {
+    Get => {
+      return false
+    }
+    Head => {
+      return true
+    }
+    Post => {
+      return false
+    }
+    Put => {
+      return false
+    }
+    Delete => {
+      return false
+    }
+  }
+}
+
+fn method_matches(expected: Method, actual: Method) -> Bool {
+  if method_code(expected) == method_code(actual) {
+    return true
+  }
+  return method_code(expected) == 0 && method_is_head(actual)
+}
+
+fn endpoint_matches(method: Method, path: String, request: Request) -> Bool {
+  return method_matches(method, request.method) && path_matches(path, request)
+}
+
+fn path_matches(pattern: String, request: Request) -> Bool {
+  return __nebula_rt_http_path_matches(pattern, request.path)
+}
+
+fn route_param1(pattern: String, request: Request) -> Result<String, String> {
+  return __nebula_rt_http_route_param1(pattern, request.path)
+}
+
+fn route_params2(pattern: String, request: Request) -> Result<RouteParams2, String> {
+  return __nebula_rt_http_route_params2(pattern, request.path)
+}
+
+fn route_params3(pattern: String, request: Request) -> Result<RouteParams3, String> {
+  return __nebula_rt_http_route_params3(pattern, request.path)
+}
+
+fn header_value(request: Request, name: String) -> Result<String, String> {
+  return __nebula_rt_http_header(request, name)
+}
+
+fn header_value_unique(request: Request, name: String) -> Result<String, String> {
+  return __nebula_rt_http_header_unique(request, name)
+}
+
+fn content_type(request: Request) -> Result<String, String> {
+  return __nebula_rt_http_content_type(request)
+}
+
+async fn dispatch1(request: Request,
+                   first_method: Method,
+                   first_path: String,
+                   first_handler: Fn(Request) -> Future<Response>,
+                   fallback: Response) -> Response {
+  if path_matches(first_path, request) {
+    if method_matches(first_method, request.method) {
+      return await first_handler(request)
+    }
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch1_result(request: Request,
+                          first_method: Method,
+                          first_path: String,
+                          first_handler: Fn(Request) -> Future<Result<Response, String>>,
+                          fallback: Response) -> Result<Response, String> {
+  if path_matches(first_path, request) {
+    if method_matches(first_method, request.method) {
+      return await first_handler(request)
+    }
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}
+
+async fn dispatch2(request: Request,
+                   first_method: Method,
+                   first_path: String,
+                   first_handler: Fn(Request) -> Future<Response>,
+                   second_method: Method,
+                   second_path: String,
+                   second_handler: Fn(Request) -> Future<Response>,
+                   fallback: Response) -> Response {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(request)
+    }
+  }
+  if path_hit {
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch2_result(request: Request,
+                          first_method: Method,
+                          first_path: String,
+                          first_handler: Fn(Request) -> Future<Result<Response, String>>,
+                          second_method: Method,
+                          second_path: String,
+                          second_handler: Fn(Request) -> Future<Result<Response, String>>,
+                          fallback: Response) -> Result<Response, String> {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(request)
+    }
+  }
+  if path_hit {
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}
+
+async fn dispatch3(request: Request,
+                   first_method: Method,
+                   first_path: String,
+                   first_handler: Fn(Request) -> Future<Response>,
+                   second_method: Method,
+                   second_path: String,
+                   second_handler: Fn(Request) -> Future<Response>,
+                   third_method: Method,
+                   third_path: String,
+                   third_handler: Fn(Request) -> Future<Response>,
+                   fallback: Response) -> Response {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(request)
+    }
+  }
+  if path_matches(third_path, request) {
+    path_hit = true
+    if method_matches(third_method, request.method) {
+      return await third_handler(request)
+    }
+  }
+  if path_hit {
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch3_result(request: Request,
+                          first_method: Method,
+                          first_path: String,
+                          first_handler: Fn(Request) -> Future<Result<Response, String>>,
+                          second_method: Method,
+                          second_path: String,
+                          second_handler: Fn(Request) -> Future<Result<Response, String>>,
+                          third_method: Method,
+                          third_path: String,
+                          third_handler: Fn(Request) -> Future<Result<Response, String>>,
+                          fallback: Response) -> Result<Response, String> {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(request)
+    }
+  }
+  if path_matches(third_path, request) {
+    path_hit = true
+    if method_matches(third_method, request.method) {
+      return await third_handler(request)
+    }
+  }
+  if path_hit {
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}
+
+async fn serve_once(listener: TcpListener, handler: Fn(Request) -> Future<Response>) -> Result<Void, String> {
+  match await listener.accept() {
+    Ok(stream) => {
+      match await stream.read_request() {
+        Ok(request) => {
+          let reply = await handler(request)
+          let wire_reply = reply
+          if method_is_head(request.method) {
+            wire_reply = response_without_body(reply)
+          }
+          match await stream.write_response(wire_reply) {
+            Ok(_) => {
+              return stream.close()
+            }
+            Err(msg) => {
+              stream.close()
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          stream.close()
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_n(listener: TcpListener, limit: Int, handler: Fn(Request) -> Future<Response>) -> Result<Void, String> {
+  if limit <= 0 {
+    return Err("serve_n limit must be positive")
+  }
+  let served = 0
+  while served < limit {
+    let outcome = await serve_once(listener, handler)
+    if served + 1 == limit {
+      return outcome
+    }
+    match outcome {
+      Ok(_) => {
+        served += 1
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Err("serve_n fell through unexpectedly")
+}
+
+async fn serve(listener: TcpListener, handler: Fn(Request) -> Future<Response>) -> Result<Void, String> {
+  while true {
+    match await serve_once(listener, handler) {
+      Ok(_) => {}
+      Err(msg) => {
+        if msg == "listener is closed" {
+          return listener.close()
+        }
+        return Err(msg)
+      }
+    }
+  }
+  return listener.close()
+}

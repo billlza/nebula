@@ -1,0 +1,10 @@
+id = "CHK-164-match-enum-payload-pattern-required"
+suite = "check"
+command = "check"
+source = "fixtures/match_payload_missing.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T115"
+stage = "build"

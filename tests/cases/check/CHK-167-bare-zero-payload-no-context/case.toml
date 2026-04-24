@@ -1,0 +1,10 @@
+id = "CHK-167-bare-zero-payload-no-context"
+suite = "check"
+command = "check"
+source = "fixtures/bare_zero_payload_no_context.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-T099"
+stage = "build"

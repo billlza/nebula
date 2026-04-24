@@ -1,0 +1,11 @@
+id = "CHK-206-system-forces-strict-region"
+suite = "check"
+command = "check"
+source = "fixtures/region_escape.nb"
+args = ["--target", "system", "--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diag]]
+code = "NBL-R001"
+severity = "error"
+stage = "build"

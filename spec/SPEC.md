@@ -1,4 +1,4 @@
-# Nebula Spec Index (v1.0.0)
+# Nebula Spec Index
 
 This index keeps the language identity front-and-center: core semantics first, tooling second.
 
@@ -12,12 +12,16 @@ This index keeps the language identity front-and-center: core semantics first, t
 ## 2. Layer map
 
 - Language Core:
-  `spec/language_core.md`, `spec/grammar.ebnf`, `spec/region_semantics.md`, `spec/rep_owner_model.md`
+  `spec/language_core.md`, `spec/grammar.ebnf`, `spec/generics_policy.md`,
+  `spec/region_semantics.md`, `spec/rep_owner_model.md`
 - Static Analysis:
   `spec/static_analysis.md`, `spec/escape_analysis.md`, `spec/safety_contract.md`,
   `spec/diagnostics.md`
 - Tooling/CLI:
-  `spec/tooling_cli.md` (compat entry: `spec/cli_contract.md`)
+  `spec/tooling_cli.md`, `spec/interop_c_abi.md` (compat entry: `spec/cli_contract.md`)
+- Product/system profiles:
+  `docs/service_profile.md`, `docs/app_platform_convergence.md`, `docs/universeos_convergence.md`,
+  `docs/system_profile.md`
 - Experimental/Infra:
   `spec/experimental_infra.md`
 
@@ -39,4 +43,5 @@ Borrow/exclusivity (`NBL-T09x`) is a conservative safety assist layer, not the c
 - Language meaning changes: Language Core docs
 - Analyzer and diagnostics behavior: Static Analysis docs
 - User CLI behavior: Tooling/CLI docs
+- Hosted/service/system positioning: profile docs under `docs/`
 - cache/reuse/grouping/baseline internals: Experimental/Infra docs

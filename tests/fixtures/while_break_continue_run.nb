@@ -1,0 +1,20 @@
+fn main() -> Int {
+  let i = 0
+  let sum = 0
+  while i < 6 {
+    i += 1
+    if i == 2 {
+      continue
+    }
+    if i == 5 {
+      break
+    }
+    sum += i
+  }
+  if sum == 8 {
+    print("while-ok")
+  } else {
+    print("while-bad")
+  }
+  return 0
+}

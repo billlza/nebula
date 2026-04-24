@@ -1,0 +1,48 @@
+struct Box<T> {
+  value: T
+}
+
+enum Result<T, E> {
+  Ok(T)
+  Err(E)
+}
+
+fn make_box(v: Int) -> Result<Box<Int>, String> {
+  return Ok(Box(v))
+}
+
+fn fail_box() -> Result<Box<Int>, String> {
+  return Err("err-ok")
+}
+
+fn lift() -> Result<Int, String> {
+  return Ok(make_box(40)?.value + 2)
+}
+
+fn short() -> Result<Int, String> {
+  return Ok(fail_box()?.value)
+}
+
+fn main() -> Void {
+  match lift() {
+    Ok(v) => {
+      if v == 42 {
+        print("ok")
+      } else {
+        print("bad")
+      }
+    },
+    Err(msg) => {
+      print(msg)
+    },
+  }
+
+  match short() {
+    Ok(v) => {
+      print("bad")
+    },
+    Err(msg) => {
+      print(msg)
+    },
+  }
+}

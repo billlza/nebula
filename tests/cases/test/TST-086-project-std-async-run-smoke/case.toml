@@ -1,0 +1,15 @@
+id = "TST-086-project-std-async-run-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/asyncproj')\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"asyncproj\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('import std::task\\nimport std::time\\n\\nasync fn main() -> Void {\\n  let t = spawn(work())\\n  expect_eq(await join(t), 42)\\n  await sleep(millis(1))\\n  print(\"project-ok\")\\n}\\n\\nasync fn work() -> Int {\\n  await yield_now()\\n  return 42\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/asyncproj"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["project-ok"]

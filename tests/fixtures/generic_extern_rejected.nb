@@ -1,0 +1,5 @@
+extern fn host_id<T>(x: T) -> T
+
+fn main() -> Int {
+  return 0
+}

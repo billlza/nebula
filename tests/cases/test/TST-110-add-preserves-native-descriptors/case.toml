@@ -1,0 +1,18 @@
+id = "TST-110-add-preserves-native-descriptors"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/native_descriptor_add')\napp = root / 'app'\ndep = root / 'dep'\nfor path in [app / 'src', dep / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"native-desc-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[[native.sources]]\\npath = \"native/value.S\"\\nlanguage = \"asm\"\\narch = [\"arm64\"]\\n\\n[[native.generated_headers]]\\nout = \"cfg/config.h\"\\ntemplate = \"native/templates/config.h.in\"\\nvalues = { MAGIC = \"41\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\n\\nfn main() -> Void {\\n  print(\"ok\")\\n}\\n', encoding='utf-8')\n(dep / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(dep / 'src' / 'lib.nb').write_text('module lib\\n\\nfn dep_value() -> Int {\\n  return 1\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "add"
+args = ["work/native_descriptor_add/app", "dep", "--path", "../dep"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F '[[native.sources]]' work/native_descriptor_add/app/nebula.toml && grep -F 'path = \"native/value.S\"' work/native_descriptor_add/app/nebula.toml && grep -F 'language = \"asm\"' work/native_descriptor_add/app/nebula.toml && grep -F 'arch = [\"arm64\"]' work/native_descriptor_add/app/nebula.toml && grep -F '[[native.generated_headers]]' work/native_descriptor_add/app/nebula.toml && grep -F 'out = \"cfg/config.h\"' work/native_descriptor_add/app/nebula.toml && grep -F 'template = \"native/templates/config.h.in\"' work/native_descriptor_add/app/nebula.toml && grep -F 'values = { MAGIC = \"41\" }' work/native_descriptor_add/app/nebula.toml && grep -F 'dep = { path = \"../dep\" }' work/native_descriptor_add/app/nebula.toml"
+expect_rc = 0

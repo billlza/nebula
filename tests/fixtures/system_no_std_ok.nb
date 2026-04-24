@@ -1,0 +1,7 @@
+fn value() -> Int {
+  return 0
+}
+
+fn main() -> Int {
+  return value()
+}

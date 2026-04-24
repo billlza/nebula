@@ -12,7 +12,6 @@
 namespace nebula::frontend {
 
 // Semantic type used by typecheck + later lowering.
-// v0.2.x adds callable types while keeping enum generics minimal.
 struct Ty {
   enum class Kind : std::uint8_t {
     Int,
@@ -30,7 +29,7 @@ struct Ty {
   Kind kind = Kind::Unknown;
   std::string name;                       // Struct/Enum/TypeParam name
   std::optional<QualifiedName> qualified_name;
-  std::shared_ptr<Ty> type_arg;           // Enum<T> (single argument), otherwise null
+  std::vector<Ty> type_args;
   std::vector<Ty> callable_params;        // Callable parameters
   std::vector<bool> callable_params_ref;  // Callable by-ref parameter flags
   std::shared_ptr<Ty> callable_ret;       // Callable return type
@@ -73,19 +72,24 @@ struct Ty {
     return t;
   }
 
-  static Ty Struct(std::string n, std::optional<QualifiedName> q = std::nullopt) {
+  static Ty Struct(std::string n,
+                   std::vector<Ty> args = {},
+                   std::optional<QualifiedName> q = std::nullopt) {
     Ty t;
     t.kind = Kind::Struct;
     t.name = std::move(n);
+    t.type_args = std::move(args);
     t.qualified_name = std::move(q);
     return t;
   }
-  static Ty Enum(std::string n, Ty arg, std::optional<QualifiedName> q = std::nullopt) {
+  static Ty Enum(std::string n,
+                 std::vector<Ty> args = {},
+                 std::optional<QualifiedName> q = std::nullopt) {
     Ty t;
     t.kind = Kind::Enum;
     t.name = std::move(n);
+    t.type_args = std::move(args);
     t.qualified_name = std::move(q);
-    t.type_arg = std::make_shared<Ty>(std::move(arg));
     return t;
   }
   static Ty TypeParam(std::string n) {
@@ -128,9 +132,11 @@ inline bool ty_equal(const Ty& a, const Ty& b) {
     if (*a.qualified_name != *b.qualified_name) return false;
   }
   if (a.name != b.name) return false;
-  if (a.type_arg == nullptr && b.type_arg == nullptr) return true;
-  if (a.type_arg == nullptr || b.type_arg == nullptr) return false;
-  return ty_equal(*a.type_arg, *b.type_arg);
+  if (a.type_args.size() != b.type_args.size()) return false;
+  for (std::size_t i = 0; i < a.type_args.size(); ++i) {
+    if (!ty_equal(a.type_args[i], b.type_args[i])) return false;
+  }
+  return true;
 }
 
 inline std::string ty_to_string(const Ty& t) {
@@ -140,10 +146,20 @@ inline std::string ty_to_string(const Ty& t) {
   case Ty::Kind::Bool: return "Bool";
   case Ty::Kind::String: return "String";
   case Ty::Kind::Void: return "Void";
-  case Ty::Kind::Struct: return t.name;
+  case Ty::Kind::Struct:
+    if (t.type_args.empty()) return t.name;
+    [[fallthrough]];
   case Ty::Kind::Enum:
-    if (t.type_arg) return t.name + "<" + ty_to_string(*t.type_arg) + ">";
-    return t.name + "<?>";
+    if (!t.type_args.empty()) {
+      std::string out = t.name + "<";
+      for (std::size_t i = 0; i < t.type_args.size(); ++i) {
+        if (i) out += ", ";
+        out += ty_to_string(t.type_args[i]);
+      }
+      out += ">";
+      return out;
+    }
+    return t.name;
   case Ty::Kind::TypeParam: return t.name;
   case Ty::Kind::Callable: {
     std::string out = t.is_unsafe_callable ? "UnsafeFn(" : "Fn(";

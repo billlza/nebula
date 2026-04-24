@@ -1,0 +1,10 @@
+id = "CHK-190-try-error-type-mismatch"
+suite = "check"
+command = "check"
+source = "fixtures/result_try_err_mismatch.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T127"
+severity = "error"

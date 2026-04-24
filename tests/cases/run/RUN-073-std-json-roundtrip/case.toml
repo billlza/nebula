@@ -1,0 +1,7 @@
+id = "RUN-073-std-json-roundtrip"
+suite = "run"
+command = "run"
+source = "fixtures/std_json_roundtrip.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["json-ok"]

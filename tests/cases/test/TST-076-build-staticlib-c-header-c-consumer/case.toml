@@ -1,0 +1,33 @@
+id = "TST-076-build-staticlib-c-header-c-consumer"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/cabi_static_c && cp -R \"$NEBULA_REPO_ROOT/examples/c_abi_export\" work/cabi_static_c"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY build work/cabi_static_c --emit staticlib"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'nebula_abi_demo_main_ping(void);' generated_cpp/abi-demo.h && grep -F 'nebula_abi_demo_main_flip(bool flag);' generated_cpp/abi-demo.h && grep -F 'nebula_abi_demo_main_half(double value);' generated_cpp/abi-demo.h"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cc=${CC:-clang} && \"$cc\" -std=c11 -Wstrict-prototypes -Werror -Igenerated_cpp -c work/cabi_static_c/consumer.c -o work/cabi_static_c/consumer.o"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cxx=${CXX:-clang++} && \"$cxx\" work/cabi_static_c/consumer.o generated_cpp/libabi-demo.a -o work/cabi_static_c/consumer_c"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "work/cabi_static_c/consumer_c"
+expect_rc = 0
+expect_stdout_contains = ["42 1 4.0"]

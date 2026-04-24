@@ -1,0 +1,11 @@
+id = "CHK-170-match-struct-payload-empty-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/match_struct_payload_empty.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["struct destructuring requires at least one field"]
+
+[[expect_diag]]
+code = "NBL-PAR900"
+stage = "build"

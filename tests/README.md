@@ -1,6 +1,6 @@
-# Nebula Contract Tests (v1.0.0)
+# Nebula Contract Tests
 
-This directory hosts the automated contract test system for Nebula v1.0.0 CLI and diagnostics.
+This directory hosts the automated contract test system for Nebula CLI and diagnostics.
 
 ## Quick start
 
@@ -30,6 +30,7 @@ python3 tests/run.py --filter 'RUN-00[1-6]*' --keep-temp
   - `--perf-json-out <path>` (non-gating performance summary)
   - `--perf-top <N>` (slowest-case rows in perf summary)
   - `--keep-temp`
+  - `--timeout <seconds>` (default per-step timeout; timed-out steps return `124`)
   - `--binary <path>` (optional override)
 
 Perf baseline diff helper:
@@ -95,6 +96,8 @@ expect_rc = 0
 Supported assertion fields per step:
 
 - `expect_rc`
+- `timeout` (per-step override; shell steps are killed as a process group/process tree on timeout
+  so nested Python/`nebula run` children do not survive the failed step)
 - `expect_stdout_contains[]`
 - `forbid_stdout_contains[]`
 - `expect_stdout_regex[]`
@@ -162,6 +165,11 @@ tests/
   `TST-036`, `TST-037`, `TST-038`, `TST-039`, `TST-040`
 - install/release smoke coverage:
   `TST-039`, `TST-040`, `TST-041`, `TST-042`
+- platform/docs/harness stability contracts:
+  `TST-238`, `TST-239`, `TST-280`, `TST-281`, `TST-282`
+- experimental system-profile gates:
+  `CHK-204`, `CHK-205`, `CHK-206`, `CHK-207`, `CHK-208`, `CHK-209`, `CHK-210`,
+  `CHK-211`, `CHK-212`, `BLD-011`, `BLD-012`, `RUN-080`
 
 ### Diagnostics contract (`spec/diagnostics.md`)
 

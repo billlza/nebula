@@ -1,0 +1,8 @@
+id = "TST-203-std-runtime-wrapper-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport re\nfrom pathlib import Path\nimport os\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nextern_pattern = re.compile(r'extern fn\\s+(__nebula_rt_[A-Za-z0-9_]+)\\s*\\(')\nwrapper_pattern = re.compile(r'\\b(__nebula_rt_[A-Za-z0-9_]+)\\s*\\(')\nexterns = set()\nfor path in sorted((repo_root / 'std').glob('*.nb')):\n    externs.update(extern_pattern.findall(path.read_text(encoding='utf-8')))\nruntime_text = (repo_root / 'runtime' / 'nebula_runtime.hpp').read_text(encoding='utf-8')\nwrappers = set(wrapper_pattern.findall(runtime_text))\nmissing = sorted(name for name in externs if name not in wrappers)\nif missing:\n    raise SystemExit(f'missing runtime wrappers: {missing!r}')\nprint('std-runtime-wrapper-contract-ok')\nPY"
+expect_rc = 0
+expect_stdout_contains = ["std-runtime-wrapper-contract-ok"]

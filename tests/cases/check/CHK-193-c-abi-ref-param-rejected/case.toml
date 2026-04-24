@@ -1,0 +1,10 @@
+id = "CHK-193-c-abi-ref-param-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_ref_param.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T130"
+severity = "error"

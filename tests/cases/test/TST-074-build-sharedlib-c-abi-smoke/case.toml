@@ -1,0 +1,28 @@
+id = "TST-074-build-sharedlib-c-abi-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/cabi_shared && cp -R \"$NEBULA_REPO_ROOT/examples/c_abi_export\" work/cabi_shared"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY build work/cabi_shared --emit sharedlib"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport os\nimport platform\nfrom pathlib import Path\nroot = Path('generated_cpp')\nsystem = platform.system()\nif system == 'Darwin':\n    lib = root / 'libabi-demo.dylib'\n    assert lib.exists(), lib\n    link = [str(lib), '-Wl,-rpath,' + str(root.resolve())]\nelif system == 'Linux':\n    lib = root / 'libabi-demo.so'\n    assert lib.exists(), lib\n    link = [str(lib), '-Wl,-rpath,' + str(root.resolve())]\nelse:\n    lib = root / 'abi-demo.dll'\n    implib = root / 'libabi-demo.dll.a'\n    assert lib.exists(), lib\n    assert implib.exists(), implib\n    link = [str(implib)]\nPath('work/cabi_shared/link_args.txt').write_text('\\n'.join(link), encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cxx=${CXX:-clang++} && python3 - <<'PY'\nfrom pathlib import Path\nargs = Path('work/cabi_shared/link_args.txt').read_text(encoding='utf-8').splitlines()\ncmd = [__import__('os').environ.get('CXX', 'clang++'), '-std=c++23', 'work/cabi_shared/consumer.cpp', '-Igenerated_cpp', *args, '-o', 'work/cabi_shared/consumer_shared']\nimport subprocess\nraise SystemExit(subprocess.run(cmd, check=False).returncode)\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "case \"$(uname -s)\" in MINGW*|MSYS*|CYGWIN*) PATH=\"$PWD/generated_cpp:$PATH\" work/cabi_shared/consumer_shared ;; *) work/cabi_shared/consumer_shared ;; esac"
+expect_rc = 0
+expect_stdout_contains = ["42"]

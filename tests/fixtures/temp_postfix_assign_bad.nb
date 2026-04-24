@@ -1,0 +1,11 @@
+struct Box {
+  x: Int
+}
+
+fn make_box() -> Box {
+  return Box(1)
+}
+
+fn main() -> Void {
+  make_box().x = 2
+}

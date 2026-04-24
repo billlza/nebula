@@ -1,0 +1,10 @@
+id = "CHK-196-c-abi-extern-export-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_extern_fn.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T129"
+severity = "error"

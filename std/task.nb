@@ -1,0 +1,11 @@
+module task
+
+struct Future<T> {}
+
+struct Task<T> {}
+
+extern fn __nebula_rt_task_yield_now() -> Future<Void>
+
+fn yield_now() -> Future<Void> {
+  return __nebula_rt_task_yield_now()
+}

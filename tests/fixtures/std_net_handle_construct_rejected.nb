@@ -1,0 +1,5 @@
+import std::net
+
+fn main() -> Void {
+  let stream = TcpStream()
+}

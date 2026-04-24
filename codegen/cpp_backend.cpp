@@ -1,6 +1,7 @@
 #include "codegen/cpp_backend.hpp"
 
 #include "frontend/types.hpp"
+#include "nir/runtime_ops.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -51,6 +52,7 @@ static std::string escape_string(const std::string& s) {
     case '\\': out += "\\\\"; break;
     case '"': out += "\\\""; break;
     case '\n': out += "\\n"; break;
+    case '\r': out += "\\r"; break;
     case '\t': out += "\\t"; break;
     default: out.push_back(c); break;
     }
@@ -84,6 +86,43 @@ static std::string sanitize_ident_piece(std::string_view text) {
   return out;
 }
 
+static const char* runtime_profile_name(RuntimeProfile profile) {
+  switch (profile) {
+  case RuntimeProfile::Hosted: return "hosted";
+  case RuntimeProfile::System: return "system";
+  }
+  return "hosted";
+}
+
+static const char* panic_policy_name(PanicPolicy policy) {
+  switch (policy) {
+  case PanicPolicy::Abort: return "abort";
+  case PanicPolicy::Trap: return "trap";
+  case PanicPolicy::Unwind: return "unwind";
+  }
+  return "abort";
+}
+
+static void emit_panic_policy(Cpp& out, const EmitOptions& opt, const std::string& msg_expr) {
+  switch (opt.panic_policy) {
+  case PanicPolicy::Abort:
+    out.line("nebula::rt::panic(" + msg_expr + ");");
+    return;
+  case PanicPolicy::Trap:
+    out.line("std::cerr << \"nebula panic: \" << " + msg_expr + " << \"\\n\";");
+    out.line("#if defined(__clang__) || defined(__GNUC__)");
+    out.line("__builtin_trap();");
+    out.line("#else");
+    out.line("std::abort();");
+    out.line("#endif");
+    return;
+  case PanicPolicy::Unwind:
+    out.line("throw nebula::rt::UserPanic(std::string(" + msg_expr + "));");
+    return;
+  }
+  out.line("nebula::rt::panic(" + msg_expr + ");");
+}
+
 static std::string emitted_cpp_type_name_for_identity(std::string_view identity,
                                                       std::string_view fallback_name) {
   if (identity.empty()) return std::string(fallback_name);
@@ -98,6 +137,84 @@ static std::string emitted_cpp_type_name_for(const std::optional<nebula::fronten
 static std::string emitted_cpp_type_name_for(const nebula::frontend::QualifiedName& name,
                                              std::string_view fallback_name) {
   return emitted_cpp_type_name_for_identity(nebula::nir::qualified_identity(name), fallback_name);
+}
+
+static std::string cpp_type(const Ty& t);
+
+static bool matches_std_type(const Ty& t, std::string_view module_name, std::string_view local_name) {
+  return t.qualified_name.has_value() && t.qualified_name->package_name == "std" &&
+         t.qualified_name->module_name == module_name && t.qualified_name->local_name == local_name;
+}
+
+static bool is_nebula_crypto_bytes_backed_struct_name(const nebula::frontend::QualifiedName& name) {
+  if (name.package_name != "nebula-crypto") return false;
+  if (name.module_name == "aead") {
+    return name.local_name == "ChaCha20Poly1305Key";
+  }
+  if (name.module_name == "pqc.kem") {
+    return name.local_name == "MlKem768KeyPair" || name.local_name == "MlKem768PublicKey" ||
+           name.local_name == "MlKem768SecretKey" || name.local_name == "MlKem768Ciphertext" ||
+           name.local_name == "MlKem768SharedSecret" || name.local_name == "MlKem768Encapsulation";
+  }
+  if (name.module_name == "pqc.sign") {
+    return name.local_name == "MlDsa65KeyPair" || name.local_name == "MlDsa65PublicKey" ||
+           name.local_name == "MlDsa65SecretKey" || name.local_name == "MlDsa65Signature";
+  }
+  return false;
+}
+
+static bool matches_nebula_crypto_bytes_backed_type(const Ty& t) {
+  return t.qualified_name.has_value() && is_nebula_crypto_bytes_backed_struct_name(*t.qualified_name);
+}
+
+static bool is_nebula_tls_handle_struct_name(const nebula::frontend::QualifiedName& name) {
+  if (name.package_name == "nebula-tls") {
+    if (name.module_name != "client") return false;
+    return name.local_name == "TlsTrustStore" || name.local_name == "TlsServerName" ||
+           name.local_name == "TlsClientIdentity" || name.local_name == "TlsVersionPolicy" ||
+           name.local_name == "TlsAlpnPolicy" || name.local_name == "ClientConfig" ||
+           name.local_name == "TlsClientStream";
+  }
+  if (name.package_name == "nebula-tls-server") {
+    if (name.module_name != "server") return false;
+    return name.local_name == "ServerIdentity" || name.local_name == "ServerConfig" ||
+           name.local_name == "TlsListener" || name.local_name == "TlsServerStream";
+  }
+  return false;
+}
+
+static bool matches_nebula_tls_handle_type(const Ty& t) {
+  return t.qualified_name.has_value() && is_nebula_tls_handle_struct_name(*t.qualified_name);
+}
+
+static bool is_nebula_db_sqlite_handle_struct_name(const nebula::frontend::QualifiedName& name) {
+  if (name.package_name != "nebula-db-sqlite") return false;
+  if (name.module_name != "sqlite") return false;
+  return name.local_name == "Connection" || name.local_name == "Transaction" ||
+         name.local_name == "ResultSet" || name.local_name == "Row";
+}
+
+static bool matches_nebula_db_sqlite_handle_type(const Ty& t) {
+  return t.qualified_name.has_value() && is_nebula_db_sqlite_handle_struct_name(*t.qualified_name);
+}
+
+static bool is_nebula_db_postgres_handle_struct_name(const nebula::frontend::QualifiedName& name) {
+  if (name.package_name != "nebula-db-postgres") return false;
+  if (name.module_name != "postgres") return false;
+  return name.local_name == "Connection" || name.local_name == "Transaction" ||
+         name.local_name == "ResultSet" || name.local_name == "Row";
+}
+
+static bool matches_nebula_db_postgres_handle_type(const Ty& t) {
+  return t.qualified_name.has_value() && is_nebula_db_postgres_handle_struct_name(*t.qualified_name);
+}
+
+static std::string future_cpp_type(const Ty& inner) {
+  return "nebula::rt::Future<" + cpp_type(inner) + ">";
+}
+
+static std::string task_cpp_type(const Ty& inner) {
+  return "nebula::rt::Task<" + cpp_type(inner) + ">";
 }
 
 static std::string cpp_type(const Ty& t) {
@@ -121,13 +238,120 @@ static std::string cpp_type(const Ty& t) {
   case Ty::Kind::Bool: return "bool";
   case Ty::Kind::String: return "std::string";
   case Ty::Kind::Void: return "void";
-  case Ty::Kind::Struct: return emitted_cpp_type_name_for(t.qualified_name, t.name);
+  case Ty::Kind::Struct: {
+    if (matches_nebula_crypto_bytes_backed_type(t)) {
+      return "nebula::rt::Bytes";
+    }
+    if (matches_nebula_tls_handle_type(t)) {
+      const auto& name = *t.qualified_name;
+      if (name.package_name == "nebula-tls") {
+        if (name.local_name == "TlsTrustStore") return "nebula::rt::TlsTrustStore";
+        if (name.local_name == "TlsServerName") return "nebula::rt::TlsServerName";
+        if (name.local_name == "TlsClientIdentity") return "nebula::rt::TlsClientIdentity";
+        if (name.local_name == "TlsVersionPolicy") return "nebula::rt::TlsVersionPolicy";
+        if (name.local_name == "TlsAlpnPolicy") return "nebula::rt::TlsAlpnPolicy";
+        if (name.local_name == "ClientConfig") return "nebula::rt::TlsClientConfig";
+        if (name.local_name == "TlsClientStream") return "nebula::rt::TlsClientStream";
+      }
+      if (name.package_name == "nebula-tls-server") {
+        if (name.local_name == "ServerIdentity") return "nebula::rt::TlsServerIdentity";
+        if (name.local_name == "ServerConfig") return "nebula::rt::TlsServerConfig";
+        if (name.local_name == "TlsListener") return "nebula::rt::TlsServerListener";
+        if (name.local_name == "TlsServerStream") return "nebula::rt::TlsServerStream";
+      }
+    }
+    if (matches_nebula_db_sqlite_handle_type(t)) {
+      if (t.qualified_name->local_name == "Connection") return "nebula::rt::SqliteConnection";
+      if (t.qualified_name->local_name == "Transaction") return "nebula::rt::SqliteTransaction";
+      if (t.qualified_name->local_name == "ResultSet") return "nebula::rt::SqliteResultSet";
+      if (t.qualified_name->local_name == "Row") return "nebula::rt::SqliteRow";
+    }
+    if (matches_nebula_db_postgres_handle_type(t)) {
+      if (t.qualified_name->local_name == "Connection") return "nebula::rt::PostgresConnection";
+      if (t.qualified_name->local_name == "Transaction") return "nebula::rt::PostgresTransaction";
+      if (t.qualified_name->local_name == "ResultSet") return "nebula::rt::PostgresResultSet";
+      if (t.qualified_name->local_name == "Row") return "nebula::rt::PostgresRow";
+    }
+    if (matches_std_type(t, "task", "Future") && t.type_args.size() == 1) {
+      return future_cpp_type(t.type_args.front());
+    }
+    if (matches_std_type(t, "task", "Task") && t.type_args.size() == 1) {
+      return task_cpp_type(t.type_args.front());
+    }
+    if (matches_std_type(t, "time", "Duration")) {
+      return "nebula::rt::Duration";
+    }
+    if (matches_std_type(t, "bytes", "Bytes")) {
+      return "nebula::rt::Bytes";
+    }
+    if (matches_std_type(t, "net", "SocketAddr")) {
+      return "nebula::rt::SocketAddr";
+    }
+    if (matches_std_type(t, "net", "TcpListener")) {
+      return "nebula::rt::TcpListener";
+    }
+    if (matches_std_type(t, "net", "TcpStream")) {
+      return "nebula::rt::TcpStream";
+    }
+    if (matches_std_type(t, "http", "Request")) {
+      return "nebula::rt::HttpRequest";
+    }
+    if (matches_std_type(t, "http", "Response")) {
+      return "nebula::rt::HttpResponse";
+    }
+    if (matches_std_type(t, "http", "ClientRequest")) {
+      return "nebula::rt::HttpClientRequest";
+    }
+    if (matches_std_type(t, "http", "ClientResponse")) {
+      return "nebula::rt::HttpClientResponse";
+    }
+    if (matches_std_type(t, "http", "RouteParams2")) {
+      return "nebula::rt::HttpRouteParams2";
+    }
+    if (matches_std_type(t, "http", "RouteParams3")) {
+      return "nebula::rt::HttpRouteParams3";
+    }
+    if (matches_std_type(t, "json", "Json")) {
+      return "nebula::rt::JsonValue";
+    }
+    if (matches_std_type(t, "json", "JsonArrayBuilder")) {
+      return "nebula::rt::JsonArrayBuilder";
+    }
+    if (matches_std_type(t, "process", "ProcessCommand")) {
+      return "nebula::rt::ProcessCommand";
+    }
+    if (matches_std_type(t, "process", "ProcessOutput")) {
+      return "nebula::rt::ProcessOutput";
+    }
+    std::string out = emitted_cpp_type_name_for(t.qualified_name, t.name);
+    if (!t.type_args.empty()) {
+      out += "<";
+      for (std::size_t i = 0; i < t.type_args.size(); ++i) {
+        if (i) out += ", ";
+        out += cpp_type(t.type_args[i]);
+      }
+      out += ">";
+    }
+    return out;
+  }
   case Ty::Kind::Enum:
-    if (t.type_arg) {
-      return emitted_cpp_type_name_for(t.qualified_name, t.name) + "<" + cpp_type(*t.type_arg) +
+    if (matches_std_type(t, "result", "Result") && t.type_args.size() == 2) {
+      return "nebula::rt::Result<" + cpp_type(t.type_args[0]) + ", " + cpp_type(t.type_args[1]) +
              ">";
     }
-    return emitted_cpp_type_name_for(t.qualified_name, t.name) + "<void>";
+    if (matches_std_type(t, "http", "Method")) {
+      return "nebula::rt::HttpMethod";
+    }
+    if (!t.type_args.empty()) {
+      std::string out = emitted_cpp_type_name_for(t.qualified_name, t.name) + "<";
+      for (std::size_t i = 0; i < t.type_args.size(); ++i) {
+        if (i) out += ", ";
+        out += cpp_type(t.type_args[i]);
+      }
+      out += ">";
+      return out;
+    }
+    return emitted_cpp_type_name_for(t.qualified_name, t.name);
   case Ty::Kind::TypeParam: return t.name;
   case Ty::Kind::Callable: return callable_sig(t, "*");
   case Ty::Kind::Unknown: return "auto";
@@ -176,6 +400,25 @@ static std::string emitted_cpp_name_for(const Function& fn) {
   return "__nebula_fn_" + stable_symbol_hash(identity) + "_" + sanitize_ident_piece(fn.name);
 }
 
+static std::string c_abi_export_name_for(const Function& fn) {
+  const auto& q = fn.qualified_name;
+  std::string out = "nebula";
+  std::string last_piece;
+  if (!q.package_name.empty()) {
+    last_piece = sanitize_ident_piece(q.package_name);
+    out += "_" + last_piece;
+  }
+  if (!q.module_name.empty()) {
+    const std::string module_piece = sanitize_ident_piece(q.module_name);
+    if (module_piece != last_piece) {
+      out += "_" + module_piece;
+      last_piece = module_piece;
+    }
+  }
+  out += "_" + sanitize_ident_piece(fn.name);
+  return out;
+}
+
 static std::string emitted_cpp_name_for_identity(const FunctionSymbolMap& symbols,
                                                  std::string_view identity,
                                                  std::string_view fallback_name) {
@@ -186,6 +429,30 @@ static std::string emitted_cpp_name_for_identity(const FunctionSymbolMap& symbol
 
 static std::string emitted_cpp_type_name_for(const StructDef& def) {
   return emitted_cpp_type_name_for(def.qualified_name, def.name);
+}
+
+static bool is_c_abi_annotation_set(const std::vector<std::string>& ann) {
+  return has_annotation(ann, "export") && has_annotation(ann, "abi_c");
+}
+
+static std::optional<std::string> c_abi_cpp_type(const Ty& ty) {
+  switch (ty.kind) {
+  case Ty::Kind::Int: return std::string("std::int64_t");
+  case Ty::Kind::Float: return std::string("double");
+  case Ty::Kind::Bool: return std::string("bool");
+  case Ty::Kind::Void: return std::string("void");
+  default: return std::nullopt;
+  }
+}
+
+static std::optional<std::string> c_abi_header_type(const Ty& ty) {
+  switch (ty.kind) {
+  case Ty::Kind::Int: return std::string("int64_t");
+  case Ty::Kind::Float: return std::string("double");
+  case Ty::Kind::Bool: return std::string("bool");
+  case Ty::Kind::Void: return std::string("void");
+  default: return std::nullopt;
+  }
 }
 
 static std::string emitted_cpp_type_name_for(const nebula::nir::EnumDef& def) {
@@ -215,8 +482,12 @@ struct EmitCtx {
   const RepOwnerResult* rep_owner = nullptr;
   const EmitOptions* opt = nullptr;
   const FunctionSymbolMap* function_symbols = nullptr;
+  const Function* current_function = nullptr;
   std::string fn_name;
   std::vector<std::string> region_stack;
+  std::unordered_map<VarId, std::string> stringify_source_vars;
+  std::vector<std::vector<VarId>> stringify_scope_stack;
+  mutable std::uint64_t temp_counter = 0;
 };
 
 static std::string emit_expr(const EmitCtx& ctx, const Expr& e);
@@ -227,10 +498,217 @@ static bool member_access_uses_arrow(const EmitCtx& ctx, VarId base_var) {
   return dec->rep != RepKind::Stack;
 }
 
+static std::vector<std::string> split_field_path(std::string_view path) {
+  std::vector<std::string> out;
+  std::size_t start = 0;
+  while (start < path.size()) {
+    const std::size_t dot = path.find('.', start);
+    const std::size_t end = (dot == std::string_view::npos) ? path.size() : dot;
+    if (end > start) out.push_back(std::string(path.substr(start, end - start)));
+    if (dot == std::string_view::npos) break;
+    start = dot + 1;
+  }
+  return out;
+}
+
 static std::string emit_member_access(const EmitCtx& ctx, VarId base_var,
                                       const std::string& base_name,
                                       const std::string& field) {
-  return base_name + (member_access_uses_arrow(ctx, base_var) ? "->" : ".") + field;
+  const auto path = split_field_path(field);
+  if (path.empty()) return base_name;
+  std::string out = base_name + (member_access_uses_arrow(ctx, base_var) ? "->" : ".") + path.front();
+  for (std::size_t i = 1; i < path.size(); ++i) out += "." + path[i];
+  return out;
+}
+
+static std::string emit_temp_member_access(const EmitCtx& ctx,
+                                           const Expr& base,
+                                           const std::string& field) {
+  std::ostringstream os;
+  os << "nebula::rt::project_value(" << emit_expr(ctx, base)
+     << ", [&](auto&& __nebula_base) { return (__nebula_base";
+  for (const auto& segment : split_field_path(field)) {
+    os << "." << segment;
+  }
+  os << "); })";
+  return os.str();
+}
+
+static std::string emit_value_field_chain(std::string base, std::string_view field) {
+  for (const auto& segment : split_field_path(field)) {
+    base += "." + segment;
+  }
+  return base;
+}
+
+static bool is_direct_std_call(const Expr::Call& call, std::string_view module_name,
+                               std::string_view local_name) {
+  return call.kind == nebula::nir::CallKind::Direct && call.resolved_callee.has_value() &&
+         call.resolved_callee->package_name == "std" &&
+         call.resolved_callee->module_name == module_name &&
+         call.resolved_callee->local_name == local_name;
+}
+
+static bool is_std_json_call(const Expr::Call& call, std::string_view local_name) {
+  const std::string target = nebula::nir::call_target_identity(call);
+  return is_direct_std_call(call, "json", local_name) ||
+         target == ("std::json::" + std::string(local_name)) || target == local_name;
+}
+
+static bool is_std_http_json_call(const Expr::Call& call, std::string_view local_name) {
+  const std::string target = nebula::nir::call_target_identity(call);
+  return is_direct_std_call(call, "http_json", local_name) ||
+         target == ("std::http_json::" + std::string(local_name));
+}
+
+static bool is_std_http_call(const Expr::Call& call, std::string_view local_name) {
+  const std::string target = nebula::nir::call_target_identity(call);
+  return is_direct_std_call(call, "http", local_name) ||
+         target == ("std::http::" + std::string(local_name));
+}
+
+static bool is_std_bytes_call(const Expr::Call& call, std::string_view local_name) {
+  const std::string target = nebula::nir::call_target_identity(call);
+  return is_direct_std_call(call, "bytes", local_name) ||
+         target == ("std::bytes::" + std::string(local_name));
+}
+
+static const std::string* string_lit_value(const Expr& expr) {
+  if (!std::holds_alternative<Expr::StringLit>(expr.node)) return nullptr;
+  return &std::get<Expr::StringLit>(expr.node).value;
+}
+
+struct HttpSingleParamLiteralRoute {
+  std::string prefix;
+  std::string suffix;
+};
+
+static std::optional<HttpSingleParamLiteralRoute> single_param_route_literal(const Expr& expr) {
+  const std::string* pattern = string_lit_value(expr);
+  if (pattern == nullptr || pattern->empty() || pattern->front() != '/') return std::nullopt;
+  const std::size_t colon = pattern->find("/:");
+  if (colon == std::string::npos) return std::nullopt;
+  const std::size_t param_start = colon + 2;
+  const std::size_t param_end = pattern->find('/', param_start);
+  const std::size_t suffix_start = (param_end == std::string::npos) ? pattern->size() : param_end;
+  if (pattern->find(':', suffix_start) != std::string::npos) return std::nullopt;
+  if (param_start >= pattern->size() || suffix_start == param_start) return std::nullopt;
+  return HttpSingleParamLiteralRoute{pattern->substr(0, colon + 1), pattern->substr(suffix_start)};
+}
+
+static std::optional<std::string> exact_route_literal(const Expr& expr) {
+  const std::string* pattern = string_lit_value(expr);
+  if (pattern == nullptr || pattern->empty() || pattern->front() != '/') return std::nullopt;
+  if (pattern->find(':') != std::string::npos) return std::nullopt;
+  return *pattern;
+}
+
+static const Expr* bytes_to_string_inner_expr(const Expr& expr) {
+  if (!std::holds_alternative<Expr::Call>(expr.node)) return nullptr;
+  const auto& call = std::get<Expr::Call>(expr.node);
+  if (!is_std_bytes_call(call, "to_string") || call.args.size() != 1) return nullptr;
+  return call.args[0].get();
+}
+
+static std::string emit_http_route_param1_fast(const EmitCtx& ctx,
+                                               const HttpSingleParamLiteralRoute& route,
+                                               const Expr& request_expr) {
+  return "nebula::rt::http_route_param1_single_param(\"" + escape_string(route.prefix) + "\", \"" +
+         escape_string(route.suffix) + "\", (" + emit_expr(ctx, request_expr) + ").path)";
+}
+
+static std::string emit_http_path_matches_fast(const EmitCtx& ctx,
+                                               const HttpSingleParamLiteralRoute& route,
+                                               const Expr& request_expr) {
+  return "nebula::rt::http_path_matches_single_param(\"" + escape_string(route.prefix) + "\", \"" +
+         escape_string(route.suffix) + "\", (" + emit_expr(ctx, request_expr) + ").path)";
+}
+
+static std::string emit_http_path_matches_exact(const EmitCtx& ctx,
+                                                const std::string& path,
+                                                const Expr& request_expr) {
+  return "((" + emit_expr(ctx, request_expr) + ").path == \"" + escape_string(path) + "\")";
+}
+
+static std::string match_variant_cpp_type(const Ty& subject_ty, const std::string& variant_name) {
+  return cpp_type(subject_ty) + "::" + variant_name;
+}
+
+static bool is_std_result_enum(const Ty& subject_ty) {
+  return matches_std_type(subject_ty, "result", "Result") && subject_ty.type_args.size() == 2;
+}
+
+static std::string emit_match_enum_variant_ptr(const std::string& subject_name,
+                                               const Ty& subject_ty,
+                                               const std::string& variant_name) {
+  return "std::get_if<" + match_variant_cpp_type(subject_ty, variant_name) + ">(&" + subject_name +
+         ".data)";
+}
+
+static std::string emit_match_enum_variant_ptr_projected(const std::string& subject_name,
+                                                         const Ty& subject_ty,
+                                                         const std::string& variant_name) {
+  return "nebula::rt::project_value_ref(" + subject_name +
+         ", [&](auto&& __nebula_enum) { return " +
+         emit_match_enum_variant_ptr("__nebula_enum", subject_ty, variant_name) + "; })";
+}
+
+static std::string emit_match_enum_is_variant(const std::string& subject_name,
+                                              const Ty& subject_ty,
+                                              const std::string& variant_name) {
+  if (is_std_result_enum(subject_ty)) {
+    if (variant_name == "Ok") return "nebula::rt::result_is_ok(" + subject_name + ")";
+    if (variant_name == "Err") return "nebula::rt::result_is_err(" + subject_name + ")";
+  }
+  return "(" + emit_match_enum_variant_ptr_projected(subject_name, subject_ty, variant_name) +
+         " != nullptr)";
+}
+
+static std::string emit_match_enum_payload(const std::string& subject_name,
+                                           const Ty& subject_ty,
+                                           const std::string& variant_name) {
+  if (is_std_result_enum(subject_ty)) {
+    if (variant_name == "Ok") return "nebula::rt::result_ok_ref(" + subject_name + ")";
+    if (variant_name == "Err") return "nebula::rt::result_err_ref(" + subject_name + ")";
+  }
+  return "nebula::rt::project_value_ref(" + subject_name +
+         ", [&](auto&& __nebula_enum) -> decltype(auto) { return (" +
+         emit_match_enum_variant_ptr("__nebula_enum", subject_ty, variant_name) + "->value); })";
+}
+
+static void collect_bytes_concat_terms(const Expr& expr, std::vector<const Expr*>& out) {
+  if (std::holds_alternative<Expr::Call>(expr.node)) {
+    const auto& call = std::get<Expr::Call>(expr.node);
+    if (is_direct_std_call(call, "bytes", "concat") && call.args.size() == 2) {
+      collect_bytes_concat_terms(*call.args[0], out);
+      collect_bytes_concat_terms(*call.args[1], out);
+      return;
+    }
+  }
+  out.push_back(&expr);
+}
+
+static std::string emit_bytes_concat_chain(const EmitCtx& ctx, const Expr::Call& call) {
+  std::vector<const Expr*> parts;
+  parts.reserve(call.args.size());
+  for (const auto& arg : call.args) collect_bytes_concat_terms(*arg, parts);
+
+  std::ostringstream os;
+  os << "([&]() { ";
+  std::vector<std::string> names;
+  names.reserve(parts.size());
+  for (const Expr* part : parts) {
+    std::string name = "__nebula_bytes_part_" + std::to_string(ctx.temp_counter++);
+    os << "auto " << name << " = " << emit_expr(ctx, *part) << "; ";
+    names.push_back(std::move(name));
+  }
+  os << "return nebula::rt::bytes_concat_all(";
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (i) os << ", ";
+    os << names[i];
+  }
+  os << "); })()";
+  return os.str();
 }
 
 static std::string cpp_storage_type(const Ty& base, RepKind rep, OwnerKind owner,
@@ -318,6 +796,8 @@ static void scan_return_decisions(const Stmt& s, EmitCtx& ctx, StorageDecision& 
           }
         } else if constexpr (std::is_same_v<S, Stmt::For>) {
           for (const auto& ss : st.body.stmts) scan_return_decisions(ss, ctx, out_dec);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          for (const auto& ss : st.body.stmts) scan_return_decisions(ss, ctx, out_dec);
         } else {
           // other statements: nothing
         }
@@ -327,6 +807,7 @@ static void scan_return_decisions(const Stmt& s, EmitCtx& ctx, StorageDecision& 
 
 static std::string function_return_cpp_type(const Function& fn, const RepOwnerResult& rep_owner,
                                             const EmitOptions& opt) {
+  if (fn.is_async) return future_cpp_type(fn.ret);
   if (fn.ret.kind == Ty::Kind::Void) return "void";
   EmitCtx ctx;
   ctx.rep_owner = &rep_owner;
@@ -336,6 +817,53 @@ static std::string function_return_cpp_type(const Function& fn, const RepOwnerRe
   if (!fn.body.has_value()) return cpp_type(fn.ret);
   for (const auto& s : fn.body->stmts) scan_return_decisions(s, ctx, dec);
   return cpp_storage_type(fn.ret, dec.rep, dec.owner, dec.region);
+}
+
+static bool expr_is_const_json_expr(const Expr& e) {
+  return std::visit(
+      [&](auto&& n) -> bool {
+        using N = std::decay_t<decltype(n)>;
+        if constexpr (std::is_same_v<N, Expr::Call>) {
+          if (n.kind != nebula::nir::CallKind::Direct) return false;
+          const std::string target = nebula::nir::call_target_identity(n);
+          if (target == "std::json::string_value" || target == "string_value") {
+            return n.args.size() == 1 && std::holds_alternative<Expr::StringLit>(n.args[0]->node);
+          }
+          if (target == "std::json::int_value" || target == "int_value") {
+            return n.args.size() == 1 && std::holds_alternative<Expr::IntLit>(n.args[0]->node);
+          }
+          if (target == "std::json::bool_value" || target == "bool_value") {
+            return n.args.size() == 1 && std::holds_alternative<Expr::BoolLit>(n.args[0]->node);
+          }
+          if (target == "std::json::null_value" || target == "null_value") {
+            return n.args.empty();
+          }
+          if ((target.rfind("std::json::object", 0) == 0 || target.rfind("object", 0) == 0) &&
+              !n.args.empty() && n.args.size() % 2 == 0) {
+            for (std::size_t i = 0; i < n.args.size(); i += 2) {
+              if (!std::holds_alternative<Expr::StringLit>(n.args[i]->node)) return false;
+              if (!expr_is_const_json_expr(*n.args[i + 1])) return false;
+            }
+            return true;
+          }
+          return false;
+        } else {
+          return false;
+        }
+      },
+      e.node);
+}
+
+static const Stmt::Return* const_json_return_stmt(const Function& fn) {
+  if (fn.is_async || fn.is_extern) return nullptr;
+  if (!matches_std_type(fn.ret, "json", "Json") && cpp_type(fn.ret) != "nebula::rt::JsonValue") {
+    return nullptr;
+  }
+  if (!fn.params.empty() || !fn.body.has_value() || fn.body->stmts.size() != 1) return nullptr;
+  if (!std::holds_alternative<Stmt::Return>(fn.body->stmts[0].node)) return nullptr;
+  const auto& ret = std::get<Stmt::Return>(fn.body->stmts[0].node);
+  if (expr_is_const_json_expr(*ret.value)) return &ret;
+  return nullptr;
 }
 
 static std::string emit_construct_call(const EmitCtx& ctx, const std::string& type_name,
@@ -448,21 +976,159 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
           return n.name;
         } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
           return emit_member_access(ctx, n.base_var, n.base_name, n.field);
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          return emit_temp_member_access(ctx, *n.base, n.field);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          if (std::holds_alternative<Expr::VarRef>(n.subject->node)) {
+            return emit_match_enum_is_variant(emit_expr(ctx, *n.subject), n.subject->ty, n.variant_name);
+          }
+          return "([&]() { const auto& __nebula_subject = " + emit_expr(ctx, *n.subject) + "; return " +
+                 emit_match_enum_is_variant("__nebula_subject", n.subject->ty, n.variant_name) +
+                 "; })()";
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          if (std::holds_alternative<Expr::VarRef>(n.subject->node)) {
+            return emit_match_enum_payload(emit_expr(ctx, *n.subject), n.subject->ty, n.variant_name);
+          }
+          return "([&]() -> decltype(auto) { const auto& __nebula_subject = " + emit_expr(ctx, *n.subject) +
+                 "; return (" + emit_match_enum_payload("__nebula_subject", n.subject->ty, n.variant_name) +
+                 "); })()";
         } else if constexpr (std::is_same_v<N, Expr::Binary>) {
+          if ((n.op == nebula::nir::BinOp::Eq || n.op == nebula::nir::BinOp::Ne)) {
+            if (const Expr* bytes_expr = bytes_to_string_inner_expr(*n.lhs)) {
+              return std::string(n.op == nebula::nir::BinOp::Ne ? "(!" : "") +
+                     "nebula::rt::bytes_equal_string(" + emit_expr(ctx, *bytes_expr) + ", " +
+                     emit_expr(ctx, *n.rhs) + ")" + (n.op == nebula::nir::BinOp::Ne ? ")" : "");
+            }
+            if (const Expr* bytes_expr = bytes_to_string_inner_expr(*n.rhs)) {
+              return std::string(n.op == nebula::nir::BinOp::Ne ? "(!" : "") +
+                     "nebula::rt::bytes_equal_string(" + emit_expr(ctx, *bytes_expr) + ", " +
+                     emit_expr(ctx, *n.lhs) + ")" + (n.op == nebula::nir::BinOp::Ne ? ")" : "");
+            }
+          }
           return "(" + emit_expr(ctx, *n.lhs) + " " + op_to_cpp(n.op) + " " + emit_expr(ctx, *n.rhs) +
                  ")";
         } else if constexpr (std::is_same_v<N, Expr::Unary>) {
           return "(!" + emit_expr(ctx, *n.inner) + ")";
         } else if constexpr (std::is_same_v<N, Expr::Call>) {
+          const std::string target = nebula::nir::call_target_identity(n);
+          if ((target == "std::json::parse" || target == "parse") && n.args.size() == 1 &&
+              std::holds_alternative<Expr::VarRef>(n.args[0]->node)) {
+            const auto& var = std::get<Expr::VarRef>(n.args[0]->node);
+            auto it = ctx.stringify_source_vars.find(var.var);
+            if (it != ctx.stringify_source_vars.end()) {
+              return "nebula::rt::ok_result(" + it->second + ")";
+            }
+          }
+          if ((target == "std::json::parse" || target == "parse") && n.args.size() == 1 &&
+              std::holds_alternative<Expr::Call>(n.args[0]->node)) {
+            const auto& inner = std::get<Expr::Call>(n.args[0]->node);
+            if (is_std_json_call(inner, "stringify") && inner.args.size() == 1) {
+              return "nebula::rt::ok_result(" + emit_expr(ctx, *inner.args[0]) + ")";
+            }
+          }
+          if (is_std_http_json_call(n, "parse_json_body") && n.args.size() == 1) {
+            return "nebula::rt::json_parse_bytes(" + emit_expr(ctx, *n.args[0]) + ")";
+          }
+          if (is_std_bytes_call(n, "from_string") && n.args.size() == 1) {
+            if (const std::string* literal = string_lit_value(*n.args[0]); literal != nullptr &&
+                literal->empty()) {
+              return "nebula::rt::Bytes{}";
+            }
+            return "nebula::rt::bytes_from_string(" + emit_expr(ctx, *n.args[0]) + ")";
+          }
+          if (is_std_bytes_call(n, "to_string") && n.args.size() == 1) {
+            return "nebula::rt::bytes_to_string(" + emit_expr(ctx, *n.args[0]) + ")";
+          }
+          if (is_std_bytes_call(n, "concat") && n.args.size() == 2) {
+            return emit_bytes_concat_chain(ctx, n);
+          }
+          if (is_std_http_call(n, "response") && n.args.size() == 3) {
+            return "nebula::rt::HttpResponse(" + emit_expr(ctx, *n.args[0]) + ", " +
+                   emit_expr(ctx, *n.args[1]) + ", " + emit_expr(ctx, *n.args[2]) + ")";
+          }
+          if (is_std_http_call(n, "text_response") && n.args.size() == 2) {
+            return "nebula::rt::HttpResponse(" + emit_expr(ctx, *n.args[0]) +
+                   ", \"text/plain; charset=utf-8\", nebula::rt::bytes_from_string(" +
+                   emit_expr(ctx, *n.args[1]) + "))";
+          }
+          if (is_std_http_call(n, "ok_text") && n.args.size() == 1) {
+            return "nebula::rt::HttpResponse(200, \"text/plain; charset=utf-8\", "
+                   "nebula::rt::bytes_from_string(" +
+                   emit_expr(ctx, *n.args[0]) + "))";
+          }
+          if (is_std_http_call(n, "bad_request_text") && n.args.size() == 1) {
+            return "nebula::rt::HttpResponse(400, \"text/plain; charset=utf-8\", "
+                   "nebula::rt::bytes_from_string(" +
+                   emit_expr(ctx, *n.args[0]) + "))";
+          }
+          if (is_std_http_call(n, "method_not_allowed_text") && n.args.size() == 1) {
+            return "nebula::rt::HttpResponse(405, \"text/plain; charset=utf-8\", "
+                   "nebula::rt::bytes_from_string(" +
+                   emit_expr(ctx, *n.args[0]) + "))";
+          }
+          if (is_std_http_call(n, "not_found_text") && n.args.size() == 1) {
+            return "nebula::rt::HttpResponse(404, \"text/plain; charset=utf-8\", "
+                   "nebula::rt::bytes_from_string(" +
+                   emit_expr(ctx, *n.args[0]) + "))";
+          }
+          if (is_std_http_call(n, "internal_error_text") && n.args.size() == 1) {
+            return "nebula::rt::HttpResponse(500, \"text/plain; charset=utf-8\", "
+                   "nebula::rt::bytes_from_string(" +
+                   emit_expr(ctx, *n.args[0]) + "))";
+          }
+          if (is_std_http_call(n, "header_value") && n.args.size() == 2) {
+            return "nebula::rt::http_header(" + emit_expr(ctx, *n.args[0]) + ", " +
+                   emit_expr(ctx, *n.args[1]) + ")";
+          }
+          if (is_std_http_call(n, "header_value_unique") && n.args.size() == 2) {
+            return "nebula::rt::http_unique_header(" + emit_expr(ctx, *n.args[0]) + ", " +
+                   emit_expr(ctx, *n.args[1]) + ")";
+          }
+          if (is_std_http_call(n, "content_type") && n.args.size() == 1) {
+            return "nebula::rt::http_content_type(" + emit_expr(ctx, *n.args[0]) + ")";
+          }
+          if (is_std_http_call(n, "response_header") && n.args.size() == 2) {
+            return "nebula::rt::http_response_header(" + emit_expr(ctx, *n.args[0]) + ", " +
+                   emit_expr(ctx, *n.args[1]) + ")";
+          }
+          if ((target == "Request_close_connection" || target == "std::http::Request_close_connection") &&
+              n.args.size() == 1) {
+            return "nebula::rt::http_request_close_connection(" + emit_expr(ctx, *n.args[0]) + ")";
+          }
+          if (is_std_http_call(n, "route_param1") && n.args.size() == 2) {
+            if (auto route = single_param_route_literal(*n.args[0]); route.has_value()) {
+              return emit_http_route_param1_fast(ctx, *route, *n.args[1]);
+            }
+            return "nebula::rt::http_route_param1(" + emit_expr(ctx, *n.args[0]) + ", (" +
+                   emit_expr(ctx, *n.args[1]) + ").path)";
+          }
+          if (is_std_http_call(n, "path_matches") && n.args.size() == 2) {
+            if (auto path = exact_route_literal(*n.args[0]); path.has_value()) {
+              return emit_http_path_matches_exact(ctx, *path, *n.args[1]);
+            }
+            if (auto route = single_param_route_literal(*n.args[0]); route.has_value()) {
+              return emit_http_path_matches_fast(ctx, *route, *n.args[1]);
+            }
+            return "nebula::rt::http_path_matches(" + emit_expr(ctx, *n.args[0]) + ", (" +
+                   emit_expr(ctx, *n.args[1]) + ").path)";
+          }
+          if (ctx.opt != nullptr && ctx.opt->runtime_profile == RuntimeProfile::System &&
+              n.kind == nebula::nir::CallKind::Direct && target == "panic" && n.args.size() == 1) {
+            return "__nebula_panic_policy(" + emit_expr(ctx, *n.args[0]) + ")";
+          }
           std::ostringstream os;
           if (n.kind == nebula::nir::CallKind::Indirect) {
             os << n.callee << "(";
           } else {
-            const std::string target = nebula::nir::call_target_identity(n);
-            if (ctx.function_symbols != nullptr) {
-              os << emitted_cpp_name_for_identity(*ctx.function_symbols, target, n.callee) << "(";
+            if (auto runtime_name = nebula::nir::runtime_std_call_name(n.resolved_callee, n.callee);
+                runtime_name.has_value()) {
+              os << *runtime_name << "(";
             } else {
-              os << n.callee << "(";
+              if (ctx.function_symbols != nullptr) {
+                os << emitted_cpp_name_for_identity(*ctx.function_symbols, target, n.callee) << "(";
+              } else {
+                os << n.callee << "(";
+              }
             }
           }
           for (std::size_t i = 0; i < n.args.size(); ++i) {
@@ -504,6 +1170,73 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
             return emit_heap_make(n.kind, ctx, e.ty, c);
           }
           return emit_expr(ctx, *n.inner);
+        } else if constexpr (std::is_same_v<N, Expr::Await>) {
+          return "(co_await " + emit_expr(ctx, *n.inner) + ")";
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          const std::string subject_name =
+              "__nebula_match_" + std::to_string(ctx.temp_counter++);
+          std::ostringstream os;
+          os << "([&]() -> " << cpp_type(e.ty) << " { ";
+          os << "auto " << subject_name << " = " << emit_expr(ctx, *n.subject) << "; ";
+          for (std::size_t i = 0; i < n.arms.size(); ++i) {
+            const auto& arm = *n.arms[i];
+            const bool unconditional =
+                arm.kind == Expr::Match::Arm::Kind::Wildcard ||
+                (n.exhaustive && i + 1 == n.arms.size());
+            auto emit_arm_body = [&]() {
+              if (arm.kind == Expr::Match::Arm::Kind::EnumVariant) {
+                if (arm.payload_binding.has_value()) {
+                  os << "const auto& " << arm.payload_binding->name << " = "
+                     << emit_match_enum_payload(subject_name, n.subject->ty, arm.variant_name) << "; ";
+                } else if (!arm.payload_struct_bindings.empty()) {
+                  const std::string payload_name =
+                      "__nebula_payload_" + std::to_string(ctx.temp_counter++);
+                  os << "const auto& " << payload_name << " = "
+                     << emit_match_enum_payload(subject_name, n.subject->ty, arm.variant_name) << "; ";
+                  for (const auto& field : arm.payload_struct_bindings) {
+                    os << "const auto& " << field.binding.name << " = "
+                       << emit_value_field_chain(payload_name, field.field_name) << "; ";
+                  }
+                }
+              }
+              os << "return " << emit_expr(ctx, *arm.value) << "; ";
+            };
+
+            if (unconditional) {
+              emit_arm_body();
+            } else {
+              if (arm.kind == Expr::Match::Arm::Kind::Bool) {
+                os << "if (" << (arm.bool_value ? subject_name : "(!" + subject_name + ")") << ") { ";
+              } else {
+                const std::string variant_ptr =
+                    "__nebula_variant_" + std::to_string(ctx.temp_counter++);
+                os << "if (auto* " << variant_ptr << " = "
+                   << emit_match_enum_variant_ptr(subject_name, n.subject->ty, arm.variant_name)
+                   << ") { ";
+                if (arm.payload_binding.has_value()) {
+                  os << "const auto& " << arm.payload_binding->name << " = " << variant_ptr << "->value; ";
+                } else if (!arm.payload_struct_bindings.empty()) {
+                  const std::string payload_name =
+                      "__nebula_payload_" + std::to_string(ctx.temp_counter++);
+                  os << "const auto& " << payload_name << " = " << variant_ptr << "->value; ";
+                  for (const auto& field : arm.payload_struct_bindings) {
+                    os << "const auto& " << field.binding.name << " = "
+                       << emit_value_field_chain(payload_name, field.field_name) << "; ";
+                  }
+                }
+                os << "return " << emit_expr(ctx, *arm.value) << "; ";
+                os << "} ";
+                continue;
+              }
+              emit_arm_body();
+              os << "} ";
+            }
+          }
+          if (!n.exhaustive) {
+            os << "return " << (e.ty.kind == Ty::Kind::Void ? "" : "{}") << "; ";
+          }
+          os << "})()";
+          return os.str();
         } else {
           return "/*expr*/";
         }
@@ -511,10 +1244,191 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
       e.node);
 }
 
+static bool has_single_wrapping_parens(std::string_view text) {
+  if (text.size() < 2 || text.front() != '(' || text.back() != ')') return false;
+  int depth = 0;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char ch = text[i];
+    if (ch == '(') {
+      depth += 1;
+    } else if (ch == ')') {
+      depth -= 1;
+      if (depth == 0 && i + 1 < text.size()) return false;
+    }
+    if (depth < 0) return false;
+  }
+  return depth == 0;
+}
+
+static std::string emit_condition_expr(const EmitCtx& ctx, const Expr& e) {
+  std::string rendered = emit_expr(ctx, e);
+  while (has_single_wrapping_parens(rendered)) {
+    rendered = rendered.substr(1, rendered.size() - 2);
+  }
+  return rendered;
+}
+
 static void emit_stmt(Cpp& out, EmitCtx& ctx, const Stmt& s);
 
 static void emit_block(Cpp& out, EmitCtx& ctx, const Block& b) {
+  ctx.stringify_scope_stack.push_back({});
   for (const auto& st : b.stmts) emit_stmt(out, ctx, st);
+  for (VarId var : ctx.stringify_scope_stack.back()) {
+    ctx.stringify_source_vars.erase(var);
+  }
+  ctx.stringify_scope_stack.pop_back();
+}
+
+static bool stmt_reassigns_var(const Stmt& s, VarId target);
+
+static bool block_reassigns_var(const Block& b, VarId target) {
+  for (const auto& st : b.stmts) {
+    if (stmt_reassigns_var(st, target)) return true;
+  }
+  return false;
+}
+
+static bool stmt_reassigns_var(const Stmt& s, VarId target) {
+  return std::visit(
+      [&](auto&& st) -> bool {
+        using S = std::decay_t<decltype(st)>;
+        if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
+          return st.var == target;
+        } else if constexpr (std::is_same_v<S, Stmt::If>) {
+          return block_reassigns_var(st.then_body, target) ||
+                 (st.else_body.has_value() && block_reassigns_var(*st.else_body, target));
+        } else if constexpr (std::is_same_v<S, Stmt::For>) {
+          return block_reassigns_var(st.body, target);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          return block_reassigns_var(st.body, target);
+        } else if constexpr (std::is_same_v<S, Stmt::Region>) {
+          return block_reassigns_var(st.body, target);
+        } else if constexpr (std::is_same_v<S, Stmt::Unsafe>) {
+          return block_reassigns_var(st.body, target);
+        } else {
+          return false;
+        }
+      },
+      s.node);
+}
+
+static bool current_function_reassigns_var(const EmitCtx& ctx, VarId target) {
+  return ctx.current_function != nullptr && ctx.current_function->body.has_value() &&
+         block_reassigns_var(*ctx.current_function->body, target);
+}
+
+static bool expr_uses_var_outside_parse_alias(const Expr& e, VarId target);
+
+static bool call_uses_var_outside_parse_alias(const Expr::Call& call, VarId target) {
+  if ((nebula::nir::call_target_identity(call) == "std::json::parse" || call.callee == "parse") &&
+      call.args.size() == 1 && std::holds_alternative<Expr::VarRef>(call.args[0]->node)) {
+    const auto& ref = std::get<Expr::VarRef>(call.args[0]->node);
+    if (ref.var == target) return false;
+  }
+  for (const auto& arg : call.args) {
+    if (expr_uses_var_outside_parse_alias(*arg, target)) return true;
+  }
+  return call.kind == nebula::nir::CallKind::Indirect && call.callee_var == target;
+}
+
+static bool expr_uses_var_outside_parse_alias(const Expr& e, VarId target) {
+  return std::visit(
+      [&](auto&& n) -> bool {
+        using N = std::decay_t<decltype(n)>;
+        if constexpr (std::is_same_v<N, Expr::VarRef>) {
+          return n.var == target;
+        } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
+          return n.base_var == target;
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          return expr_uses_var_outside_parse_alias(*n.base, target);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant> ||
+                             std::is_same_v<N, Expr::EnumPayload>) {
+          return expr_uses_var_outside_parse_alias(*n.subject, target);
+        } else if constexpr (std::is_same_v<N, Expr::Unary> ||
+                             std::is_same_v<N, Expr::Prefix> ||
+                             std::is_same_v<N, Expr::Await>) {
+          return expr_uses_var_outside_parse_alias(*n.inner, target);
+        } else if constexpr (std::is_same_v<N, Expr::Binary>) {
+          return expr_uses_var_outside_parse_alias(*n.lhs, target) ||
+                 expr_uses_var_outside_parse_alias(*n.rhs, target);
+        } else if constexpr (std::is_same_v<N, Expr::Call>) {
+          return call_uses_var_outside_parse_alias(n, target);
+        } else if constexpr (std::is_same_v<N, Expr::Construct>) {
+          for (const auto& arg : n.args) {
+            if (expr_uses_var_outside_parse_alias(*arg, target)) return true;
+          }
+          return false;
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          if (expr_uses_var_outside_parse_alias(*n.subject, target)) return true;
+          for (const auto& arm : n.arms) {
+            if (expr_uses_var_outside_parse_alias(*arm->value, target)) return true;
+          }
+          return false;
+        } else {
+          return false;
+        }
+      },
+      e.node);
+}
+
+static bool stmt_uses_var_outside_parse_alias(const Stmt& s, VarId target);
+
+static bool block_uses_var_outside_parse_alias(const Block& b, VarId target) {
+  for (const auto& st : b.stmts) {
+    if (stmt_uses_var_outside_parse_alias(st, target)) return true;
+  }
+  return false;
+}
+
+static bool stmt_uses_var_outside_parse_alias(const Stmt& s, VarId target) {
+  return std::visit(
+      [&](auto&& st) -> bool {
+        using S = std::decay_t<decltype(st)>;
+        if constexpr (std::is_same_v<S, Stmt::Let>) {
+          return expr_uses_var_outside_parse_alias(*st.value, target);
+        } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
+          return expr_uses_var_outside_parse_alias(*st.value, target);
+        } else if constexpr (std::is_same_v<S, Stmt::AssignField>) {
+          return st.base_var == target || expr_uses_var_outside_parse_alias(*st.value, target);
+        } else if constexpr (std::is_same_v<S, Stmt::ExprStmt>) {
+          return expr_uses_var_outside_parse_alias(*st.expr, target);
+        } else if constexpr (std::is_same_v<S, Stmt::Return>) {
+          return expr_uses_var_outside_parse_alias(*st.value, target);
+        } else if constexpr (std::is_same_v<S, Stmt::If>) {
+          return expr_uses_var_outside_parse_alias(*st.cond, target) ||
+                 block_uses_var_outside_parse_alias(st.then_body, target) ||
+                 (st.else_body.has_value() && block_uses_var_outside_parse_alias(*st.else_body, target));
+        } else if constexpr (std::is_same_v<S, Stmt::For>) {
+          return expr_uses_var_outside_parse_alias(*st.start, target) ||
+                 expr_uses_var_outside_parse_alias(*st.end, target) ||
+                 block_uses_var_outside_parse_alias(st.body, target);
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          return expr_uses_var_outside_parse_alias(*st.cond, target) ||
+                 block_uses_var_outside_parse_alias(st.body, target);
+        } else if constexpr (std::is_same_v<S, Stmt::Region>) {
+          return block_uses_var_outside_parse_alias(st.body, target);
+        } else if constexpr (std::is_same_v<S, Stmt::Unsafe>) {
+          return block_uses_var_outside_parse_alias(st.body, target);
+        } else {
+          return false;
+        }
+      },
+      s.node);
+}
+
+static bool current_function_uses_var_outside_parse_alias(const EmitCtx& ctx, VarId target) {
+  return ctx.current_function != nullptr && ctx.current_function->body.has_value() &&
+         block_uses_var_outside_parse_alias(*ctx.current_function->body, target);
+}
+
+static bool should_bind_let_by_const_ref(const EmitCtx& ctx, const Stmt::Let& st) {
+  if (current_function_reassigns_var(ctx, st.var)) return false;
+  switch (st.ty.kind) {
+  case Ty::Kind::String:
+  case Ty::Kind::Struct:
+  case Ty::Kind::Enum: return true;
+  default: return false;
+  }
 }
 
 static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
@@ -522,6 +1436,22 @@ static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
   const RepKind rep = dec ? dec->rep : RepKind::Stack;
   const OwnerKind owner = dec ? dec->owner : OwnerKind::None;
   const std::string region = (dec ? dec->region : "");
+
+  if (std::holds_alternative<Expr::Call>(st.value->node)) {
+    const auto& call = std::get<Expr::Call>(st.value->node);
+    if (is_std_json_call(call, "stringify") && call.args.size() == 1 &&
+        !current_function_reassigns_var(ctx, st.var)) {
+      const std::string source_name =
+          "__nebula_stringify_src_" + std::to_string(ctx.temp_counter++);
+      out.line("const auto& " + source_name + " = " + emit_expr(ctx, *call.args[0]) + ";");
+      if (current_function_uses_var_outside_parse_alias(ctx, st.var)) {
+        out.line("auto " + st.name + " = nebula::rt::json_stringify(" + source_name + ");");
+      }
+      ctx.stringify_source_vars[st.var] = source_name;
+      if (!ctx.stringify_scope_stack.empty()) ctx.stringify_scope_stack.back().push_back(st.var);
+      return;
+    }
+  }
 
   // Try to pattern match constructors for better lowering.
   const Expr* rhs = st.value.get();
@@ -573,6 +1503,10 @@ static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
   }
 
   // Non-construct RHS
+  if (should_bind_let_by_const_ref(ctx, st)) {
+    out.line("const auto& " + st.name + " = " + emit_expr(ctx, *st.value) + ";");
+    return;
+  }
   out.line("auto " + st.name + " = " + emit_expr(ctx, *st.value) + ";");
 }
 
@@ -588,10 +1522,13 @@ static bool return_is_direct_region_construct_escape(const EmitCtx& ctx, const E
 }
 
 static void emit_return(Cpp& out, EmitCtx& ctx, const Stmt::Return& st) {
+  if (ctx.current_function != nullptr && ctx.current_function->is_async) {
+    out.line("co_return " + emit_expr(ctx, *st.value) + ";");
+    return;
+  }
   if (return_is_direct_region_construct_escape(ctx, *st.value)) {
     if (ctx.opt && ctx.opt->strict_region) {
-      out.line("nebula::rt::panic(\"region escape in strict mode\");");
-      out.line("return {};"); // unreachable; avoids UB/invalid returns across return types
+      emit_panic_policy(out, *ctx.opt, "\"region escape in strict mode\"");
       return;
     }
     // Default policy: auto-promote to heap unique on direct return.
@@ -607,9 +1544,12 @@ static void emit_stmt(Cpp& out, EmitCtx& ctx, const Stmt& s) {
   std::visit(
       [&](auto&& st) {
         using S = std::decay_t<decltype(st)>;
-        if constexpr (std::is_same_v<S, Stmt::Let>) {
+        if constexpr (std::is_same_v<S, Stmt::Declare>) {
+          out.line(cpp_type(st.ty) + " " + st.name + ";");
+        } else if constexpr (std::is_same_v<S, Stmt::Let>) {
           emit_let(out, ctx, st);
         } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
+          ctx.stringify_source_vars.erase(st.var);
           out.line(st.name + " = " + emit_expr(ctx, *st.value) + ";");
         } else if constexpr (std::is_same_v<S, Stmt::AssignField>) {
           out.line(emit_member_access(ctx, st.base_var, st.base_name, st.field) + " = " +
@@ -634,7 +1574,7 @@ static void emit_stmt(Cpp& out, EmitCtx& ctx, const Stmt& s) {
           out.indent--;
           out.line("}");
         } else if constexpr (std::is_same_v<S, Stmt::If>) {
-          out.line("if (" + emit_expr(ctx, *st.cond) + ") {");
+          out.line("if (" + emit_condition_expr(ctx, *st.cond) + ") {");
           out.indent++;
           emit_block(out, ctx, st.then_body);
           out.indent--;
@@ -655,13 +1595,66 @@ static void emit_stmt(Cpp& out, EmitCtx& ctx, const Stmt& s) {
           emit_block(out, ctx, st.body);
           out.indent--;
           out.line("}");
+        } else if constexpr (std::is_same_v<S, Stmt::While>) {
+          out.line("while (" + emit_condition_expr(ctx, *st.cond) + ") {");
+          out.indent++;
+          emit_block(out, ctx, st.body);
+          out.indent--;
+          out.line("}");
+        } else if constexpr (std::is_same_v<S, Stmt::Break>) {
+          out.line("break;");
+        } else if constexpr (std::is_same_v<S, Stmt::Continue>) {
+          out.line("continue;");
         }
       },
       s.node);
 }
 
 static void emit_struct_def(Cpp& out, const StructDef& s) {
+  if (is_nebula_crypto_bytes_backed_struct_name(s.qualified_name)) {
+    return;
+  }
+  if (is_nebula_tls_handle_struct_name(s.qualified_name)) {
+    return;
+  }
+  if (is_nebula_db_sqlite_handle_struct_name(s.qualified_name)) {
+    return;
+  }
+  if (is_nebula_db_postgres_handle_struct_name(s.qualified_name)) {
+    return;
+  }
+  if (s.qualified_name.package_name == "std" &&
+      (s.qualified_name.module_name == "task" || s.qualified_name.module_name == "time" ||
+       s.qualified_name.module_name == "bytes" || s.qualified_name.module_name == "net")) {
+    return;
+  }
+  if (s.qualified_name.package_name == "std" && s.qualified_name.module_name == "http" &&
+      (s.qualified_name.local_name == "Request" || s.qualified_name.local_name == "Response" ||
+       s.qualified_name.local_name == "ClientRequest" ||
+       s.qualified_name.local_name == "ClientResponse" ||
+       s.qualified_name.local_name == "RouteParams2" ||
+       s.qualified_name.local_name == "RouteParams3")) {
+    return;
+  }
+  if (s.qualified_name.package_name == "std" && s.qualified_name.module_name == "json" &&
+      (s.qualified_name.local_name == "Json" || s.qualified_name.local_name == "JsonArrayBuilder")) {
+    return;
+  }
+  if (s.qualified_name.package_name == "std" && s.qualified_name.module_name == "process" &&
+      (s.qualified_name.local_name == "ProcessCommand" ||
+       s.qualified_name.local_name == "ProcessOutput")) {
+    return;
+  }
   const std::string cpp_name = emitted_cpp_type_name_for(s);
+  if (!s.type_params.empty()) {
+    std::string tmpl = "template <";
+    for (std::size_t i = 0; i < s.type_params.size(); ++i) {
+      if (i) tmpl += ", ";
+      tmpl += "typename " + s.type_params[i];
+    }
+    tmpl += ">";
+    out.line(tmpl);
+  }
   out.line("struct " + cpp_name + " {");
   out.indent++;
   for (const auto& f : s.fields) {
@@ -689,8 +1682,24 @@ static void emit_struct_def(Cpp& out, const StructDef& s) {
 }
 
 static void emit_enum_def(Cpp& out, const EnumDef& e) {
+  if (e.qualified_name.package_name == "std" && e.qualified_name.module_name == "result" &&
+      e.qualified_name.local_name == "Result") {
+    return;
+  }
+  if (e.qualified_name.package_name == "std" && e.qualified_name.module_name == "http" &&
+      e.qualified_name.local_name == "Method") {
+    return;
+  }
   const std::string cpp_name = emitted_cpp_type_name_for(e);
-  out.line("template <typename " + e.type_param + ">");
+  if (!e.type_params.empty()) {
+    std::string tmpl = "template <";
+    for (std::size_t i = 0; i < e.type_params.size(); ++i) {
+      if (i) tmpl += ", ";
+      tmpl += "typename " + e.type_params[i];
+    }
+    tmpl += ">";
+    out.line(tmpl);
+  }
   out.line("struct " + cpp_name + " {");
   out.indent++;
   for (const auto& variant : e.variants) {
@@ -731,6 +1740,12 @@ static void collect_calls_in_expr(const Expr& e, std::unordered_set<std::string>
           for (const auto& a : n.args) collect_calls_in_expr(*a, out);
         } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
           // no nested calls
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          collect_calls_in_expr(*n.base, out);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
+          collect_calls_in_expr(*n.subject, out);
+        } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
+          collect_calls_in_expr(*n.subject, out);
         } else if constexpr (std::is_same_v<N, Expr::Construct>) {
           for (const auto& a : n.args) collect_calls_in_expr(*a, out);
         } else if constexpr (std::is_same_v<N, Expr::Binary>) {
@@ -740,6 +1755,9 @@ static void collect_calls_in_expr(const Expr& e, std::unordered_set<std::string>
           collect_calls_in_expr(*n.inner, out);
         } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
           collect_calls_in_expr(*n.inner, out);
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          collect_calls_in_expr(*n.subject, out);
+          for (const auto& arm : n.arms) collect_calls_in_expr(*arm->value, out);
         } else {
         }
       },
@@ -751,7 +1769,8 @@ static void collect_calls_in_block(const Block& b, std::unordered_set<std::strin
     std::visit(
         [&](auto&& st) {
           using S = std::decay_t<decltype(st)>;
-          if constexpr (std::is_same_v<S, Stmt::Let>) {
+          if constexpr (std::is_same_v<S, Stmt::Declare>) {
+          } else if constexpr (std::is_same_v<S, Stmt::Let>) {
             collect_calls_in_expr(*st.value, out);
           } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
             collect_calls_in_expr(*st.value, out);
@@ -772,6 +1791,9 @@ static void collect_calls_in_block(const Block& b, std::unordered_set<std::strin
           } else if constexpr (std::is_same_v<S, Stmt::For>) {
             collect_calls_in_expr(*st.start, out);
             collect_calls_in_expr(*st.end, out);
+            collect_calls_in_block(st.body, out);
+          } else if constexpr (std::is_same_v<S, Stmt::While>) {
+            collect_calls_in_expr(*st.cond, out);
             collect_calls_in_block(st.body, out);
           }
         },
@@ -847,6 +1869,15 @@ static void emit_function(Cpp& out,
                           const EmitOptions& opt,
                           const FunctionSymbolMap& function_symbols,
                           const Function& fn) {
+  if (!fn.type_params.empty()) {
+    std::string tmpl = "template <";
+    for (std::size_t i = 0; i < fn.type_params.size(); ++i) {
+      if (i) tmpl += ", ";
+      tmpl += "typename " + fn.type_params[i];
+    }
+    tmpl += ">";
+    out.line(tmpl);
+  }
   if (fn.is_extern) {
     std::ostringstream decl;
     const std::string fn_name = emitted_cpp_name_for(fn);
@@ -859,15 +1890,18 @@ static void emit_function(Cpp& out,
     out.line(decl.str());
     return;
   }
-
   EmitCtx ctx;
   ctx.rep_owner = &rep_owner;
   ctx.opt = &opt;
   ctx.function_symbols = &function_symbols;
   ctx.fn_name = nebula::nir::function_identity(fn);
+  ctx.current_function = &fn;
 
   std::ostringstream sig;
-  const std::string ret_cpp = function_return_cpp_type(fn, rep_owner, opt);
+  const Stmt::Return* const_json_return = const_json_return_stmt(fn);
+  const std::string ret_cpp =
+      (const_json_return != nullptr) ? ("const " + cpp_type(fn.ret) + "&")
+                                     : function_return_cpp_type(fn, rep_owner, opt);
   sig << "auto " << emitted_cpp_name_for(fn) << "(";
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
@@ -878,11 +1912,126 @@ static void emit_function(Cpp& out,
   out.line(sig.str());
   out.indent++;
 
-  if (fn.body.has_value()) emit_block(out, ctx, *fn.body);
+  if (const_json_return != nullptr) {
+    out.line("static const auto __nebula_cached = " + emit_expr(ctx, *const_json_return->value) + ";");
+    out.line("return __nebula_cached;");
+  } else if (fn.body.has_value()) {
+    emit_block(out, ctx, *fn.body);
+  }
 
-  // If function is void-ish and no return, keep C++ happy; otherwise let auto-deduction handle.
+  if (fn.is_async && fn.ret.kind == Ty::Kind::Void) {
+    out.line("co_return;");
+  }
+
   out.indent--;
   out.line("}");
+}
+
+static void emit_function_forward_decl(Cpp& out,
+                                       const RepOwnerResult& rep_owner,
+                                       const EmitOptions& opt,
+                                       const Function& fn) {
+  if (!fn.type_params.empty()) {
+    std::string tmpl = "template <";
+    for (std::size_t i = 0; i < fn.type_params.size(); ++i) {
+      if (i) tmpl += ", ";
+      tmpl += "typename " + fn.type_params[i];
+    }
+    tmpl += ">";
+    out.line(tmpl);
+  }
+  if (fn.is_extern) {
+    std::ostringstream decl;
+    const std::string fn_name = emitted_cpp_name_for(fn);
+    decl << cpp_type(fn.ret) << " " << fn_name << "(";
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+      if (i) decl << ", ";
+      decl << cpp_decl(fn.params[i].ty, fn.params[i].name, fn.params[i].is_ref);
+    }
+    decl << ");";
+    out.line(decl.str());
+    return;
+  }
+  std::ostringstream sig;
+  const std::string ret_cpp =
+      (const_json_return_stmt(fn) != nullptr) ? ("const " + cpp_type(fn.ret) + "&")
+                                              : function_return_cpp_type(fn, rep_owner, opt);
+  sig << "auto " << emitted_cpp_name_for(fn) << "(";
+  for (std::size_t i = 0; i < fn.params.size(); ++i) {
+    if (i) sig << ", ";
+    const auto& p = fn.params[i];
+    sig << cpp_decl(p.ty, p.name, p.is_ref);
+  }
+  sig << ") -> " << ret_cpp << ";";
+  out.line(sig.str());
+}
+
+static std::vector<CAbiFunction> collect_c_abi_functions_impl(
+    const Program& p,
+    std::optional<std::string_view> package_name) {
+  std::vector<CAbiFunction> out;
+  for (const auto& it : p.items) {
+    if (!std::holds_alternative<Function>(it.node)) continue;
+    const auto& fn = std::get<Function>(it.node);
+    if (fn.is_extern || !is_c_abi_annotation_set(fn.annotations)) continue;
+    if (package_name.has_value() && fn.qualified_name.package_name != *package_name) continue;
+    out.push_back(CAbiFunction{
+        c_abi_export_name_for(fn), fn.qualified_name, fn.name, fn.params, fn.ret});
+  }
+  return out;
+}
+
+static void emit_c_abi_wrapper_block(Cpp& out,
+                                     const std::vector<CAbiFunction>& exports,
+                                     const FunctionSymbolMap& function_symbols) {
+  if (exports.empty()) return;
+  out.line("#if defined(_WIN32)");
+  out.line("#define NEBULA_CABI_EXPORT __declspec(dllexport)");
+  out.line("#else");
+  out.line("#define NEBULA_CABI_EXPORT");
+  out.line("#endif");
+  out.blank();
+  for (const auto& fn : exports) {
+    const std::string internal_name =
+        emitted_cpp_name_for_identity(function_symbols,
+                                      nebula::nir::qualified_identity(fn.qualified_name, fn.local_name),
+                                      fn.local_name);
+    const std::string ret_cpp = c_abi_cpp_type(fn.ret).value_or("void");
+    std::ostringstream sig;
+    sig << "extern \"C\" NEBULA_CABI_EXPORT " << ret_cpp << " " << fn.export_name << "(";
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+      if (i) sig << ", ";
+      sig << c_abi_cpp_type(fn.params[i].ty).value_or("void") << " " << fn.params[i].name;
+    }
+    sig << ") {";
+    out.line(sig.str());
+    out.indent++;
+    std::ostringstream call;
+    if (fn.ret.kind != Ty::Kind::Void) call << "return ";
+    call << internal_name << "(";
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+      if (i) call << ", ";
+      call << fn.params[i].name;
+    }
+    call << ");";
+    out.line(call.str());
+    out.indent--;
+    out.line("}");
+    out.blank();
+  }
+}
+
+static std::string make_header_guard(std::string_view header_stem) {
+  std::string out = "NEBULA_";
+  for (char ch : header_stem) {
+    if (std::isalnum(static_cast<unsigned char>(ch))) {
+      out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    } else {
+      out.push_back('_');
+    }
+  }
+  out += "_H";
+  return out;
 }
 
 } // namespace
@@ -895,11 +2044,27 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
   out.line("#include <chrono>");
   out.line("#include <cmath>");
   out.line("#include <cstdint>");
+  out.line("#include <cstdlib>");
   out.line("#include <iostream>");
   out.line("#include <memory>");
   out.line("#include <string>");
   out.line("#include <variant>");
   out.line("#include <vector>");
+  out.blank();
+
+  out.line("// nebula-codegen-profile runtime_profile=" +
+           std::string(runtime_profile_name(opt.runtime_profile)) + " target=" +
+           escape_string(opt.target) + " panic_policy=" + panic_policy_name(opt.panic_policy));
+  out.line("static constexpr const char* NEBULA_RUNTIME_PROFILE = \"" +
+           std::string(runtime_profile_name(opt.runtime_profile)) + "\";");
+  out.line("static constexpr const char* NEBULA_TARGET = \"" + escape_string(opt.target) + "\";");
+  out.line("static constexpr const char* NEBULA_PANIC_POLICY = \"" +
+           std::string(panic_policy_name(opt.panic_policy)) + "\";");
+  out.line("[[noreturn]] static inline void __nebula_panic_policy(std::string msg) {");
+  out.indent++;
+  emit_panic_policy(out, opt, "msg");
+  out.indent--;
+  out.line("}");
   out.blank();
 
   out.line("static inline void expect_eq(std::int64_t a, std::int64_t b) {");
@@ -933,14 +2098,28 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
     function_symbols.insert({nebula::nir::function_identity(*fn), emitted_cpp_name_for(*fn)});
   }
   for (const auto* fn : ordered) {
+    emit_function_forward_decl(out, rep_owner, opt, *fn);
+    out.blank();
+  }
+  for (const auto* fn : ordered) {
     emit_function(out, rep_owner, opt, function_symbols, *fn);
     out.blank();
+  }
+
+  if (opt.emit_c_abi_wrappers) {
+    emit_c_abi_wrapper_block(out, collect_c_abi_functions_impl(p, opt.c_abi_export_package),
+                             function_symbols);
   }
 
   // Main harness
   if (opt.main_mode != MainMode::None) {
     out.line("int main(int argc, char** argv) {");
     out.indent++;
+    const bool catch_user_panic = opt.runtime_profile != RuntimeProfile::System;
+    if (catch_user_panic) {
+      out.line("try {");
+      out.indent++;
+    }
     out.line("nebula::rt::set_process_args(argc, argv);");
 
     if (opt.main_mode == MainMode::CallMainIfPresent) {
@@ -956,11 +2135,23 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
         if (entry_main == nullptr) entry_main = fn;
       }
       if (entry_main != nullptr) {
-        out.line("(void)" +
-                 emitted_cpp_name_for_identity(function_symbols,
-                                               nebula::nir::function_identity(*entry_main),
-                                               entry_main->name) +
-                 "();");
+        const std::string entry_name =
+            emitted_cpp_name_for_identity(function_symbols,
+                                          nebula::nir::function_identity(*entry_main),
+                                          entry_main->name);
+        if (entry_main->is_async) {
+          if (entry_main->ret.kind == Ty::Kind::Int) {
+            out.line("return static_cast<int>(nebula::rt::block_on(" + entry_name + "()));");
+          } else {
+            out.line("nebula::rt::block_on(" + entry_name + "());");
+          }
+        } else {
+          if (entry_main->ret.kind == Ty::Kind::Int) {
+            out.line("return static_cast<int>(" + entry_name + "());");
+          } else {
+            out.line("(void)" + entry_name + "();");
+          }
+        }
       } else {
         out.line("(void)0;");
       }
@@ -970,10 +2161,15 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
       for (const auto* fn : ordered) {
         if (has_annotation(fn->annotations, "test")) {
           out.line("std::cerr << \"[test] " + fn->name + "\\n\";");
-          out.line(emitted_cpp_name_for_identity(function_symbols,
-                                                 nebula::nir::function_identity(*fn),
-                                                 fn->name) +
-                   "();");
+          const std::string fn_name =
+              emitted_cpp_name_for_identity(function_symbols,
+                                            nebula::nir::function_identity(*fn),
+                                            fn->name);
+          if (fn->is_async) {
+            out.line("nebula::rt::block_on(" + fn_name + "());");
+          } else {
+            out.line(fn_name + "();");
+          }
         }
       }
       out.line("std::cerr << \"[test] ok\\n\";");
@@ -991,10 +2187,15 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
       out.indent++;
       for (const auto* fn : ordered) {
         if (has_annotation(fn->annotations, "bench")) {
-          out.line(emitted_cpp_name_for_identity(function_symbols,
-                                                 nebula::nir::function_identity(*fn),
-                                                 fn->name) +
-                   "();");
+          const std::string fn_name =
+              emitted_cpp_name_for_identity(function_symbols,
+                                            nebula::nir::function_identity(*fn),
+                                            fn->name);
+          if (fn->is_async) {
+            out.line("nebula::rt::block_on(" + fn_name + "());");
+          } else {
+            out.line(fn_name + "();");
+          }
         }
       }
       out.indent--;
@@ -1004,10 +2205,15 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
       out.line("auto t0 = Clock::now();");
       for (const auto* fn : ordered) {
         if (has_annotation(fn->annotations, "bench")) {
-          out.line(emitted_cpp_name_for_identity(function_symbols,
-                                                 nebula::nir::function_identity(*fn),
-                                                 fn->name) +
-                   "();");
+          const std::string fn_name =
+              emitted_cpp_name_for_identity(function_symbols,
+                                            nebula::nir::function_identity(*fn),
+                                            fn->name);
+          if (fn->is_async) {
+            out.line("nebula::rt::block_on(" + fn_name + "());");
+          } else {
+            out.line(fn_name + "();");
+          }
         }
       }
       out.line("auto t1 = Clock::now();");
@@ -1079,11 +2285,63 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
       out.line("return 0;");
     }
 
+    if (catch_user_panic) {
+      out.indent--;
+      out.line("} catch (const nebula::rt::UserPanic& ex) {");
+      out.indent++;
+      emit_panic_policy(out, opt, "ex.what()");
+      out.indent--;
+      out.line("}");
+    }
     out.indent--;
     out.line("}");
   }
 
   return out.os.str();
+}
+
+std::vector<CAbiFunction> collect_c_abi_functions(const Program& p,
+                                                  std::optional<std::string_view> package_name) {
+  return collect_c_abi_functions_impl(p, package_name);
+}
+
+std::string emit_c_abi_header(const Program& p,
+                              const std::vector<CAbiFunction>& exports,
+                              std::string_view header_stem) {
+  (void)p;
+  std::ostringstream out;
+  const std::string guard = make_header_guard(header_stem);
+  out << "#ifndef " << guard << "\n";
+  out << "#define " << guard << "\n\n";
+  out << "#include <stdbool.h>\n";
+  out << "#include <stdint.h>\n\n";
+  out << "#if defined(__cplusplus)\n";
+  out << "extern \"C\" {\n";
+  out << "#endif\n\n";
+  out << "#if defined(_WIN32)\n";
+  out << "#define NEBULA_CABI_API\n";
+  out << "#else\n";
+  out << "#define NEBULA_CABI_API\n";
+  out << "#endif\n\n";
+  for (const auto& fn : exports) {
+    out << "NEBULA_CABI_API " << c_abi_header_type(fn.ret).value_or("void") << " "
+        << fn.export_name << "(";
+    if (fn.params.empty()) {
+      out << "void";
+    } else {
+      for (std::size_t i = 0; i < fn.params.size(); ++i) {
+        if (i) out << ", ";
+        out << c_abi_header_type(fn.params[i].ty).value_or("void") << " " << fn.params[i].name;
+      }
+    }
+    out << ");\n";
+  }
+  if (!exports.empty()) out << "\n";
+  out << "#if defined(__cplusplus)\n";
+  out << "}\n";
+  out << "#endif\n\n";
+  out << "#endif\n";
+  return out.str();
 }
 
 } // namespace nebula::codegen

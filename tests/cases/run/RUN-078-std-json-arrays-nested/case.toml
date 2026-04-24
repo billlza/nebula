@@ -1,0 +1,7 @@
+id = "RUN-078-std-json-arrays-nested"
+suite = "run"
+command = "run"
+source = "fixtures/std_json_arrays_nested.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["json-array-ok"]

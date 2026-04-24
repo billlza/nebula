@@ -1,0 +1,15 @@
+enum Sign<T> {
+  Pos(T)
+  Neg(T)
+}
+
+fn unwrap(x: Sign<Int>) -> Int {
+  match x {
+    Pos => {
+      return 1
+    }
+    Neg(value) => {
+      return value
+    }
+  }
+}

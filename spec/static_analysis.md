@@ -1,4 +1,4 @@
-# Static Analysis (v1.0.0)
+# Static Analysis
 
 This layer defines assistive analysis on top of language core semantics.
 

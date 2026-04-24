@@ -1,0 +1,96 @@
+module net
+import std::bytes
+import std::result
+import std::task
+
+struct SocketAddr {}
+
+struct TcpListener {}
+
+struct TcpStream {}
+
+extern fn __nebula_rt_net_ipv4(host: String, port: Int) -> Result<SocketAddr, String>
+extern fn __nebula_rt_net_resolve_ipv4(host: String, port: Int) -> Future<Result<SocketAddr, String>>
+extern fn __nebula_rt_net_bind(addr: SocketAddr) -> Future<Result<TcpListener, String>>
+extern fn __nebula_rt_net_connect(addr: SocketAddr) -> Future<Result<TcpStream, String>>
+extern fn __nebula_rt_net_connect_host(host: String, port: Int) -> Future<Result<TcpStream, String>>
+extern fn __nebula_rt_net_listener_accept(self: TcpListener) -> Future<Result<TcpStream, String>>
+extern fn __nebula_rt_net_listener_accept_timeout(self: TcpListener, timeout_ms: Int) -> Future<Result<TcpStream, String>>
+extern fn __nebula_rt_net_listener_local_addr(self: TcpListener) -> Result<SocketAddr, String>
+extern fn __nebula_rt_net_listener_close(self: TcpListener) -> Result<Void, String>
+extern fn __nebula_rt_net_stream_read(self: TcpStream, max_bytes: Int) -> Future<Result<Bytes, String>>
+extern fn __nebula_rt_net_stream_write(self: TcpStream, bytes: Bytes) -> Future<Result<Int, String>>
+extern fn __nebula_rt_net_stream_write_all(self: TcpStream, bytes: Bytes) -> Future<Result<Void, String>>
+extern fn __nebula_rt_net_stream_peer_addr(self: TcpStream) -> Result<SocketAddr, String>
+extern fn __nebula_rt_net_stream_local_addr(self: TcpStream) -> Result<SocketAddr, String>
+extern fn __nebula_rt_net_socket_addr_host(self: SocketAddr) -> Result<String, String>
+extern fn __nebula_rt_net_socket_addr_port(self: SocketAddr) -> Result<Int, String>
+extern fn __nebula_rt_net_stream_close(self: TcpStream) -> Result<Void, String>
+
+fn ipv4(host: String, port: Int) -> Result<SocketAddr, String> {
+  return __nebula_rt_net_ipv4(host, port)
+}
+
+fn resolve_ipv4(host: String, port: Int) -> Future<Result<SocketAddr, String>> {
+  return __nebula_rt_net_resolve_ipv4(host, port)
+}
+
+fn bind(addr: SocketAddr) -> Future<Result<TcpListener, String>> {
+  return __nebula_rt_net_bind(addr)
+}
+
+fn connect(addr: SocketAddr) -> Future<Result<TcpStream, String>> {
+  return __nebula_rt_net_connect(addr)
+}
+
+fn connect_host(host: String, port: Int) -> Future<Result<TcpStream, String>> {
+  return __nebula_rt_net_connect_host(host, port)
+}
+
+fn TcpListener_accept(self: TcpListener) -> Future<Result<TcpStream, String>> {
+  return __nebula_rt_net_listener_accept(self)
+}
+
+fn TcpListener_accept_timeout(self: TcpListener, timeout_ms: Int) -> Future<Result<TcpStream, String>> {
+  return __nebula_rt_net_listener_accept_timeout(self, timeout_ms)
+}
+
+fn TcpListener_local_addr(self: TcpListener) -> Result<SocketAddr, String> {
+  return __nebula_rt_net_listener_local_addr(self)
+}
+
+fn TcpListener_close(self: TcpListener) -> Result<Void, String> {
+  return __nebula_rt_net_listener_close(self)
+}
+
+fn TcpStream_read(self: TcpStream, max_bytes: Int) -> Future<Result<Bytes, String>> {
+  return __nebula_rt_net_stream_read(self, max_bytes)
+}
+
+fn TcpStream_write(self: TcpStream, bytes: Bytes) -> Future<Result<Int, String>> {
+  return __nebula_rt_net_stream_write(self, bytes)
+}
+
+fn TcpStream_write_all(self: TcpStream, bytes: Bytes) -> Future<Result<Void, String>> {
+  return __nebula_rt_net_stream_write_all(self, bytes)
+}
+
+fn TcpStream_peer_addr(self: TcpStream) -> Result<SocketAddr, String> {
+  return __nebula_rt_net_stream_peer_addr(self)
+}
+
+fn TcpStream_local_addr(self: TcpStream) -> Result<SocketAddr, String> {
+  return __nebula_rt_net_stream_local_addr(self)
+}
+
+fn SocketAddr_host(self: SocketAddr) -> Result<String, String> {
+  return __nebula_rt_net_socket_addr_host(self)
+}
+
+fn SocketAddr_port(self: SocketAddr) -> Result<Int, String> {
+  return __nebula_rt_net_socket_addr_port(self)
+}
+
+fn TcpStream_close(self: TcpStream) -> Result<Void, String> {
+  return __nebula_rt_net_stream_close(self)
+}

@@ -32,12 +32,20 @@ enum class TokenKind : std::uint16_t {
   KwShared,
   KwUnique,
   KwFor,
+  KwWhile,
+  KwBreak,
+  KwContinue,
   KwIn,
   KwHeap,
   KwPromote,
   KwUnsafe,
   KwTrue,
   KwFalse,
+  KwMatch,
+  KwAsync,
+  KwAwait,
+  KwUi,
+  KwView,
 
   // Punctuation / operators
   At,      // @
@@ -47,11 +55,13 @@ enum class TokenKind : std::uint16_t {
   RBrace,  // }
   Comma,   // ,
   Dot,     // .
+  Question, // ?
   Colon,   // :
   ColonColon, // ::
   Less,    // <
   Greater, // >
   Equal,   // =
+  FatArrow, // =>
   Arrow,   // ->
   DotDot,  // ..
   DotDotLess, // ..<
@@ -98,12 +108,20 @@ inline const char* token_kind_name(TokenKind k) {
   case TokenKind::KwShared: return "shared";
   case TokenKind::KwUnique: return "unique";
   case TokenKind::KwFor: return "for";
+  case TokenKind::KwWhile: return "while";
+  case TokenKind::KwBreak: return "break";
+  case TokenKind::KwContinue: return "continue";
   case TokenKind::KwIn: return "in";
   case TokenKind::KwHeap: return "heap";
   case TokenKind::KwPromote: return "promote";
   case TokenKind::KwUnsafe: return "unsafe";
   case TokenKind::KwTrue: return "true";
   case TokenKind::KwFalse: return "false";
+  case TokenKind::KwMatch: return "match";
+  case TokenKind::KwAsync: return "async";
+  case TokenKind::KwAwait: return "await";
+  case TokenKind::KwUi: return "ui";
+  case TokenKind::KwView: return "view";
   case TokenKind::At: return "@";
   case TokenKind::LParen: return "(";
   case TokenKind::RParen: return ")";
@@ -111,11 +129,13 @@ inline const char* token_kind_name(TokenKind k) {
   case TokenKind::RBrace: return "}";
   case TokenKind::Comma: return ",";
   case TokenKind::Dot: return ".";
+  case TokenKind::Question: return "?";
   case TokenKind::Colon: return ":";
   case TokenKind::ColonColon: return "::";
   case TokenKind::Less: return "<";
   case TokenKind::Greater: return ">";
   case TokenKind::Equal: return "=";
+  case TokenKind::FatArrow: return "=>";
   case TokenKind::Arrow: return "->";
   case TokenKind::DotDot: return "..";
   case TokenKind::DotDotLess: return "..<";
@@ -164,12 +184,20 @@ struct Token {
     case TokenKind::KwShared:
     case TokenKind::KwUnique:
     case TokenKind::KwFor:
+    case TokenKind::KwWhile:
+    case TokenKind::KwBreak:
+    case TokenKind::KwContinue:
     case TokenKind::KwIn:
     case TokenKind::KwHeap:
     case TokenKind::KwPromote:
     case TokenKind::KwUnsafe:
     case TokenKind::KwTrue:
-    case TokenKind::KwFalse: return true;
+    case TokenKind::KwFalse:
+    case TokenKind::KwMatch: return true;
+    case TokenKind::KwAsync:
+    case TokenKind::KwAwait:
+    case TokenKind::KwUi:
+    case TokenKind::KwView: return true;
     default: return false;
     }
   }

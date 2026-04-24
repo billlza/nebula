@@ -1,0 +1,28 @@
+@export
+@abi_c
+fn add(a: Int, b: Int) -> Int {
+  return a + b
+}
+
+@export
+@abi_c
+fn answer() -> Int {
+  return 42
+}
+
+@export
+@abi_c
+fn flip(flag: Bool) -> Bool {
+  return !flag
+}
+
+@export
+@abi_c
+fn half(value: Float) -> Float {
+  return value / 2.0
+}
+
+@export
+@abi_c
+fn ping() -> Void {
+}

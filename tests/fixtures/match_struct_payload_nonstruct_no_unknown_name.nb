@@ -1,0 +1,16 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn main() -> Int {
+  let value = Some(1)
+  match value {
+    Some({ x }) => {
+      return x
+    }
+    None => {
+      return 0
+    }
+  }
+}

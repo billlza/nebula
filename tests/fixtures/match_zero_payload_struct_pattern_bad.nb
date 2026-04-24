@@ -1,0 +1,16 @@
+enum Option<T> {
+  Some(T)
+  None(Void)
+}
+
+fn keep(v: Option<Int>) -> Option<Int> {
+  return v
+}
+
+fn main() -> Void {
+  let value = keep(None)
+  match value {
+    Some(payload) => {}
+    None({ x }) => {}
+  }
+}
