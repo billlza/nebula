@@ -1,0 +1,290 @@
+module broker_outbox_server
+import auth
+import broker_outbox_store
+import core::broker_contracts
+import core::policy
+import core::validate
+import preview
+import service::context
+import service::errors
+import service::middleware
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+
+struct BrokerCompleteRouteRequest {
+  message_id: Int
+  complete_request: BrokerOutboxCompleteRequest
+}
+
+fn broker_outbox_claim_path() -> String {
+  return "/v1/broker/outbox/claim"
+}
+
+fn broker_outbox_message_pattern() -> String {
+  return "/v1/broker/outbox/:message_id"
+}
+
+fn broker_outbox_complete_pattern() -> String {
+  return "/v1/broker/outbox/:message_id/complete"
+}
+
+fn is_broker_outbox_route(request: Request) -> Bool {
+  return path_matches(broker_outbox_claim_path(), request) ||
+         path_matches(broker_outbox_complete_pattern(), request) ||
+         path_matches(broker_outbox_message_pattern(), request)
+}
+
+fn broker_method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn ensure_broker_permission_capability(ctx: RequestContext, permission: String) -> Result<Bool, Response> {
+  return ensure_permission_capability(ctx, "broker_preview_disabled", "broker_preview_invalid", permission)
+}
+
+fn broker_claim_response(ctx: RequestContext, result: BrokerOutboxClaimEnvelope) -> Result<Response, String> {
+  let envelope = BrokerOutboxClaimEnvelope(result.outcome, result.message, ctx.request_id_text, unix_millis())
+  validate_broker_outbox_claim_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn broker_message_response(ctx: RequestContext, message: BrokerOutboxMessage) -> Result<Response, String> {
+  let envelope = BrokerOutboxMessageEnvelope(message, ctx.request_id_text, unix_millis())
+  validate_broker_outbox_message_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn broker_json_body(ctx: RequestContext, request: Request) -> Result<Json, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      return Ok(payload)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn broker_claim_request_from_http(ctx: RequestContext, request: Request) -> Result<BrokerOutboxClaimRequest, Response> {
+  let payload = broker_json_body(ctx, request)?
+  match broker_outbox_claim_request_from_json(payload) {
+    Ok(claim_request) => {
+      match validate_broker_outbox_claim_request(claim_request) {
+        Ok(_) => {
+          return Ok(claim_request)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_broker_claim", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_broker_claim", msg))
+    }
+  }
+}
+
+fn broker_complete_request_from_http(ctx: RequestContext, request: Request) -> Result<BrokerOutboxCompleteRequest, Response> {
+  let payload = broker_json_body(ctx, request)?
+  match broker_outbox_complete_request_from_json(payload) {
+    Ok(complete_request) => {
+      match validate_broker_outbox_complete_request(complete_request) {
+        Ok(_) => {
+          return Ok(complete_request)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_broker_complete", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_broker_complete", msg))
+    }
+  }
+}
+
+fn broker_message_id_from_text(text: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value <= 0 {
+    return Err("broker outbox message_id must be positive")
+  }
+  return Ok(value)
+}
+
+fn broker_message_id_from_pattern(ctx: RequestContext, request: Request, pattern: String) -> Result<Int, Response> {
+  match route_param1(pattern, request) {
+    Ok(value) => {
+      match broker_message_id_from_text(value) {
+        Ok(message_id) => {
+          return Ok(message_id)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_broker_message_id", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_broker_route", msg))
+    }
+  }
+}
+
+fn broker_complete_route_request_from_http(ctx: RequestContext,
+                                           request: Request) -> Result<BrokerCompleteRouteRequest, Response> {
+  let message_id = broker_message_id_from_pattern(ctx, request, broker_outbox_complete_pattern())?
+  let complete_request = broker_complete_request_from_http(ctx, request)?
+  return Ok(BrokerCompleteRouteRequest(message_id, complete_request))
+}
+
+fn missing_broker_message(ctx: RequestContext, message_id: Int) -> Result<Response, String> {
+  return Ok(for_request(404, ctx, "broker_outbox_not_found", text_concat("broker outbox message not found: ", int_text(message_id))))
+}
+
+fn broker_complete_error_response(ctx: RequestContext, message_id: Int, msg: String) -> Result<Response, String> {
+  if msg == "broker outbox message not found" {
+    return missing_broker_message(ctx, message_id)
+  }
+  if msg == "broker outbox message belongs to a different worker" {
+    return Ok(for_request(409, ctx, "broker_outbox_worker_mismatch", msg))
+  }
+  if msg == "broker outbox lease mismatch" {
+    return Ok(for_request(409, ctx, "broker_outbox_lease_mismatch", msg))
+  }
+  if msg == "broker outbox message is not leased" || msg == "broker outbox message is terminal" {
+    return Ok(for_request(409, ctx, "broker_outbox_state_conflict", msg))
+  }
+  return Err(msg)
+}
+
+async fn handle_broker_claim_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_broker_claim_route_authorized)
+}
+
+async fn handle_broker_claim_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_outbox_relay_permission(), handle_broker_claim_route_inner)
+}
+
+async fn handle_broker_claim_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ensure_broker_permission_capability(ctx, jobs_outbox_relay_permission()) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match broker_claim_request_from_http(ctx, request) {
+    Ok(claim_request) => {
+      let app_scope = principal_app_scope_from_ctx(ctx)?
+      let channel_scope = principal_channel_scope_from_ctx(ctx)?
+      let envelope = claim_broker_outbox_message_scoped(claim_request, app_scope, channel_scope)?
+      return broker_claim_response(ctx, envelope)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_broker_get_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_broker_get_route_authorized)
+}
+
+async fn handle_broker_get_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_outbox_read_permission(), handle_broker_get_route_inner)
+}
+
+fn scoped_broker_message_load_response(ctx: RequestContext, message_id: Int) -> Result<Response, String> {
+  let app_scope = principal_app_scope_from_ctx(ctx)?
+  let channel_scope = principal_channel_scope_from_ctx(ctx)?
+  match load_broker_outbox_message_scoped(message_id, app_scope, channel_scope) {
+    Ok(message) => {
+      return broker_message_response(ctx, message)
+    }
+    Err(msg) => {
+      if msg == "broker outbox message not found" {
+        return missing_broker_message(ctx, message_id)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+async fn handle_broker_get_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ensure_broker_permission_capability(ctx, jobs_outbox_read_permission()) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match broker_message_id_from_pattern(ctx, request, broker_outbox_message_pattern()) {
+    Ok(message_id) => {
+      return scoped_broker_message_load_response(ctx, message_id)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_broker_complete_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_broker_complete_route_authorized)
+}
+
+async fn handle_broker_complete_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_outbox_relay_permission(), handle_broker_complete_route_inner)
+}
+
+fn scoped_broker_complete_response(ctx: RequestContext,
+                                   route_request: BrokerCompleteRouteRequest) -> Result<Response, String> {
+  let app_scope = principal_app_scope_from_ctx(ctx)?
+  let channel_scope = principal_channel_scope_from_ctx(ctx)?
+  match complete_broker_outbox_message_scoped(route_request.message_id,
+                                             route_request.complete_request,
+                                             app_scope,
+                                             channel_scope) {
+    Ok(message) => {
+      return broker_message_response(ctx, message)
+    }
+    Err(msg) => {
+      return broker_complete_error_response(ctx, route_request.message_id, msg)
+    }
+  }
+}
+
+async fn handle_broker_complete_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ensure_broker_permission_capability(ctx, jobs_outbox_relay_permission()) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match broker_complete_route_request_from_http(ctx, request) {
+    Ok(route_request) => {
+      return scoped_broker_complete_response(ctx, route_request)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_broker_outbox_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(broker_outbox_claim_path(), request) {
+    if method_matches(Post, request.method) {
+      return await handle_broker_claim_route(ctx, request)
+    }
+    return broker_method_not_allowed()
+  }
+  if path_matches(broker_outbox_complete_pattern(), request) {
+    if method_matches(Post, request.method) {
+      return await handle_broker_complete_route(ctx, request)
+    }
+    return broker_method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_broker_get_route(ctx, request)
+  }
+  return broker_method_not_allowed()
+}

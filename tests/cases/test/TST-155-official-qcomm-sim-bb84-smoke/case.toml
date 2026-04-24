@@ -1,0 +1,21 @@
+id = "TST-155-official-qcomm-sim-bb84-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/official-qcomm-sim && mkdir -p work/official-qcomm-sim && cp -R \"$NEBULA_REPO_ROOT/official/nebula-crypto\" work/official-qcomm-sim/nebula-crypto && cp -R \"$NEBULA_REPO_ROOT/official/nebula-pqc-protocols\" work/official-qcomm-sim/nebula-pqc-protocols && cp -R \"$NEBULA_REPO_ROOT/official/nebula-qcomm-sim\" work/official-qcomm-sim/qcomm && mkdir -p work/official-qcomm-sim/app/src && cat > work/official-qcomm-sim/app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"official-qcomm-sim-app\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\n\n[dependencies]\ncrypto = { path = \"../nebula-crypto\" }\nqcomm = { path = \"../qcomm\" }\nEOF\ncat > work/official-qcomm-sim/app/src/main.nb <<'EOF'\nmodule main\nimport crypto::aead\nimport crypto::kdf\nimport qcomm::bb84\nimport std::bytes\nimport std::json\nimport std::result\n\nfn main() -> Void {\n  let ok = true\n  let seed = from_string(\"bb84-seed\")\n  let cfg = with_sample_reveal(default_config(128), 16)\n  match simulate_seeded(cfg, seed) {\n    Ok(report1) => {\n      match simulate_seeded(cfg, seed) {\n        Ok(report2) => {\n          if stringify(report1.as_json()) != stringify(report2.as_json()) {\n            ok = false\n          }\n          if report1.abort_reason != \"\" {\n            ok = false\n          }\n          match shared_key_bytes(report1) {\n            Ok(shared_key) => {\n              match blake3_derive_key(\"qcomm/test/aead\", shared_key, 32) {\n                Ok(derived) => {\n                  match chacha20_poly1305_key_from_bytes(derived) {\n                    Ok(aead_key) => {\n                      let aad = from_string(\"bb84-test\")\n                      match seal(aead_key, from_string(\"0123456789ab\"), aad, from_string(\"qcomm-ok\")) {\n                        Ok(ciphertext) => {\n                          match open(aead_key, from_string(\"0123456789ab\"), aad, ciphertext) {\n                            Ok(plaintext) => {\n                              if to_string(plaintext) != \"qcomm-ok\" {\n                                ok = false\n                              }\n                            }\n                            Err(_) => {\n                              ok = false\n                            }\n                          }\n                        }\n                        Err(_) => {\n                          ok = false\n                        }\n                      }\n                    }\n                    Err(_) => {\n                      ok = false\n                    }\n                  }\n                }\n                Err(_) => {\n                  ok = false\n                }\n              }\n            }\n            Err(_) => {\n              ok = false\n            }\n          }\n        }\n        Err(_) => {\n          ok = false\n        }\n      }\n      match simulate_seeded(with_channel_flip_ppm(cfg, 400000), seed) {\n        Ok(noisy) => {\n          if noisy.abort_reason != \"high_qber\" {\n            ok = false\n          }\n        }\n        Err(_) => {\n          ok = false\n        }\n      }\n      match simulate_seeded(with_classical_auth_failure(cfg, true), seed) {\n        Ok(auth_fail) => {\n          if auth_fail.abort_reason != \"classical_auth_failed\" {\n            ok = false\n          }\n        }\n        Err(_) => {\n          ok = false\n        }\n      }\n    }\n    Err(_) => {\n      ok = false\n    }\n  }\n  if ok {\n    print(\"qcomm-sim-ok\")\n  } else {\n    print(\"qcomm-sim-bad\")\n  }\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-qcomm-sim/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-qcomm-sim/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["qcomm-sim-ok"]

@@ -1,0 +1,88 @@
+schema_version = 2
+root_package = "pqc-secure-service"
+root_manifest_hash = "493828702bda43f2"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "pqc-secure-service"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "493828702bda43f2"
+source_fingerprint = "85796d8f1e8c3b57"
+integrity_fingerprint = "d220a7b1db23333"
+is_root = 1
+dependencies = ["crypto=nebula-crypto", "pqc=nebula-pqc-protocols", "service=nebula-service"]
+
+[[package]]
+name = "nebula-crypto"
+version = "0.1.0"
+root = "../../official/nebula-crypto"
+manifest = "../../official/nebula-crypto/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-crypto"
+resolved_rev = ""
+manifest_hash = "8f766de76589be57"
+source_fingerprint = "4235dc2a5ac6200"
+integrity_fingerprint = "deac2b2365cbdf0e"
+is_root = 0
+native_c_sources = ["native/blake3_all.c", "native/oqs_primitives.c", "native/vendor/mbedtls/library/chacha20.c", "native/vendor/mbedtls/library/chachapoly.c", "native/vendor/mbedtls/library/constant_time.c", "native/vendor/mbedtls/library/platform_util.c", "native/vendor/mbedtls/library/poly1305.c", "native/vendor/oqs_mini/compat.c", "native/vendor/oqs_mini/mldsa65_ref/ntt.c", "native/vendor/oqs_mini/mldsa65_ref/packing.c", "native/vendor/oqs_mini/mldsa65_ref/poly.c", "native/vendor/oqs_mini/mldsa65_ref/polyvec.c", "native/vendor/oqs_mini/mldsa65_ref/reduce.c", "native/vendor/oqs_mini/mldsa65_ref/rounding.c", "native/vendor/oqs_mini/mldsa65_ref/sign.c", "native/vendor/oqs_mini/mldsa65_ref/symmetric-shake.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/compress.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/debug.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/indcpa.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/kem.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly_k.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/sampling.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/verify.c", "native/vendor/oqs_mini/pqclean_shims/fips202.c", "native/vendor/oqs_mini/sha3/sha3.c", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits/KeccakP-1600-opt64.c", "native/vendor/oqs_mini/sha3/xkcp_sha3.c"]
+native_cxx_sources = ["native/bridge.cpp"]
+native_include_dirs = ["native/include", "native/vendor/blake3", "native/vendor/mbedtls/include", "native/vendor/mbedtls/library", "native/vendor/oqs_mini", "native/vendor/oqs_mini/include", "native/vendor/oqs_mini/mldsa65_ref", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref", "native/vendor/oqs_mini/pqclean_shims", "native/vendor/oqs_mini/sha3", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits"]
+dependencies = []
+
+[[package]]
+name = "nebula-observe"
+version = "0.1.0"
+root = "../../official/nebula-observe"
+manifest = "../../official/nebula-observe/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-observe"
+resolved_rev = ""
+manifest_hash = "9a8a10871f57579b"
+source_fingerprint = "d95653546edbf323"
+integrity_fingerprint = "5c902f31c538236d"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "nebula-pqc-protocols"
+version = "0.1.0"
+root = "../../official/nebula-pqc-protocols"
+manifest = "../../official/nebula-pqc-protocols/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-pqc-protocols"
+resolved_rev = ""
+manifest_hash = "c8a37a7cfa170b9d"
+source_fingerprint = "e1febe58618ac3a2"
+integrity_fingerprint = "406e815548bbf4e1"
+is_root = 0
+dependencies = ["crypto=nebula-crypto"]
+
+[[package]]
+name = "nebula-service"
+version = "0.1.0"
+root = "../../official/nebula-service"
+manifest = "../../official/nebula-service/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-service"
+resolved_rev = ""
+manifest_hash = "bd867fc565eaa5ba"
+source_fingerprint = "48be802fbce187d4"
+integrity_fingerprint = "561eddd96fdce8ad"
+is_root = 0
+dependencies = ["observe=nebula-observe"]

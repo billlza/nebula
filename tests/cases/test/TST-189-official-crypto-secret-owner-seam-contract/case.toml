@@ -1,0 +1,7 @@
+id = "TST-189-official-crypto-secret-owner-seam-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'class SecretBytesOwner' \"$NEBULA_REPO_ROOT/official/nebula-crypto/native/secure_memory.hpp\" && grep -F 'secure_zeroize(bytes.data);' \"$NEBULA_REPO_ROOT/official/nebula-crypto/native/secure_memory.hpp\" && grep -F 'zeroizes bridge-owned copies' \"$NEBULA_REPO_ROOT/official/nebula-crypto/SECURITY_CONTRACT.md\" && grep -F 'package-local `SecretBytesOwner`' \"$NEBULA_REPO_ROOT/official/nebula-crypto/README.md\" && grep -F 'SecretBytesOwner::copy_or_panic(' \"$NEBULA_REPO_ROOT/official/nebula-crypto/native/bridge.cpp\" && grep -F 'SecretBytesOwner::adopt_or_panic(' \"$NEBULA_REPO_ROOT/official/nebula-crypto/native/bridge.cpp\" && grep -F 'validate_secret_bytes(' \"$NEBULA_REPO_ROOT/official/nebula-crypto/native/bridge.cpp\""
+expect_rc = 0

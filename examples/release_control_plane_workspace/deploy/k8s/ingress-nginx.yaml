@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-control-plane
+  namespace: release-control-plane
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+spec:
+  tls:
+    - hosts:
+        - control-plane.example.internal
+      secretName: release-control-plane-ingress-tls
+  rules:
+    - host: control-plane.example.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: release-control-plane
+                port:
+                  name: http

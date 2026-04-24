@@ -1,0 +1,107 @@
+module platform
+import args
+import client
+import core::platform_contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn platform_capabilities_path() -> String {
+  return "/v1/platform/capabilities"
+}
+
+fn platform_arg_count(parsed: ParsedArgs) -> Result<Int, String> {
+  return array_len(array_build(parsed.command_argv))
+}
+
+fn platform_subcommand(parsed: ParsedArgs) -> Result<String, String> {
+  let count = platform_arg_count(parsed)?
+  if count == 0 {
+    return Err("missing platform subcommand")
+  }
+  if count > 1 {
+    return Err("unexpected platform argument")
+  }
+  return as_string(array_get(array_build(parsed.command_argv), 0)?)
+}
+
+fn print_platform_capability_text(value: PlatformCapability) -> Void {
+  print(text_concat("capability=", value.name))
+  print(text_concat("status=", value.status))
+  print(text_concat("default_enabled=", stringify(bool_value(value.default_enabled))))
+  print(text_concat("risk=", value.risk))
+}
+
+fn emit_platform_capabilities_text(capabilities: Json) -> Result<Bool, String> {
+  let count = array_len(capabilities)?
+  let index = 0
+  while index < count {
+    let value = platform_capability_from_json(array_get(capabilities, index)?)?
+    print_platform_capability_text(value)
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn emit_platform_capabilities(envelope: PlatformCapabilityEnvelope, json_mode: Bool) -> Result<Bool, String> {
+  validate_platform_capability_envelope(envelope)?
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return Ok(true)
+  }
+  return emit_platform_capabilities_text(envelope.capabilities)
+}
+
+fn parse_platform_capabilities_reply(reply: JsonResponse) -> Result<PlatformCapabilityEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = platform_capability_envelope_from_json(reply.payload)?
+  validate_platform_capability_envelope(envelope)?
+  return Ok(envelope)
+}
+
+async fn run_platform_capabilities(base_url: String, options: ClientOptions, json_mode: Bool) -> Int {
+  match await get_json(base_url, platform_capabilities_path(), options) {
+    Ok(reply) => {
+      match parse_platform_capabilities_reply(reply) {
+        Ok(envelope) => {
+          match emit_platform_capabilities(envelope, json_mode) {
+            Ok(_) => {
+              return 0
+            }
+            Err(msg) => {
+              print(msg)
+              return 1
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+          return 1
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn run_platform_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match platform_subcommand(parsed) {
+    Ok(subcommand) => {
+      if subcommand == "capabilities" {
+        return await run_platform_capabilities(base_url, options, parsed.json_mode)
+      }
+      print("unknown platform subcommand")
+      return 2
+    }
+    Err(msg) => {
+      print(msg)
+      return 2
+    }
+  }
+}

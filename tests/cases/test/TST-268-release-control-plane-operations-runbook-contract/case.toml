@@ -1,0 +1,96 @@
+id = "TST-268-release-control-plane-operations-runbook-contract"
+suite = "test"
+description = "release control plane deploy assets document backup restore and migration operations for SQLite and Postgres data planes"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+deploy_root = repo_root / "examples" / "release_control_plane_workspace" / "deploy"
+operations = (deploy_root / "operations" / "README.md").read_text(encoding="utf-8")
+deploy_readme = (deploy_root / "README.md").read_text(encoding="utf-8")
+systemd_env = (deploy_root / "systemd" / "release-control-plane.env.example").read_text(encoding="utf-8")
+container_readme = (deploy_root / "container" / "README.md").read_text(encoding="utf-8")
+k8s_configmap = (deploy_root / "k8s" / "configmap.yaml").read_text(encoding="utf-8")
+k8s_readme = (deploy_root / "k8s" / "README.md").read_text(encoding="utf-8")
+
+for fragment in [
+    "## SQLite Backup",
+    "sudo systemctl stop release-control-plane",
+    "release-control-plane.db*",
+    "## SQLite Restore",
+    "## Postgres Backup",
+    "pg_dump --format=custom --no-owner --no-privileges",
+    "## Postgres Restore",
+    "pg_restore --clean --if-exists --no-owner --no-privileges",
+    "## Upgrade And Migration",
+    "Back up the active data plane first.",
+    "Connection_migration_status",
+    "history_issue_count",
+    "Restart once against the same data plane",
+    "split migration slices",
+    "Schema downgrade is not supported",
+    "No automatic SQLite-to-Postgres migration.",
+    "APP_POSTGRES_DSN_FILE",
+    "No connection pool.",
+    "No ORM/query DSL.",
+]:
+    if fragment not in operations:
+        raise SystemExit(f"operations/README.md missing fragment: {fragment!r}")
+
+for fragment in [
+    "operations/",
+    "backup, restore, and startup-migration runbook",
+    "Read `operations/README.md` before the first production-like rollout",
+]:
+    if fragment not in deploy_readme:
+        raise SystemExit(f"deploy/README.md missing fragment: {fragment!r}")
+
+for fragment in [
+    "APP_DATA_BACKEND=sqlite",
+    "# APP_DATA_BACKEND=postgres",
+    "# APP_POSTGRES_PREVIEW=1",
+    "# APP_POSTGRES_DSN=postgresql://",
+    "# APP_POSTGRES_DSN_FILE=/run/release-control-plane-secrets/postgres.dsn",
+]:
+    if fragment not in systemd_env:
+        raise SystemExit(f"systemd env example missing fragment: {fragment!r}")
+
+for fragment in [
+    "-e APP_DATA_BACKEND=sqlite",
+    "APP_DATA_BACKEND=postgres",
+    "APP_POSTGRES_PREVIEW=1",
+    "APP_POSTGRES_DSN_FILE",
+    "deploy/operations/README.md",
+]:
+    if fragment not in container_readme:
+        raise SystemExit(f"container README missing fragment: {fragment!r}")
+
+for fragment in [
+    'APP_DATA_BACKEND: "sqlite"',
+    'APP_POSTGRES_DSN_FILE: "/run/release-control-plane-secrets/postgres.dsn"',
+    'APP_STATE_DIR: "/var/lib/release-control-plane"',
+]:
+    if fragment not in k8s_configmap:
+        raise SystemExit(f"k8s configmap missing fragment: {fragment!r}")
+
+for fragment in [
+    "optional Postgres preview data-plane mode",
+    "database itself managed outside these manifests",
+    "deploy/operations/README.md",
+    "backup-before-upgrade flow",
+    "APP_DATA_BACKEND=postgres",
+    "APP_POSTGRES_DSN_FILE",
+]:
+    if fragment not in k8s_readme:
+        raise SystemExit(f"k8s README missing fragment: {fragment!r}")
+
+print("release-control-plane-operations-runbook-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-operations-runbook-ok"]

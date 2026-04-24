@@ -1,0 +1,13 @@
+schema_version = 1
+
+[package]
+name = "cli-service-skeleton-service"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+host_cxx = ["host.cpp"]
+
+[dependencies]
+service = { installed = "nebula-service" }
+observe = { installed = "nebula-observe" }
+core = { path = "../../packages/core" }

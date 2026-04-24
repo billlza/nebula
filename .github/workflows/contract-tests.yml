@@ -32,17 +32,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Python
         if: matrix.shell_kind == 'unix'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
+      - name: Validate TLS Root Bundle Metadata
+        if: matrix.shell_kind == 'unix'
+        run: python3 scripts/sync_tls_root_bundle.py --check
+
       - name: Setup MSYS2
         if: matrix.shell_kind == 'msys2'
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2
         with:
           msystem: CLANG64
           update: true
@@ -51,6 +55,11 @@ jobs:
             mingw-w64-clang-x86_64-cmake
             mingw-w64-clang-x86_64-ninja
             mingw-w64-clang-x86_64-python
+
+      - name: Validate TLS Root Bundle Metadata (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: python3 scripts/sync_tls_root_bundle.py --check
 
       - name: Configure
         if: matrix.shell_kind == 'unix'
@@ -89,10 +98,85 @@ jobs:
 
       - name: Upload Reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: contract-test-reports-${{ matrix.target }}
           path: |
             contract-tests.txt
             contract-tests.junit.xml
             contract-tests.json
+
+  asan-ubsan-test-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure
+        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run Sanitized Test Harness Smoke
+        run: |
+          smoke_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nebula-sanitizer-smoke.XXXXXX")"
+          cp tests/fixtures/smoke.nb "$smoke_root/smoke.nb"
+          ./build/nebula test --dir "$smoke_root"
+
+  linux-backend-ga-hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate TLS Root Bundle Metadata
+        run: python3 scripts/sync_tls_root_bundle.py --check
+
+      - name: Configure
+        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run Mainline A Focused Regressions
+        run: |
+          for case in \
+            TST-039-install-prefix-binary-smoke \
+            TST-041-release-helpers-render-metadata \
+            TST-161-release-signoff-helper \
+            TST-172-new-backend-service-template-smoke \
+            TST-173-install-prefix-backend-sdk-opt-in-smoke \
+            TST-174-lsp-extended-features-smoke \
+            TST-175-explain-async-metadata-smoke \
+            TST-176-reverse-proxy-backend-service-smoke \
+            TST-177-lsp-local-references-shadowing-smoke \
+            TST-178-lsp-local-callable-references-smoke \
+            TST-203-std-runtime-wrapper-contract \
+            TST-204-std-http-json-bytes-wrapper-smoke \
+            TST-205-official-service-link-smoke \
+            TST-206-hosted-registry-missing-python-diagnostic
+          do
+            python3 tests/run.py --suite test --filter "$case" --binary build/nebula
+          done
+
+      - name: Package Linux Release Assets
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          python3 scripts/package_release.py --binary build/nebula --target linux-x86_64 --output-dir dist
+          python3 scripts/package_release.py --binary build/nebula --target linux-x86_64 --output-dir dist --include-backend-sdk
+          test -f "dist/nebula-v${version}-linux-x86_64.tar.gz"
+          test -f "dist/nebula-backend-sdk-v${version}-linux-x86_64.tar.gz"
+
+      - name: Verify Linux Backend GA Hardening
+        run: bash scripts/verify_linux_backend_ga_hardening.sh --binary build/nebula --dist-dir dist

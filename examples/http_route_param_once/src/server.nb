@@ -1,0 +1,34 @@
+module server
+import std::http
+import std::net
+import std::result
+
+async fn handle_request(request: Request) -> Response {
+  return await dispatch1(
+    request,
+    Get,
+    "/hello/:name",
+    handle_hello,
+    not_found_text("not found")
+  )
+}
+
+async fn handle_hello(request: Request) -> Response {
+  match route_param1("/hello/:name", request) {
+    Ok(name) => {
+      return ok_text(name)
+    }
+    Err(msg) => {
+      return internal_error_text(msg)
+    }
+  }
+}
+
+async fn serve_once(listener: TcpListener) -> Void {
+  match await serve_n(listener, 1, handle_request) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

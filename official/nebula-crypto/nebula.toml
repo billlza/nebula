@@ -1,0 +1,12 @@
+schema_version = 1
+
+[package]
+name = "nebula-crypto"
+version = "0.1.0"
+entry = "src/lib.nb"
+src_dir = "src"
+
+[native]
+c_sources = ["native/blake3_all.c", "native/oqs_primitives.c", "native/vendor/oqs_mini/compat.c", "native/vendor/oqs_mini/pqclean_shims/fips202.c", "native/vendor/oqs_mini/sha3/sha3.c", "native/vendor/oqs_mini/sha3/xkcp_sha3.c", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits/KeccakP-1600-opt64.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/compress.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/debug.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/indcpa.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/kem.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly_k.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/sampling.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/verify.c", "native/vendor/oqs_mini/mldsa65_ref/ntt.c", "native/vendor/oqs_mini/mldsa65_ref/packing.c", "native/vendor/oqs_mini/mldsa65_ref/poly.c", "native/vendor/oqs_mini/mldsa65_ref/polyvec.c", "native/vendor/oqs_mini/mldsa65_ref/reduce.c", "native/vendor/oqs_mini/mldsa65_ref/rounding.c", "native/vendor/oqs_mini/mldsa65_ref/sign.c", "native/vendor/oqs_mini/mldsa65_ref/symmetric-shake.c", "native/mbedtls_private_chachapoly.c"]
+cxx_sources = ["native/bridge.cpp"]
+include_dirs = ["native/include", "native/vendor/blake3", "native/vendor/oqs_mini", "native/vendor/oqs_mini/include", "native/vendor/oqs_mini/pqclean_shims", "native/vendor/oqs_mini/sha3", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref", "native/vendor/oqs_mini/mldsa65_ref", "native/vendor/mbedtls/include", "native/vendor/mbedtls/library"]

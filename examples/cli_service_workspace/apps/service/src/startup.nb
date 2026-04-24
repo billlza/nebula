@@ -1,0 +1,21 @@
+module startup
+import auth
+import core::app
+import core::validate
+import db
+import std::env
+import std::result
+
+fn config_state_dir() -> String {
+  return get_or_default("APP_STATE_DIR", default_state_dir())
+}
+
+fn config_catalog_db_path() -> String {
+  return text_concat(config_state_dir(), "/catalog.db")
+}
+
+fn preflight() -> Result<Bool, String> {
+  validate_auth_configuration()?
+  initialize_catalog_store(config_catalog_db_path())?
+  return Ok(true)
+}

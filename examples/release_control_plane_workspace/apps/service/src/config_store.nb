@@ -1,0 +1,604 @@
+module config_store
+import core::config_contracts
+import core::config_validate
+import core::contracts
+import core::validate
+import db
+import std::json
+import std::result
+import std::time
+import store
+
+struct ConfigLookup {
+  found: Bool
+  entry: ConfigEntry
+}
+
+struct ConfigRevisionRowFields {
+  revision_id: Int
+  action: String
+  description: String
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ConfigListState {
+  snapshot_revision_id: Int
+  entries: Json
+}
+
+fn control_plane_store_path() -> String {
+  return release_store_path()
+}
+
+fn config_migrations() -> Json {
+  let builder = array_builder()
+  let create_entries_sql = "CREATE TABLE IF NOT EXISTS config_entries (app TEXT NOT NULL, channel TEXT NOT NULL, key TEXT NOT NULL, description TEXT NOT NULL, kind TEXT NOT NULL, string_value TEXT NOT NULL, bool_value INTEGER NOT NULL, int_value INTEGER NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (app, channel, key))"
+  builder = array_push(builder, migration(5, "create_config_entries", create_entries_sql))
+  let create_revisions_sql = "CREATE TABLE IF NOT EXISTS config_revisions (revision_id INTEGER PRIMARY KEY AUTOINCREMENT, app TEXT NOT NULL, channel TEXT NOT NULL, key TEXT NOT NULL, action TEXT NOT NULL, description TEXT NOT NULL, kind TEXT NOT NULL, string_value TEXT NOT NULL, bool_value INTEGER NOT NULL, int_value INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL)"
+  builder = array_push(builder, migration(6, "create_config_revisions", create_revisions_sql))
+  return array_build(builder)
+}
+
+fn initialize_config_store() -> Result<Bool, String> {
+  let conn = open(control_plane_store_path())?
+  conn.run_migrations(config_migrations())?
+  return Ok(true)
+}
+
+fn config_key_params(app_name: String, channel: String, key: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, string_value(key))
+  return array_build(builder)
+}
+
+fn builder_with_config_identity(builder: JsonArrayBuilder,
+                                app_name: String,
+                                channel: String,
+                                key: String) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, string_value(key))
+  return builder
+}
+
+fn builder_with_config_value(builder: JsonArrayBuilder, value: ConfigValue) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(value.kind))
+  builder = array_push(builder, string_value(value.string_value))
+  builder = array_push(builder, bool_value(value.bool_value))
+  builder = array_push(builder, int_value(value.int_value))
+  return builder
+}
+
+fn config_entry_params(entry: ConfigEntry) -> Json {
+  let builder = array_builder()
+  builder = builder_with_config_identity(builder, entry.app, entry.channel, entry.key)
+  builder = array_push(builder, string_value(entry.description))
+  builder = builder_with_config_value(builder, entry.value)
+  builder = array_push(builder, int_value(entry.revision_id))
+  builder = array_push(builder, string_value(entry.updated_by))
+  builder = array_push(builder, int_value(entry.updated_unix_ms))
+  return array_build(builder)
+}
+
+fn config_entry_update_params(entry: ConfigEntry) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(entry.description))
+  builder = builder_with_config_value(builder, entry.value)
+  builder = array_push(builder, int_value(entry.revision_id))
+  builder = array_push(builder, string_value(entry.updated_by))
+  builder = array_push(builder, int_value(entry.updated_unix_ms))
+  builder = builder_with_config_identity(builder, entry.app, entry.channel, entry.key)
+  return array_build(builder)
+}
+
+fn config_revision_params(revision: ConfigRevision) -> Json {
+  let builder = array_builder()
+  builder = builder_with_config_identity(builder, revision.app, revision.channel, revision.key)
+  builder = array_push(builder, string_value(revision.action))
+  builder = array_push(builder, string_value(revision.description))
+  builder = builder_with_config_value(builder, revision.value)
+  builder = array_push(builder, string_value(revision.updated_by))
+  builder = array_push(builder, int_value(revision.updated_unix_ms))
+  return array_build(builder)
+}
+
+fn config_not_found_placeholder() -> ConfigEntry {
+  return ConfigEntry("", "", "", "", config_string_value(""), 0, "", 0)
+}
+
+fn config_value_from_row(row: Row) -> Result<ConfigValue, String> {
+  return Ok(ConfigValue(row.get_string("kind")?,
+                        row.get_string("string_value")?,
+                        row.get_bool("bool_value")?,
+                        row.get_int("int_value")?))
+}
+
+fn config_identity_from_row(row: Row) -> Result<ConfigIdentityFields, String> {
+  return Ok(ConfigIdentityFields(row.get_string("app")?,
+                                 row.get_string("channel")?,
+                                 row.get_string("key")?))
+}
+
+fn config_entry_state_from_row(row: Row) -> Result<ConfigEntryStateFields, String> {
+  return Ok(ConfigEntryStateFields(row.get_int("revision_id")?,
+                                   row.get_string("updated_by")?,
+                                   row.get_int("updated_unix_ms")?))
+}
+
+fn config_revision_row_fields(row: Row) -> Result<ConfigRevisionRowFields, String> {
+  return Ok(ConfigRevisionRowFields(row.get_int("revision_id")?,
+                                    row.get_string("action")?,
+                                    row.get_string("description")?,
+                                    row.get_string("updated_by")?,
+                                    row.get_int("updated_unix_ms")?))
+}
+
+fn config_entry_from_row(row: Row) -> Result<ConfigEntry, String> {
+  let identity = config_identity_from_row(row)?
+  let value = config_value_from_row(row)?
+  let state = config_entry_state_from_row(row)?
+  return Ok(ConfigEntry(identity.app,
+                        identity.channel,
+                        identity.key,
+                        row.get_string("description")?,
+                        value,
+                        state.revision_id,
+                        state.updated_by,
+                        state.updated_unix_ms))
+}
+
+fn config_revision_from_row(row: Row) -> Result<ConfigRevision, String> {
+  let identity = config_identity_from_row(row)?
+  let value = config_value_from_row(row)?
+  let fields = config_revision_row_fields(row)?
+  return Ok(ConfigRevision(fields.revision_id,
+                           identity.app,
+                           identity.channel,
+                           identity.key,
+                           fields.action,
+                           fields.description,
+                           value,
+                           fields.updated_by,
+                           fields.updated_unix_ms))
+}
+
+fn config_entries_json(rows: ResultSet) -> Result<Json, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let row = rows.row(index)?
+    let entry = config_entry_from_row(row)?
+    builder = array_push(builder, entry.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn config_revisions_json(rows: ResultSet) -> Result<Json, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let row = rows.row(index)?
+    let revision = config_revision_from_row(row)?
+    builder = array_push(builder, revision.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn select_config_entry_sql() -> String {
+  return "SELECT app, channel, key, description, kind, string_value, bool_value, int_value, revision_id, updated_by, updated_unix_ms FROM config_entries WHERE app = ? AND channel = ? AND key = ?"
+}
+
+fn list_config_entries_sql() -> String {
+  return "SELECT app, channel, key, description, kind, string_value, bool_value, int_value, revision_id, updated_by, updated_unix_ms FROM config_entries WHERE app = ? AND channel = ? ORDER BY key ASC"
+}
+
+fn list_config_revisions_sql() -> String {
+  return "SELECT revision_id, app, channel, key, action, description, kind, string_value, bool_value, int_value, updated_by, updated_unix_ms FROM config_revisions WHERE app = ? AND channel = ? AND key = ? ORDER BY revision_id DESC"
+}
+
+fn latest_config_list_snapshot_sql() -> String {
+  return "SELECT revision_id FROM config_revisions WHERE app = ? AND channel = ? ORDER BY revision_id DESC LIMIT 1"
+}
+
+fn select_config_snapshot_revision_sql() -> String {
+  return "SELECT revision_id FROM config_revisions WHERE app = ? AND channel = ? AND revision_id = ? LIMIT 1"
+}
+
+fn config_snapshot_entries_sql() -> String {
+  return "SELECT r.app, r.channel, r.key, r.description, r.kind, r.string_value, r.bool_value, r.int_value, r.revision_id, r.updated_by, r.updated_unix_ms FROM config_revisions r JOIN (SELECT key, MAX(revision_id) AS revision_id FROM config_revisions WHERE app = ? AND channel = ? AND revision_id <= ? GROUP BY key) latest ON r.key = latest.key AND r.revision_id = latest.revision_id WHERE r.app = ? AND r.channel = ? AND r.action != 'delete' ORDER BY r.key ASC"
+}
+
+fn insert_config_entry_sql() -> String {
+  return "INSERT INTO config_entries(app, channel, key, description, kind, string_value, bool_value, int_value, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_config_entry_sql() -> String {
+  return "UPDATE config_entries SET description = ?, kind = ?, string_value = ?, bool_value = ?, int_value = ?, revision_id = ?, updated_by = ?, updated_unix_ms = ? WHERE app = ? AND channel = ? AND key = ?"
+}
+
+fn delete_config_entry_sql() -> String {
+  return "DELETE FROM config_entries WHERE app = ? AND channel = ? AND key = ?"
+}
+
+fn insert_config_revision_sql() -> String {
+  return "INSERT INTO config_revisions(app, channel, key, action, description, kind, string_value, bool_value, int_value, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn lookup_config_entry(tx: Transaction, app_name: String, channel: String, key: String) -> Result<ConfigLookup, String> {
+  let rows = tx.query(select_config_entry_sql(), config_key_params(app_name, channel, key))?
+  if rows.len()? == 0 {
+    return Ok(ConfigLookup(false, config_not_found_placeholder()))
+  }
+  let row = rows.row(0)?
+  return Ok(ConfigLookup(true, config_entry_from_row(row)?))
+}
+
+fn current_config_snapshot_revision_rows(rows: ResultSet) -> Result<Int, String> {
+  if rows.len()? == 0 {
+    return Ok(0)
+  }
+  let row = rows.row(0)?
+  return row.get_int("revision_id")
+}
+
+fn config_snapshot_entry_params(app_name: String,
+                                channel: String,
+                                snapshot_revision_id: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, int_value(snapshot_revision_id))
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  return array_build(builder)
+}
+
+fn config_snapshot_exists_rows(rows: ResultSet) -> Result<Bool, String> {
+  return Ok(rows.len()? > 0)
+}
+
+fn created_config_revision(app_name: String,
+                           channel: String,
+                           key: String,
+                           action: String,
+                           request: ConfigPutRequest,
+                           updated_by: String,
+                           updated_unix_ms: Int) -> ConfigRevision {
+  return ConfigRevision(0,
+                        app_name,
+                        channel,
+                        key,
+                        action,
+                        request.description,
+                        request.value,
+                        updated_by,
+                        updated_unix_ms)
+}
+
+fn deleted_config_revision(entry: ConfigEntry,
+                           updated_by: String,
+                           updated_unix_ms: Int) -> ConfigRevision {
+  return ConfigRevision(0,
+                        entry.app,
+                        entry.channel,
+                        entry.key,
+                        "delete",
+                        entry.description,
+                        entry.value,
+                        updated_by,
+                        updated_unix_ms)
+}
+
+fn entry_from_revision(revision: ConfigRevision, revision_id: Int) -> ConfigEntry {
+  return ConfigEntry(revision.app,
+                     revision.channel,
+                     revision.key,
+                     revision.description,
+                     revision.value,
+                     revision_id,
+                     revision.updated_by,
+                     revision.updated_unix_ms)
+}
+
+fn config_revision_recorded(tx: Transaction, revision: ConfigRevision) -> Result<ConfigRevision, String> {
+  tx.execute(insert_config_revision_sql(), config_revision_params(revision))?
+  let revision_id = last_insert_row_id(tx)?
+  return Ok(ConfigRevision(revision_id,
+                           revision.app,
+                           revision.channel,
+                           revision.key,
+                           revision.action,
+                           revision.description,
+                           revision.value,
+                           revision.updated_by,
+                           revision.updated_unix_ms))
+}
+
+fn config_upsert_audit_event(entry: ConfigEntry) -> AuditEvent {
+  return audit_event_record(entry.app,
+                            entry.channel,
+                            "config_upserted",
+                            entry.updated_by,
+                            0,
+                            0,
+                            "config desired state updated",
+                            object4("key",
+                                    string_value(entry.key),
+                                    "config_revision_id",
+                                    int_value(entry.revision_id),
+                                    "value_kind",
+                                    string_value(entry.value.kind),
+                                    "description",
+                                    string_value(entry.description)))
+}
+
+fn config_deleted_audit_event(revision: ConfigRevision) -> AuditEvent {
+  return audit_event_record(revision.app,
+                            revision.channel,
+                            "config_deleted",
+                            revision.updated_by,
+                            0,
+                            0,
+                            "config deleted",
+                            object4("key",
+                                    string_value(revision.key),
+                                    "config_revision_id",
+                                    int_value(revision.revision_id),
+                                    "value_kind",
+                                    string_value(revision.value.kind),
+                                    "description",
+                                    string_value(revision.description)))
+}
+
+fn config_applied_outcome(entry: ConfigEntry) -> Json {
+  return object2("kind", string_value("applied"), "entry", entry.as_json())
+}
+
+fn config_precondition_required_outcome(current_revision_id: Int) -> Json {
+  return object2("kind", string_value("precondition_required"), "current_revision_id", int_value(current_revision_id))
+}
+
+fn config_conflict_outcome(expected_revision_id: Int, current_revision_id: Int) -> Json {
+  return object3("kind",
+                 string_value("conflict"),
+                 "expected_revision_id",
+                 int_value(expected_revision_id),
+                 "current_revision_id",
+                 int_value(current_revision_id))
+}
+
+fn config_deleted_outcome(deleted_revision_id: Int) -> Json {
+  return object2("kind", string_value("deleted"), "deleted_revision_id", int_value(deleted_revision_id))
+}
+
+fn config_not_found_outcome() -> Json {
+  return object1("kind", string_value("not_found"))
+}
+
+fn validate_config_write_request(app_name: String,
+                                 channel: String,
+                                 key: String,
+                                 request: ConfigPutRequest,
+                                 updated_by: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  validate_config_key_segment(key)?
+  validate_config_put_request(request)?
+  validate_actor_segment(updated_by)?
+  return Ok(true)
+}
+
+fn validate_config_delete_request(app_name: String,
+                                  channel: String,
+                                  key: String,
+                                  updated_by: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  validate_config_key_segment(key)?
+  validate_actor_segment(updated_by)?
+  return Ok(true)
+}
+
+fn create_config_entry_outcome(tx: Transaction,
+                               app_name: String,
+                               channel: String,
+                               key: String,
+                               request: ConfigPutRequest,
+                               updated_by: String) -> Result<Json, String> {
+  let revision = created_config_revision(app_name, channel, key, "put", request, updated_by, unix_millis())
+  let recorded = config_revision_recorded(tx, revision)?
+  let entry = entry_from_revision(recorded, recorded.revision_id)
+  tx.execute(insert_config_entry_sql(), config_entry_params(entry))?
+  append_audit_event_tx(tx, config_upsert_audit_event(entry))?
+  tx.commit()?
+  return Ok(config_applied_outcome(entry))
+}
+
+fn update_config_entry_outcome(tx: Transaction,
+                               app_name: String,
+                               channel: String,
+                               key: String,
+                               request: ConfigPutRequest,
+                               updated_by: String) -> Result<Json, String> {
+  let revision = created_config_revision(app_name, channel, key, "put", request, updated_by, unix_millis())
+  let recorded = config_revision_recorded(tx, revision)?
+  let entry = entry_from_revision(recorded, recorded.revision_id)
+  tx.execute(update_config_entry_sql(), config_entry_update_params(entry))?
+  append_audit_event_tx(tx, config_upsert_audit_event(entry))?
+  tx.commit()?
+  return Ok(config_applied_outcome(entry))
+}
+
+fn write_missing_config_entry(tx: Transaction,
+                              app_name: String,
+                              channel: String,
+                              key: String,
+                              request: ConfigPutRequest,
+                              expected_revision_id: Int,
+                              updated_by: String) -> Result<Json, String> {
+  if expected_revision_id != -1 {
+    return Ok(config_conflict_outcome(expected_revision_id, 0))
+  }
+  return create_config_entry_outcome(tx, app_name, channel, key, request, updated_by)
+}
+
+fn write_existing_config_entry(tx: Transaction,
+                               existing: ConfigEntry,
+                               request: ConfigPutRequest,
+                               expected_revision_id: Int,
+                               updated_by: String) -> Result<Json, String> {
+  if expected_revision_id == -1 {
+    return Ok(config_precondition_required_outcome(existing.revision_id))
+  }
+  if expected_revision_id != existing.revision_id {
+    return Ok(config_conflict_outcome(expected_revision_id, existing.revision_id))
+  }
+  return update_config_entry_outcome(tx, existing.app, existing.channel, existing.key, request, updated_by)
+}
+
+fn write_config_entry(app_name: String,
+                      channel: String,
+                      key: String,
+                      request: ConfigPutRequest,
+                      expected_revision_id: Int,
+                      updated_by: String) -> Result<Json, String> {
+  validate_config_write_request(app_name, channel, key, request, updated_by)?
+  let conn = open(control_plane_store_path())?
+  let tx = conn.begin_transaction()?
+  let lookup = lookup_config_entry(tx, app_name, channel, key)?
+  if !lookup.found {
+    return write_missing_config_entry(tx, app_name, channel, key, request, expected_revision_id, updated_by)
+  }
+  return write_existing_config_entry(tx, lookup.entry, request, expected_revision_id, updated_by)
+}
+
+fn delete_existing_config_entry(tx: Transaction,
+                                existing: ConfigEntry,
+                                expected_revision_id: Int,
+                                updated_by: String) -> Result<Json, String> {
+  if expected_revision_id == -1 {
+    return Ok(config_precondition_required_outcome(existing.revision_id))
+  }
+  if expected_revision_id != existing.revision_id {
+    return Ok(config_conflict_outcome(expected_revision_id, existing.revision_id))
+  }
+  let revision = deleted_config_revision(existing, updated_by, unix_millis())
+  let recorded = config_revision_recorded(tx, revision)?
+  tx.execute(delete_config_entry_sql(), config_key_params(existing.app, existing.channel, existing.key))?
+  append_audit_event_tx(tx, config_deleted_audit_event(recorded))?
+  tx.commit()?
+  return Ok(config_deleted_outcome(recorded.revision_id))
+}
+
+fn delete_config_entry(app_name: String,
+                       channel: String,
+                       key: String,
+                       expected_revision_id: Int,
+                       updated_by: String) -> Result<Json, String> {
+  validate_config_delete_request(app_name, channel, key, updated_by)?
+  let conn = open(control_plane_store_path())?
+  let tx = conn.begin_transaction()?
+  let lookup = lookup_config_entry(tx, app_name, channel, key)?
+  if !lookup.found {
+    return Ok(config_not_found_outcome())
+  }
+  return delete_existing_config_entry(tx, lookup.entry, expected_revision_id, updated_by)
+}
+
+fn load_config_entry(app_name: String, channel: String, key: String) -> Result<ConfigEntry, String> {
+  let conn = open(control_plane_store_path())?
+  let rows = conn.query(select_config_entry_sql(), config_key_params(app_name, channel, key))?
+  if rows.len()? == 0 {
+    return Err("config entry not found")
+  }
+  let row = rows.row(0)?
+  return config_entry_from_row(row)
+}
+
+fn load_config_entries(app_name: String, channel: String) -> Result<Json, String> {
+  let conn = open(control_plane_store_path())?
+  let rows = conn.query(list_config_entries_sql(), two_string_params(app_name, channel))?
+  return config_entries_json(rows)
+}
+
+fn current_config_snapshot_revision(app_name: String, channel: String) -> Result<Int, String> {
+  let conn = open(control_plane_store_path())?
+  let rows = conn.query(latest_config_list_snapshot_sql(), two_string_params(app_name, channel))?
+  return current_config_snapshot_revision_rows(rows)
+}
+
+fn config_snapshot_exists(app_name: String,
+                          channel: String,
+                          snapshot_revision_id: Int) -> Result<Bool, String> {
+  let conn = open(control_plane_store_path())?
+  let rows = conn.query(select_config_snapshot_revision_sql(), three_release_params(app_name, channel, snapshot_revision_id))?
+  return config_snapshot_exists_rows(rows)
+}
+
+fn load_config_list_state(app_name: String, channel: String) -> Result<ConfigListState, String> {
+  let entries = load_config_entries(app_name, channel)?
+  let snapshot_revision_id = current_config_snapshot_revision(app_name, channel)?
+  return Ok(ConfigListState(snapshot_revision_id, entries))
+}
+
+fn empty_config_entries() -> Json {
+  return array_build(array_builder())
+}
+
+fn config_snapshot_not_found() -> Result<ConfigListState, String> {
+  return Err("config snapshot not found")
+}
+
+fn missing_config_snapshot_exists() -> Result<Bool, String> {
+  return Err("config snapshot not found")
+}
+
+fn empty_config_snapshot_state(current_snapshot_revision_id: Int) -> Result<ConfigListState, String> {
+  if current_snapshot_revision_id == 0 {
+    return Ok(ConfigListState(0, empty_config_entries()))
+  }
+  return config_snapshot_not_found()
+}
+
+fn require_config_snapshot_exists(app_name: String,
+                                  channel: String,
+                                  snapshot_revision_id: Int) -> Result<Bool, String> {
+  let exists = config_snapshot_exists(app_name, channel, snapshot_revision_id)?
+  if !exists {
+    return missing_config_snapshot_exists()
+  }
+  return Ok(true)
+}
+
+fn load_recorded_config_snapshot_state(app_name: String,
+                                       channel: String,
+                                       snapshot_revision_id: Int) -> Result<ConfigListState, String> {
+  require_config_snapshot_exists(app_name, channel, snapshot_revision_id)?
+  let conn = open(control_plane_store_path())?
+  let rows = conn.query(config_snapshot_entries_sql(), config_snapshot_entry_params(app_name, channel, snapshot_revision_id))?
+  let entries = config_entries_json(rows)?
+  return Ok(ConfigListState(snapshot_revision_id, entries))
+}
+
+fn load_config_snapshot_state(app_name: String,
+                              channel: String,
+                              snapshot_revision_id: Int) -> Result<ConfigListState, String> {
+  if snapshot_revision_id == 0 {
+    let current_snapshot_revision_id = current_config_snapshot_revision(app_name, channel)?
+    return empty_config_snapshot_state(current_snapshot_revision_id)
+  }
+  return load_recorded_config_snapshot_state(app_name, channel, snapshot_revision_id)
+}
+
+fn load_config_history(app_name: String, channel: String, key: String) -> Result<Json, String> {
+  let conn = open(control_plane_store_path())?
+  let rows = conn.query(list_config_revisions_sql(), config_key_params(app_name, channel, key))?
+  return config_revisions_json(rows)
+}

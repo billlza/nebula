@@ -1,0 +1,8 @@
+id = "TST-252-nebula-ui-preview-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY update \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" && $NEBULA_BINARY check \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" && $NEBULA_BINARY run \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["nebula-ui.tree.v1", "\"component\":\"Window\"", "\"action\":\"targets.refresh\"", "Window title=Local Ops", "Button text=Refresh action=targets.refresh", "nebula-ui-action-dispatched=targets.refresh"]

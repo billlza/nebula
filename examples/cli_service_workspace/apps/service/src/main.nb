@@ -1,0 +1,60 @@
+module main
+import core::app
+import core::validate
+import service::config
+import service::drain
+import service::server
+import server
+import startup
+
+fn runtime_failed(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn preflight_failed(msg: String) -> Int {
+  print(text_concat("startup preflight failed: ", msg))
+  return 1
+}
+
+async fn run_service(cfg: ServiceConfig, drain_cfg: DrainConfig) -> Int {
+  match await bind_listener(cfg) {
+    Ok(listener) => {
+      match await serve_requests_result_until_drained(listener, cfg, drain_cfg, handle_request) {
+        Ok(_) => {
+          return 0
+        }
+        Err(msg) => {
+          return runtime_failed(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return runtime_failed(msg)
+    }
+  }
+}
+
+async fn main() -> Int {
+  match preflight() {
+    Ok(_) => {}
+    Err(msg) => {
+      return preflight_failed(msg)
+    }
+  }
+  match config_from_env(service_name(), default_port()) {
+    Ok(cfg) => {
+      match from_env() {
+        Ok(drain_cfg) => {
+          return await run_service(cfg, drain_cfg)
+        }
+        Err(msg) => {
+          return runtime_failed(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return runtime_failed(msg)
+    }
+  }
+}

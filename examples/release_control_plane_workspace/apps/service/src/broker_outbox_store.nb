@@ -1,0 +1,700 @@
+module broker_outbox_store
+import core::broker_contracts
+import core::policy
+import core::validate
+import core::workflow_contracts
+import db
+import jobs_pkg::contracts
+import jobs_pkg::outbox_state
+import std::json
+import std::result
+import std::time
+import store
+
+struct BrokerOutboxLookup {
+  found: Bool
+  message: BrokerOutboxMessage
+}
+
+struct BrokerMessageScope {
+  app: String
+  channel: String
+}
+
+struct BrokerRowCore {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+  payload: Json
+  status: String
+  attempt: Int
+}
+
+struct BrokerRowIdentity {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+}
+
+struct BrokerRowState {
+  payload: Json
+  status: String
+  attempt: Int
+}
+
+struct BrokerRowMeta {
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+struct BrokerRowLease {
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+}
+
+struct BrokerRowTiming {
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+fn broker_outbox_store_path() -> String {
+  return release_store_path()
+}
+
+fn open_broker_outbox_tx() -> Result<Transaction, String> {
+  let conn = open(broker_outbox_store_path())?
+  return conn.begin_transaction()
+}
+
+fn broker_outbox_migrations() -> Json {
+  let builder = array_builder()
+  let create_outbox_sql = "CREATE TABLE IF NOT EXISTS broker_outbox_messages (message_id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, key TEXT NOT NULL, dedupe_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL, max_attempts INTEGER NOT NULL, lease_id TEXT NOT NULL, worker_id TEXT NOT NULL, lease_expires_unix_ms INTEGER NOT NULL, next_attempt_unix_ms INTEGER NOT NULL, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL, result_message TEXT NOT NULL)"
+  builder = array_push(builder, migration(13, "create_broker_outbox_messages", create_outbox_sql))
+  return array_build(builder)
+}
+
+fn initialize_broker_outbox_store() -> Result<Bool, String> {
+  let conn = open(broker_outbox_store_path())?
+  conn.run_migrations(broker_outbox_migrations())?
+  return Ok(true)
+}
+
+fn broker_outbox_columns_sql() -> String {
+  return "message_id, topic, key, dedupe_key, payload, status, attempt, max_attempts, lease_id, worker_id, lease_expires_unix_ms, next_attempt_unix_ms, created_unix_ms, updated_unix_ms, result_message"
+}
+
+fn select_broker_message_sql() -> String {
+  return text_concat("SELECT ", text_concat(broker_outbox_columns_sql(), " FROM broker_outbox_messages WHERE message_id = ?"))
+}
+
+fn claim_any_broker_message_sql() -> String {
+  return text_concat("SELECT ", text_concat(broker_outbox_columns_sql(), " FROM broker_outbox_messages WHERE status = 'pending' AND next_attempt_unix_ms <= ? ORDER BY created_unix_ms ASC, message_id ASC LIMIT 1"))
+}
+
+fn claim_topic_broker_message_sql() -> String {
+  return text_concat("SELECT ", text_concat(broker_outbox_columns_sql(), " FROM broker_outbox_messages WHERE status = 'pending' AND next_attempt_unix_ms <= ? AND topic = ? ORDER BY created_unix_ms ASC, message_id ASC LIMIT 1"))
+}
+
+fn claim_any_broker_messages_sql() -> String {
+  return text_concat("SELECT ", text_concat(broker_outbox_columns_sql(), " FROM broker_outbox_messages WHERE status = 'pending' AND next_attempt_unix_ms <= ? ORDER BY created_unix_ms ASC, message_id ASC"))
+}
+
+fn claim_topic_broker_messages_sql() -> String {
+  return text_concat("SELECT ", text_concat(broker_outbox_columns_sql(), " FROM broker_outbox_messages WHERE status = 'pending' AND next_attempt_unix_ms <= ? AND topic = ? ORDER BY created_unix_ms ASC, message_id ASC"))
+}
+
+fn insert_broker_message_sql() -> String {
+  return "INSERT OR IGNORE INTO broker_outbox_messages(topic, key, dedupe_key, payload, status, attempt, max_attempts, lease_id, worker_id, lease_expires_unix_ms, next_attempt_unix_ms, created_unix_ms, updated_unix_ms, result_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_broker_message_sql() -> String {
+  return "UPDATE broker_outbox_messages SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, next_attempt_unix_ms = ?, updated_unix_ms = ?, result_message = ? WHERE message_id = ?"
+}
+
+fn complete_broker_message_sql() -> String {
+  return "UPDATE broker_outbox_messages SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, next_attempt_unix_ms = ?, updated_unix_ms = ?, result_message = ? WHERE message_id = ? AND status = 'leased' AND worker_id = ? AND lease_id = ?"
+}
+
+fn lease_broker_message_sql() -> String {
+  return "UPDATE broker_outbox_messages SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, next_attempt_unix_ms = ?, updated_unix_ms = ?, result_message = ? WHERE message_id = ? AND status = 'pending' AND attempt = ? AND next_attempt_unix_ms <= ?"
+}
+
+fn requeue_expired_broker_leases_sql() -> String {
+  return "UPDATE broker_outbox_messages SET status = 'pending', lease_id = '', worker_id = '', lease_expires_unix_ms = 0, updated_unix_ms = ? WHERE status = 'leased' AND lease_expires_unix_ms > 0 AND lease_expires_unix_ms <= ?"
+}
+
+fn broker_one_int_param(value: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(value))
+  return array_build(builder)
+}
+
+fn claim_any_params(now_unix_ms: Int) -> Json {
+  return broker_one_int_param(now_unix_ms)
+}
+
+fn claim_topic_params(now_unix_ms: Int, topic: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, string_value(topic))
+  return array_build(builder)
+}
+
+fn requeue_expired_params(now_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, int_value(now_unix_ms))
+  return array_build(builder)
+}
+
+fn broker_row_identity(row: Row) -> Result<BrokerRowIdentity, String> {
+  return Ok(BrokerRowIdentity(row.get_int("message_id")?,
+                              row.get_string("topic")?,
+                              row.get_string("key")?,
+                              row.get_string("dedupe_key")?))
+}
+
+fn broker_row_state(row: Row) -> Result<BrokerRowState, String> {
+  return Ok(BrokerRowState(parse(row.get_string("payload")?)?,
+                           row.get_string("status")?,
+                           row.get_int("attempt")?))
+}
+
+fn broker_row_core(row: Row) -> Result<BrokerRowCore, String> {
+  let identity = broker_row_identity(row)?
+  let state = broker_row_state(row)?
+  return Ok(BrokerRowCore(identity.message_id,
+                          identity.topic,
+                          identity.key,
+                          identity.dedupe_key,
+                          state.payload,
+                          state.status,
+                          state.attempt))
+}
+
+fn broker_row_lease(row: Row) -> Result<BrokerRowLease, String> {
+  return Ok(BrokerRowLease(row.get_int("max_attempts")?,
+                           row.get_string("lease_id")?,
+                           row.get_string("worker_id")?,
+                           row.get_int("lease_expires_unix_ms")?))
+}
+
+fn broker_row_timing(row: Row) -> Result<BrokerRowTiming, String> {
+  return Ok(BrokerRowTiming(row.get_int("next_attempt_unix_ms")?,
+                            row.get_int("created_unix_ms")?,
+                            row.get_int("updated_unix_ms")?,
+                            row.get_string("result_message")?))
+}
+
+fn broker_row_meta(row: Row) -> Result<BrokerRowMeta, String> {
+  let lease = broker_row_lease(row)?
+  let timing = broker_row_timing(row)?
+  return Ok(BrokerRowMeta(lease.max_attempts,
+                          lease.lease_id,
+                          lease.worker_id,
+                          lease.lease_expires_unix_ms,
+                          timing.next_attempt_unix_ms,
+                          timing.created_unix_ms,
+                          timing.updated_unix_ms,
+                          timing.result_message))
+}
+
+fn broker_message_from_parts(core: BrokerRowCore, meta: BrokerRowMeta) -> BrokerOutboxMessage {
+  return BrokerOutboxMessage(core.message_id,
+                             core.topic,
+                             core.key,
+                             core.dedupe_key,
+                             core.payload,
+                             core.status,
+                             core.attempt,
+                             meta.max_attempts,
+                             meta.lease_id,
+                             meta.worker_id,
+                             meta.lease_expires_unix_ms,
+                             meta.next_attempt_unix_ms,
+                             meta.created_unix_ms,
+                             meta.updated_unix_ms,
+                             meta.result_message)
+}
+
+fn broker_message_from_row(row: Row) -> Result<BrokerOutboxMessage, String> {
+  let core = broker_row_core(row)?
+  let meta = broker_row_meta(row)?
+  return Ok(broker_message_from_parts(core, meta))
+}
+
+fn broker_insert_core_params(builder: JsonArrayBuilder, message: BrokerOutboxMessage) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(message.topic))
+  builder = array_push(builder, string_value(message.key))
+  builder = array_push(builder, string_value(message.dedupe_key))
+  builder = array_push(builder, string_value(stringify(message.payload)))
+  builder = array_push(builder, string_value(message.status))
+  builder = array_push(builder, int_value(message.attempt))
+  return builder
+}
+
+fn broker_insert_meta_params(builder: JsonArrayBuilder, message: BrokerOutboxMessage) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(message.max_attempts))
+  builder = array_push(builder, string_value(message.lease_id))
+  builder = array_push(builder, string_value(message.worker_id))
+  builder = array_push(builder, int_value(message.lease_expires_unix_ms))
+  builder = array_push(builder, int_value(message.next_attempt_unix_ms))
+  builder = array_push(builder, int_value(message.created_unix_ms))
+  builder = array_push(builder, int_value(message.updated_unix_ms))
+  builder = array_push(builder, string_value(message.result_message))
+  return builder
+}
+
+fn broker_message_insert_params(message: BrokerOutboxMessage) -> Json {
+  let builder = array_builder()
+  builder = broker_insert_core_params(builder, message)
+  builder = broker_insert_meta_params(builder, message)
+  return array_build(builder)
+}
+
+fn broker_update_state_params(builder: JsonArrayBuilder, message: BrokerOutboxMessage) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(message.status))
+  builder = array_push(builder, int_value(message.attempt))
+  builder = array_push(builder, string_value(message.lease_id))
+  builder = array_push(builder, string_value(message.worker_id))
+  builder = array_push(builder, int_value(message.lease_expires_unix_ms))
+  builder = array_push(builder, int_value(message.next_attempt_unix_ms))
+  builder = array_push(builder, int_value(message.updated_unix_ms))
+  builder = array_push(builder, string_value(message.result_message))
+  return builder
+}
+
+fn broker_message_update_params(message: BrokerOutboxMessage) -> Json {
+  let builder = array_builder()
+  builder = broker_update_state_params(builder, message)
+  builder = array_push(builder, int_value(message.message_id))
+  return array_build(builder)
+}
+
+fn broker_message_complete_params(message: BrokerOutboxMessage, worker_id: String, lease_id: String) -> Json {
+  let builder = array_builder()
+  builder = broker_update_state_params(builder, message)
+  builder = array_push(builder, int_value(message.message_id))
+  builder = array_push(builder, string_value(worker_id))
+  builder = array_push(builder, string_value(lease_id))
+  return array_build(builder)
+}
+
+fn broker_message_lease_params(message: BrokerOutboxMessage,
+                               expected_attempt: Int,
+                               now_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = broker_update_state_params(builder, message)
+  builder = array_push(builder, int_value(message.message_id))
+  builder = array_push(builder, int_value(expected_attempt))
+  builder = array_push(builder, int_value(now_unix_ms))
+  return array_build(builder)
+}
+
+fn broker_message_lookup_tx(tx: Transaction, message_id: Int) -> Result<BrokerOutboxLookup, String> {
+  let rows = tx.query(select_broker_message_sql(), broker_one_int_param(message_id))?
+  if rows.len()? == 0 {
+    return Ok(BrokerOutboxLookup(false, idle_broker_outbox_message()))
+  }
+  return Ok(BrokerOutboxLookup(true, broker_message_from_row(rows.row(0)?)?))
+}
+
+fn workflow_run_outbox_payload(run: WorkflowRun) -> Json {
+  return object6("app",
+                 string_value(run.app),
+                 "channel",
+                 string_value(run.channel),
+                 "run_id",
+                 int_value(run.run_id),
+                 "event_id",
+                 string_value(run.event_id),
+                 "event_kind",
+                 string_value(run.event_kind),
+                 "release_revision_id",
+                 int_value(run.release_revision_id))
+}
+
+fn workflow_run_broker_key(run: WorkflowRun) -> String {
+  return text_concat3(run.app, "/", text_concat(run.channel, text_concat("/", int_text(run.run_id))))
+}
+
+fn workflow_run_broker_dedupe_key(run: WorkflowRun) -> String {
+  return text_concat("workflow-run-created:", int_text(run.run_id))
+}
+
+fn workflow_run_created_broker_message(run: WorkflowRun) -> BrokerOutboxMessage {
+  let now_ms = unix_millis()
+  return BrokerOutboxMessage(0,
+                             "workflow.run.created",
+                             workflow_run_broker_key(run),
+                             workflow_run_broker_dedupe_key(run),
+                             workflow_run_outbox_payload(run),
+                             "pending",
+                             0,
+                             3,
+                             "",
+                             "",
+                             0,
+                             0,
+                             now_ms,
+                             now_ms,
+                             "")
+}
+
+fn jobs_outbox_message(value: BrokerOutboxMessage) -> OutboxMessage {
+  return OutboxMessage(value.message_id,
+                       value.topic,
+                       value.key,
+                       value.dedupe_key,
+                       value.payload,
+                       value.status,
+                       value.attempt,
+                       value.max_attempts,
+                       value.lease_id,
+                       value.worker_id,
+                       value.lease_expires_unix_ms,
+                       value.next_attempt_unix_ms,
+                       value.created_unix_ms,
+                       value.updated_unix_ms,
+                       value.result_message)
+}
+
+fn broker_outbox_message_from_jobs(value: OutboxMessage) -> BrokerOutboxMessage {
+  return BrokerOutboxMessage(value.message_id,
+                             value.topic,
+                             value.key,
+                             value.dedupe_key,
+                             value.payload,
+                             value.status,
+                             value.attempt,
+                             value.max_attempts,
+                             value.lease_id,
+                             value.worker_id,
+                             value.lease_expires_unix_ms,
+                             value.next_attempt_unix_ms,
+                             value.created_unix_ms,
+                             value.updated_unix_ms,
+                             value.result_message)
+}
+
+fn insert_broker_outbox_message_tx(tx: Transaction, message: BrokerOutboxMessage) -> Result<Bool, String> {
+  validate_broker_outbox_message(message)?
+  tx.execute(insert_broker_message_sql(), broker_message_insert_params(message))?
+  return Ok(true)
+}
+
+fn insert_workflow_run_created_outbox_tx(tx: Transaction, run: WorkflowRun) -> Result<Bool, String> {
+  return insert_broker_outbox_message_tx(tx, workflow_run_created_broker_message(run))
+}
+
+fn claim_query_sql(topic: String) -> String {
+  if topic == "" {
+    return claim_any_broker_message_sql()
+  }
+  return claim_topic_broker_message_sql()
+}
+
+fn claim_query_params(now_unix_ms: Int, topic: String) -> Json {
+  if topic == "" {
+    return claim_any_params(now_unix_ms)
+  }
+  return claim_topic_params(now_unix_ms, topic)
+}
+
+fn due_broker_message_lookup_tx(tx: Transaction, request: BrokerOutboxClaimRequest) -> Result<BrokerOutboxLookup, String> {
+  let rows = tx.query(claim_query_sql(request.topic), claim_query_params(request.now_unix_ms, request.topic))?
+  if rows.len()? == 0 {
+    return Ok(BrokerOutboxLookup(false, idle_broker_outbox_message()))
+  }
+  return Ok(BrokerOutboxLookup(true, broker_message_from_row(rows.row(0)?)?))
+}
+
+fn claim_candidates_sql(topic: String) -> String {
+  if topic == "" {
+    return claim_any_broker_messages_sql()
+  }
+  return claim_topic_broker_messages_sql()
+}
+
+fn broker_message_scope(message: BrokerOutboxMessage) -> Result<BrokerMessageScope, String> {
+  return Ok(BrokerMessageScope(get_string(message.payload, "app")?,
+                               get_string(message.payload, "channel")?))
+}
+
+fn broker_message_scope_matches(message: BrokerOutboxMessage,
+                                app_scope: Json,
+                                channel_scope: Json) -> Result<Bool, String> {
+  let scope = broker_message_scope(message)?
+  if !scope_allows_app(app_scope, scope.app)? {
+    return Ok(false)
+  }
+  return scope_allows_channel(channel_scope, scope.channel)
+}
+
+fn broker_message_claim_scope_allowed(message: BrokerOutboxMessage,
+                                      app_scope: Json,
+                                      channel_scope: Json) -> Bool {
+  match broker_message_scope_matches(message, app_scope, channel_scope) {
+    Ok(allowed) => { return allowed }
+    Err(_) => { return false }
+  }
+}
+
+fn scoped_broker_message_lookup_from_rows(rows: ResultSet,
+                                          app_scope: Json,
+                                          channel_scope: Json) -> Result<BrokerOutboxLookup, String> {
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let message = broker_message_from_row(rows.row(index)?)?
+    if broker_message_claim_scope_allowed(message, app_scope, channel_scope) {
+      return Ok(BrokerOutboxLookup(true, message))
+    }
+    index += 1
+  }
+  return Ok(BrokerOutboxLookup(false, idle_broker_outbox_message()))
+}
+
+fn due_broker_message_lookup_scoped_tx(tx: Transaction,
+                                       request: BrokerOutboxClaimRequest,
+                                       app_scope: Json,
+                                       channel_scope: Json) -> Result<BrokerOutboxLookup, String> {
+  let rows = tx.query(claim_candidates_sql(request.topic), claim_query_params(request.now_unix_ms, request.topic))?
+  return scoped_broker_message_lookup_from_rows(rows, app_scope, channel_scope)
+}
+
+fn leased_broker_message(message: BrokerOutboxMessage,
+                         worker_id: String,
+                         now_unix_ms: Int) -> BrokerOutboxMessage {
+  return broker_outbox_message_from_jobs(leased_outbox_message(jobs_outbox_message(message),
+                                                               worker_id,
+                                                               now_unix_ms,
+                                                               30000))
+}
+
+fn claimed_broker_outbox_envelope(message: BrokerOutboxMessage) -> BrokerOutboxClaimEnvelope {
+  return BrokerOutboxClaimEnvelope("claimed", message, "", 0)
+}
+
+fn empty_broker_outbox_envelope() -> BrokerOutboxClaimEnvelope {
+  return BrokerOutboxClaimEnvelope("empty", idle_broker_outbox_message(), "", 0)
+}
+
+fn confirmed_leased_message_tx(tx: Transaction,
+                               leased: BrokerOutboxMessage) -> Result<BrokerOutboxClaimEnvelope, String> {
+  let lookup = broker_message_lookup_tx(tx, leased.message_id)?
+  if lookup.found && lookup.message.lease_id == leased.lease_id {
+    return Ok(claimed_broker_outbox_envelope(lookup.message))
+  }
+  return Ok(empty_broker_outbox_envelope())
+}
+
+fn lease_broker_message_tx(tx: Transaction,
+                           message: BrokerOutboxMessage,
+                           request: BrokerOutboxClaimRequest) -> Result<BrokerOutboxClaimEnvelope, String> {
+  let leased = leased_broker_message(message, request.worker_id, request.now_unix_ms)
+  let changed = tx.execute(lease_broker_message_sql(),
+                           broker_message_lease_params(leased, message.attempt, request.now_unix_ms))?
+  if changed != 1 {
+    return Ok(empty_broker_outbox_envelope())
+  }
+  return confirmed_leased_message_tx(tx, leased)
+}
+
+fn requeue_expired_broker_leases_tx(tx: Transaction, now_unix_ms: Int) -> Result<Bool, String> {
+  tx.execute(requeue_expired_broker_leases_sql(), requeue_expired_params(now_unix_ms))?
+  return Ok(true)
+}
+
+fn claim_broker_outbox_message_tx(tx: Transaction,
+                                  request: BrokerOutboxClaimRequest) -> Result<BrokerOutboxClaimEnvelope, String> {
+  requeue_expired_broker_leases_tx(tx, request.now_unix_ms)?
+  let lookup = due_broker_message_lookup_tx(tx, request)?
+  if !lookup.found {
+    return Ok(empty_broker_outbox_envelope())
+  }
+  return lease_broker_message_tx(tx, lookup.message, request)
+}
+
+fn claim_broker_outbox_message(request: BrokerOutboxClaimRequest) -> Result<BrokerOutboxClaimEnvelope, String> {
+  validate_broker_outbox_claim_request(request)?
+  let tx = open_broker_outbox_tx()?
+  let envelope = claim_broker_outbox_message_tx(tx, request)?
+  tx.commit()?
+  return Ok(envelope)
+}
+
+fn validate_scoped_broker_outbox_claim_request(request: BrokerOutboxClaimRequest,
+                                               app_scope: Json,
+                                               channel_scope: Json) -> Result<Bool, String> {
+  validate_broker_outbox_claim_request(request)?
+  validate_app_scope(app_scope)?
+  validate_channel_scope(channel_scope)?
+  return Ok(true)
+}
+
+fn claim_broker_outbox_message_scoped_tx(tx: Transaction,
+                                         request: BrokerOutboxClaimRequest,
+                                         app_scope: Json,
+                                         channel_scope: Json) -> Result<BrokerOutboxClaimEnvelope, String> {
+  requeue_expired_broker_leases_tx(tx, request.now_unix_ms)?
+  let lookup = due_broker_message_lookup_scoped_tx(tx, request, app_scope, channel_scope)?
+  if !lookup.found {
+    return Ok(empty_broker_outbox_envelope())
+  }
+  return lease_broker_message_tx(tx, lookup.message, request)
+}
+
+fn claim_broker_outbox_message_scoped(request: BrokerOutboxClaimRequest,
+                                      app_scope: Json,
+                                      channel_scope: Json) -> Result<BrokerOutboxClaimEnvelope, String> {
+  validate_scoped_broker_outbox_claim_request(request, app_scope, channel_scope)?
+  let tx = open_broker_outbox_tx()?
+  let envelope = claim_broker_outbox_message_scoped_tx(tx, request, app_scope, channel_scope)?
+  tx.commit()?
+  return Ok(envelope)
+}
+
+fn require_broker_message_tx(tx: Transaction, message_id: Int) -> Result<BrokerOutboxMessage, String> {
+  let lookup = broker_message_lookup_tx(tx, message_id)?
+  if !lookup.found {
+    return Err("broker outbox message not found")
+  }
+  return Ok(lookup.message)
+}
+
+fn completed_broker_message(message: BrokerOutboxMessage,
+                            request: BrokerOutboxCompleteRequest,
+                            now_unix_ms: Int) -> Result<BrokerOutboxMessage, String> {
+  let updated = completed_outbox_message(jobs_outbox_message(message),
+                                         OutboxCompleteRequest(request.worker_id,
+                                                               request.lease_id,
+                                                               request.status,
+                                                               request.result_message,
+                                                               request.next_attempt_unix_ms,
+                                                               0),
+                                         now_unix_ms)?
+  return Ok(broker_outbox_message_from_jobs(updated))
+}
+
+fn validate_complete_broker_outbox_call(message_id: Int,
+                                        request: BrokerOutboxCompleteRequest) -> Result<Bool, String> {
+  validate_broker_outbox_complete_request(request)?
+  return validate_complete_outbox_call(message_id,
+                                       OutboxCompleteRequest(request.worker_id,
+                                                             request.lease_id,
+                                                             request.status,
+                                                             request.result_message,
+                                                             request.next_attempt_unix_ms,
+                                                             0))
+}
+
+fn complete_broker_outbox_message_tx(tx: Transaction,
+                                     message_id: Int,
+                                     request: BrokerOutboxCompleteRequest) -> Result<BrokerOutboxMessage, String> {
+  let current = require_broker_message_tx(tx, message_id)?
+  return complete_loaded_broker_outbox_message_tx(tx, current, request)
+}
+
+fn complete_loaded_broker_outbox_message_tx(tx: Transaction,
+                                            current: BrokerOutboxMessage,
+                                            request: BrokerOutboxCompleteRequest) -> Result<BrokerOutboxMessage, String> {
+  let updated = completed_broker_message(current, request, unix_millis())?
+  let changed = tx.execute(complete_broker_message_sql(),
+                           broker_message_complete_params(updated, request.worker_id, request.lease_id))?
+  if changed != 1 {
+    return Err("broker outbox message is not leased")
+  }
+  return Ok(updated)
+}
+
+fn complete_broker_outbox_message(message_id: Int,
+                                  request: BrokerOutboxCompleteRequest) -> Result<BrokerOutboxMessage, String> {
+  validate_complete_broker_outbox_call(message_id, request)?
+  let tx = open_broker_outbox_tx()?
+  let updated = complete_broker_outbox_message_tx(tx, message_id, request)?
+  tx.commit()?
+  return Ok(updated)
+}
+
+fn load_broker_outbox_message(message_id: Int) -> Result<BrokerOutboxMessage, String> {
+  if message_id <= 0 {
+    return Err("broker outbox message_id must be positive")
+  }
+  let tx = open_broker_outbox_tx()?
+  let message = require_broker_message_tx(tx, message_id)?
+  tx.commit()?
+  return Ok(message)
+}
+
+fn require_scoped_broker_message_tx(tx: Transaction,
+                                    message_id: Int,
+                                    app_scope: Json,
+                                    channel_scope: Json) -> Result<BrokerOutboxMessage, String> {
+  let message = require_broker_message_tx(tx, message_id)?
+  match broker_message_scope_matches(message, app_scope, channel_scope) {
+    Ok(allowed) => {
+      if allowed {
+        return Ok(message)
+      }
+      return Err("broker outbox message not found")
+    }
+    Err(_) => { return Err("broker outbox message not found") }
+  }
+}
+
+fn load_broker_outbox_message_scoped(message_id: Int,
+                                     app_scope: Json,
+                                     channel_scope: Json) -> Result<BrokerOutboxMessage, String> {
+  if message_id <= 0 {
+    return Err("broker outbox message_id must be positive")
+  }
+  validate_app_scope(app_scope)?
+  validate_channel_scope(channel_scope)?
+  let tx = open_broker_outbox_tx()?
+  let message = require_scoped_broker_message_tx(tx, message_id, app_scope, channel_scope)?
+  tx.commit()?
+  return Ok(message)
+}
+
+fn validate_scoped_complete_broker_outbox_call(message_id: Int,
+                                               request: BrokerOutboxCompleteRequest,
+                                               app_scope: Json,
+                                               channel_scope: Json) -> Result<Bool, String> {
+  validate_complete_broker_outbox_call(message_id, request)?
+  validate_app_scope(app_scope)?
+  validate_channel_scope(channel_scope)?
+  return Ok(true)
+}
+
+fn complete_broker_outbox_message_scoped_tx(tx: Transaction,
+                                            message_id: Int,
+                                            request: BrokerOutboxCompleteRequest,
+                                            app_scope: Json,
+                                            channel_scope: Json) -> Result<BrokerOutboxMessage, String> {
+  let current = require_scoped_broker_message_tx(tx, message_id, app_scope, channel_scope)?
+  return complete_loaded_broker_outbox_message_tx(tx, current, request)
+}
+
+fn complete_broker_outbox_message_scoped(message_id: Int,
+                                         request: BrokerOutboxCompleteRequest,
+                                         app_scope: Json,
+                                         channel_scope: Json) -> Result<BrokerOutboxMessage, String> {
+  validate_scoped_complete_broker_outbox_call(message_id, request, app_scope, channel_scope)?
+  let tx = open_broker_outbox_tx()?
+  let updated = complete_broker_outbox_message_scoped_tx(tx, message_id, request, app_scope, channel_scope)?
+  tx.commit()?
+  return Ok(updated)
+}

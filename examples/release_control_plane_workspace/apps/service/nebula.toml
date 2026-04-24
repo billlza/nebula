@@ -1,0 +1,17 @@
+schema_version = 1
+
+[package]
+name = "release-control-plane-service"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+service = { installed = "nebula-service" }
+observe = { installed = "nebula-observe" }
+core = { path = "../../packages/core" }
+db_sqlite = { path = "../../../../official/nebula-db-sqlite" }
+db_postgres = { path = "../../../../official/nebula-db-postgres" }
+crypto = { path = "../../../../official/nebula-crypto" }
+auth_pkg = { path = "../../../../official/nebula-auth" }
+jobs_pkg = { path = "../../../../official/nebula-jobs" }

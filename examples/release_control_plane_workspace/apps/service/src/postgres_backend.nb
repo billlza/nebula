@@ -1,0 +1,122 @@
+module postgres_backend
+import db_postgres::postgres
+import std::env
+import std::fs
+import std::json
+import std::result
+
+struct PostgresConnection {
+  value: Connection
+}
+
+struct PostgresTransaction {
+  value: Transaction
+}
+
+struct PostgresResultSet {
+  value: ResultSet
+}
+
+struct PostgresRow {
+  value: Row
+}
+
+fn postgres_dsn() -> Result<String, String> {
+  let dsn = get_or_default("APP_POSTGRES_DSN", "")
+  if dsn != "" {
+    return Ok(dsn)
+  }
+  let path = get_or_default("APP_POSTGRES_DSN_FILE", "")
+  if path != "" {
+    return read_string(path)
+  }
+  return Err("postgres data backend requires APP_POSTGRES_DSN or APP_POSTGRES_DSN_FILE")
+}
+
+fn postgres_open() -> Result<PostgresConnection, String> {
+  return Ok(PostgresConnection(connect(postgres_dsn()?)?))
+}
+
+fn postgres_migration(version: Int, name: String, sql: String) -> Json {
+  return migration(version, name, sql)
+}
+
+fn postgres_no_params() -> Json {
+  return no_params()
+}
+
+fn PostgresConnection_close(self: PostgresConnection) -> Result<Void, String> {
+  return self.value.close()
+}
+
+fn PostgresConnection_begin_transaction(self: PostgresConnection) -> Result<PostgresTransaction, String> {
+  return Ok(PostgresTransaction(self.value.begin_transaction()?))
+}
+
+fn PostgresConnection_execute(self: PostgresConnection, sql: String, params: Json) -> Result<Int, String> {
+  return self.value.execute(sql, params)
+}
+
+fn PostgresConnection_execute0(self: PostgresConnection, sql: String) -> Result<Int, String> {
+  return self.value.execute0(sql)
+}
+
+fn PostgresConnection_query(self: PostgresConnection, sql: String, params: Json) -> Result<PostgresResultSet, String> {
+  return Ok(PostgresResultSet(self.value.query(sql, params)?))
+}
+
+fn PostgresConnection_query0(self: PostgresConnection, sql: String) -> Result<PostgresResultSet, String> {
+  return Ok(PostgresResultSet(self.value.query0(sql)?))
+}
+
+fn PostgresConnection_run_migrations(self: PostgresConnection, migrations: Json) -> Result<Int, String> {
+  return self.value.run_migrations(migrations)
+}
+
+fn PostgresTransaction_execute(self: PostgresTransaction, sql: String, params: Json) -> Result<Int, String> {
+  return self.value.execute(sql, params)
+}
+
+fn PostgresTransaction_execute0(self: PostgresTransaction, sql: String) -> Result<Int, String> {
+  return self.value.execute0(sql)
+}
+
+fn PostgresTransaction_query(self: PostgresTransaction, sql: String, params: Json) -> Result<PostgresResultSet, String> {
+  return Ok(PostgresResultSet(self.value.query(sql, params)?))
+}
+
+fn PostgresTransaction_query0(self: PostgresTransaction, sql: String) -> Result<PostgresResultSet, String> {
+  return Ok(PostgresResultSet(self.value.query0(sql)?))
+}
+
+fn PostgresTransaction_commit(self: PostgresTransaction) -> Result<Void, String> {
+  return self.value.commit()
+}
+
+fn PostgresTransaction_rollback(self: PostgresTransaction) -> Result<Void, String> {
+  return self.value.rollback()
+}
+
+fn PostgresResultSet_len(self: PostgresResultSet) -> Result<Int, String> {
+  return self.value.len()
+}
+
+fn PostgresResultSet_row(self: PostgresResultSet, index: Int) -> Result<PostgresRow, String> {
+  return Ok(PostgresRow(self.value.row(index)?))
+}
+
+fn PostgresRow_get_string(self: PostgresRow, column: String) -> Result<String, String> {
+  return self.value.get_string(column)
+}
+
+fn PostgresRow_get_int(self: PostgresRow, column: String) -> Result<Int, String> {
+  return self.value.get_int(column)
+}
+
+fn PostgresRow_get_bool(self: PostgresRow, column: String) -> Result<Bool, String> {
+  return self.value.get_bool(column)
+}
+
+fn PostgresRow_get_json(self: PostgresRow, column: String) -> Result<Json, String> {
+  return self.value.get_json(column)
+}

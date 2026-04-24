@@ -1,0 +1,1101 @@
+module store
+import core::app
+import core::contracts
+import core::validate
+import db
+import std::env
+import std::json
+import std::result
+import std::time
+
+struct ReleaseLookup {
+  found: Bool
+  entry: ReleaseEntry
+}
+
+struct ApplyRunLookup {
+  found: Bool
+  run: ApplyRun
+}
+
+struct RevisionCheck {
+  matched: Bool
+  outcome: Json
+}
+
+struct ConfigSnapshotCheck {
+  matched: Bool
+  outcome: Json
+}
+
+struct ApplyRunRowCoreFields {
+  run_id: Int
+  release_revision_id: Int
+  status: String
+  requested_by: String
+}
+
+struct AuditEventRowCoreFields {
+  event_id: Int
+  event_kind: String
+  message: String
+  payload: Json
+}
+
+struct AuditEventRowMetaFields {
+  actor: String
+  release_revision_id: Int
+  apply_run_id: Int
+  unix_ms: Int
+}
+
+struct ApplyRunRequestCheck {
+  allowed: Bool
+  outcome: Json
+}
+
+struct ReleaseGate {
+  allowed: Bool
+  outcome: Json
+  current: ReleaseEntry
+}
+
+fn release_store_path() -> String {
+  let state_dir = get_or_default("APP_STATE_DIR", default_state_dir())
+  return text_concat(state_dir, "/release-control-plane.db")
+}
+
+fn release_migrations() -> Json {
+  let builder = array_builder()
+  let create_states_sql = "CREATE TABLE IF NOT EXISTS release_states (app TEXT NOT NULL, channel TEXT NOT NULL, version TEXT NOT NULL, config_revision INTEGER NOT NULL, description TEXT NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (app, channel))"
+  builder = array_push(builder, migration(1, "create_release_states", create_states_sql))
+  let create_approvals_sql = "CREATE TABLE IF NOT EXISTS approval_decisions (decision_id INTEGER PRIMARY KEY AUTOINCREMENT, app TEXT NOT NULL, channel TEXT NOT NULL, release_revision_id INTEGER NOT NULL, decision TEXT NOT NULL, reason TEXT NOT NULL, decided_by TEXT NOT NULL, decided_unix_ms INTEGER NOT NULL)"
+  builder = array_push(builder, migration(2, "create_approval_decisions", create_approvals_sql))
+  let create_apply_runs_sql = "CREATE TABLE IF NOT EXISTS apply_runs (run_id INTEGER PRIMARY KEY AUTOINCREMENT, app TEXT NOT NULL, channel TEXT NOT NULL, release_revision_id INTEGER NOT NULL, status TEXT NOT NULL, requested_by TEXT NOT NULL, requested_unix_ms INTEGER NOT NULL, started_unix_ms INTEGER NOT NULL, finished_unix_ms INTEGER NOT NULL, runner_id TEXT NOT NULL, result_message TEXT NOT NULL)"
+  builder = array_push(builder, migration(3, "create_apply_runs", create_apply_runs_sql))
+  let create_audit_events_sql = "CREATE TABLE IF NOT EXISTS audit_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, app TEXT NOT NULL, channel TEXT NOT NULL, event_kind TEXT NOT NULL, actor TEXT NOT NULL, release_revision_id INTEGER NOT NULL, apply_run_id INTEGER NOT NULL, message TEXT NOT NULL, payload TEXT NOT NULL, unix_ms INTEGER NOT NULL)"
+  builder = array_push(builder, migration(4, "create_audit_events", create_audit_events_sql))
+  return array_build(builder)
+}
+
+fn initialize_release_store() -> Result<Bool, String> {
+  let conn = open(release_store_path())?
+  conn.run_migrations(release_migrations())?
+  return Ok(true)
+}
+
+fn one_string_param(value: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(value))
+  return array_build(builder)
+}
+
+fn two_string_params(first: String, second: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(first))
+  builder = array_push(builder, string_value(second))
+  return array_build(builder)
+}
+
+fn three_release_params(app_name: String, channel: String, release_revision_id: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, int_value(release_revision_id))
+  return array_build(builder)
+}
+
+fn builder_with_release_identity(builder: JsonArrayBuilder,
+                                 app_name: String,
+                                 channel: String) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  return builder
+}
+
+fn builder_with_apply_run_identity(builder: JsonArrayBuilder, run: ApplyRun) -> JsonArrayBuilder {
+  builder = builder_with_release_identity(builder, run.app, run.channel)
+  builder = array_push(builder, int_value(run.release_revision_id))
+  builder = array_push(builder, string_value(run.status))
+  builder = array_push(builder, string_value(run.requested_by))
+  return builder
+}
+
+fn builder_with_apply_run_timing(builder: JsonArrayBuilder, run: ApplyRun) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(run.requested_unix_ms))
+  builder = array_push(builder, int_value(run.started_unix_ms))
+  builder = array_push(builder, int_value(run.finished_unix_ms))
+  builder = array_push(builder, string_value(run.runner_id))
+  builder = array_push(builder, string_value(run.result_message))
+  return builder
+}
+
+fn release_insert_params(entry: ReleaseEntry) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(entry.app))
+  builder = array_push(builder, string_value(entry.channel))
+  builder = array_push(builder, string_value(entry.version))
+  builder = array_push(builder, int_value(entry.config_revision))
+  builder = array_push(builder, string_value(entry.description))
+  builder = array_push(builder, int_value(entry.revision_id))
+  builder = array_push(builder, string_value(entry.updated_by))
+  builder = array_push(builder, int_value(entry.updated_unix_ms))
+  return array_build(builder)
+}
+
+fn release_update_params(entry: ReleaseEntry) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(entry.version))
+  builder = array_push(builder, int_value(entry.config_revision))
+  builder = array_push(builder, string_value(entry.description))
+  builder = array_push(builder, int_value(entry.revision_id))
+  builder = array_push(builder, string_value(entry.updated_by))
+  builder = array_push(builder, int_value(entry.updated_unix_ms))
+  builder = array_push(builder, string_value(entry.app))
+  builder = array_push(builder, string_value(entry.channel))
+  return array_build(builder)
+}
+
+fn approval_insert_params(decision: ApprovalDecision) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(decision.app))
+  builder = array_push(builder, string_value(decision.channel))
+  builder = array_push(builder, int_value(decision.release_revision_id))
+  builder = array_push(builder, string_value(decision.decision))
+  builder = array_push(builder, string_value(decision.reason))
+  builder = array_push(builder, string_value(decision.decided_by))
+  builder = array_push(builder, int_value(decision.decided_unix_ms))
+  return array_build(builder)
+}
+
+fn apply_run_insert_params(run: ApplyRun) -> Json {
+  let builder = array_builder()
+  builder = builder_with_apply_run_identity(builder, run)
+  builder = builder_with_apply_run_timing(builder, run)
+  return array_build(builder)
+}
+
+fn apply_run_update_params(run: ApplyRun) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(run.status))
+  builder = array_push(builder, int_value(run.started_unix_ms))
+  builder = array_push(builder, int_value(run.finished_unix_ms))
+  builder = array_push(builder, string_value(run.runner_id))
+  builder = array_push(builder, string_value(run.result_message))
+  builder = array_push(builder, int_value(run.run_id))
+  return array_build(builder)
+}
+
+fn audit_event_insert_params(event: AuditEvent) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(event.app))
+  builder = array_push(builder, string_value(event.channel))
+  builder = array_push(builder, string_value(event.event_kind))
+  builder = array_push(builder, string_value(event.actor))
+  builder = array_push(builder, int_value(event.release_revision_id))
+  builder = array_push(builder, int_value(event.apply_run_id))
+  builder = array_push(builder, string_value(event.message))
+  builder = array_push(builder, event.payload)
+  builder = array_push(builder, int_value(event.unix_ms))
+  return array_build(builder)
+}
+
+fn release_not_found_placeholder() -> ReleaseEntry {
+  return ReleaseEntry("", "", "", 0, "", 0, "", 0)
+}
+
+fn idle_apply_run() -> ApplyRun {
+  return ApplyRun(0, "", "", 0, "idle", "", 0, 0, 0, "", "")
+}
+
+fn pending_approval_decision(entry: ReleaseEntry) -> ApprovalDecision {
+  return ApprovalDecision(entry.app, entry.channel, entry.revision_id, "pending", "", "", 0)
+}
+
+fn last_insert_row_id(tx: Transaction) -> Result<Int, String> {
+  let rows = tx.query0("SELECT last_insert_rowid() AS row_id")?
+  let row = rows.row(0)?
+  return row.get_int("row_id")
+}
+
+fn audit_event_record(app_name: String,
+                      channel: String,
+                      event_kind: String,
+                      actor: String,
+                      release_revision_id: Int,
+                      apply_run_id: Int,
+                      message: String,
+                      payload: Json) -> AuditEvent {
+  return AuditEvent(0,
+                    app_name,
+                    channel,
+                    event_kind,
+                    actor,
+                    release_revision_id,
+                    apply_run_id,
+                    message,
+                    payload,
+                    unix_millis())
+}
+
+fn append_audit_event_tx(tx: Transaction, event: AuditEvent) -> Result<Bool, String> {
+  tx.execute(insert_audit_event_sql(), audit_event_insert_params(event))?
+  return Ok(true)
+}
+
+fn matched_revision_check() -> RevisionCheck {
+  return RevisionCheck(true, null_value())
+}
+
+fn matched_config_snapshot_check() -> ConfigSnapshotCheck {
+  return ConfigSnapshotCheck(true, null_value())
+}
+
+fn release_revision_check(current_revision_id: Int, expected_revision_id: Int) -> RevisionCheck {
+  if expected_revision_id == -1 {
+    return RevisionCheck(false, release_precondition_required_outcome(current_revision_id))
+  }
+  if expected_revision_id != current_revision_id {
+    return RevisionCheck(false, release_conflict_outcome(expected_revision_id, current_revision_id))
+  }
+  return matched_revision_check()
+}
+
+fn release_config_snapshot_mismatch_outcome(requested_config_revision: Int,
+                                            current_config_snapshot_revision: Int) -> Json {
+  return object3("kind",
+                 string_value("config_snapshot_mismatch"),
+                 "requested_config_revision",
+                 int_value(requested_config_revision),
+                 "current_config_snapshot_revision",
+                 int_value(current_config_snapshot_revision))
+}
+
+fn allowed_apply_run_request_check() -> ApplyRunRequestCheck {
+  return ApplyRunRequestCheck(true, null_value())
+}
+
+fn latest_apply_run_request_check(lookup: ApplyRunLookup) -> ApplyRunRequestCheck {
+  if !lookup.found {
+    return allowed_apply_run_request_check()
+  }
+  if lookup.run.status == "pending" {
+    return ApplyRunRequestCheck(false, apply_run_already_exists_outcome("already_inflight", lookup.run))
+  }
+  if lookup.run.status == "applied" {
+    return ApplyRunRequestCheck(false, apply_run_already_exists_outcome("already_applied", lookup.run))
+  }
+  return allowed_apply_run_request_check()
+}
+
+fn allowed_release_gate(current: ReleaseEntry) -> ReleaseGate {
+  return ReleaseGate(true, null_value(), current)
+}
+
+fn blocked_release_gate(outcome: Json) -> ReleaseGate {
+  return ReleaseGate(false, outcome, release_not_found_placeholder())
+}
+
+fn release_entry_identity_from_row(row: Row) -> Result<ReleaseIdentityFields, String> {
+  let app_name = row.get_string("app")?
+  let channel = row.get_string("channel")?
+  return Ok(ReleaseIdentityFields(app_name, channel))
+}
+
+fn release_entry_state_from_row(row: Row) -> Result<ReleaseStateFields, String> {
+  let revision_id = row.get_int("revision_id")?
+  let updated_by = row.get_string("updated_by")?
+  let updated_unix_ms = row.get_int("updated_unix_ms")?
+  return Ok(ReleaseStateFields(revision_id, updated_by, updated_unix_ms))
+}
+
+fn release_payload_from_row(row: Row) -> Result<ReleasePutRequest, String> {
+  let version = row.get_string("version")?
+  let config_revision = row.get_int("config_revision")?
+  let description = row.get_string("description")?
+  return Ok(ReleasePutRequest(version, config_revision, description))
+}
+
+fn release_entry_from_fields(identity: ReleaseIdentityFields,
+                             payload: ReleasePutRequest,
+                             state: ReleaseStateFields) -> Result<ReleaseEntry, String> {
+  let entry = ReleaseEntry(identity.app,
+                           identity.channel,
+                           payload.version,
+                           payload.config_revision,
+                           payload.description,
+                           state.revision_id,
+                           state.updated_by,
+                           state.updated_unix_ms)
+  validate_release_entry(entry)?
+  return Ok(entry)
+}
+
+fn release_entry_from_row(row: Row) -> Result<ReleaseEntry, String> {
+  let identity = release_entry_identity_from_row(row)?
+  let payload = release_payload_from_row(row)?
+  let state = release_entry_state_from_row(row)?
+  return release_entry_from_fields(identity, payload, state)
+}
+
+fn approval_decision_from_row(identity: ReleaseIdentityFields,
+                              release_revision_id: Int,
+                              row: Row) -> Result<ApprovalDecision, String> {
+  let decision = row.get_string("decision")?
+  let reason = row.get_string("reason")?
+  let decided_by = row.get_string("decided_by")?
+  let decided_unix_ms = row.get_int("decided_unix_ms")?
+  let value = ApprovalDecision(identity.app,
+                               identity.channel,
+                               release_revision_id,
+                               decision,
+                               reason,
+                               decided_by,
+                               decided_unix_ms)
+  validate_approval_decision(value)?
+  return Ok(value)
+}
+
+fn apply_run_timing_from_row(row: Row) -> Result<ApplyRunTimingFields, String> {
+  let requested_unix_ms = row.get_int("requested_unix_ms")?
+  let started_unix_ms = row.get_int("started_unix_ms")?
+  let finished_unix_ms = row.get_int("finished_unix_ms")?
+  let runner_id = row.get_string("runner_id")?
+  let result_message = row.get_string("result_message")?
+  return Ok(ApplyRunTimingFields(requested_unix_ms,
+                                 started_unix_ms,
+                                 finished_unix_ms,
+                                 runner_id,
+                                 result_message))
+}
+
+fn apply_run_core_from_row(row: Row) -> Result<ApplyRunRowCoreFields, String> {
+  let run_id = row.get_int("run_id")?
+  let release_revision_id = row.get_int("release_revision_id")?
+  let status = row.get_string("status")?
+  let requested_by = row.get_string("requested_by")?
+  return Ok(ApplyRunRowCoreFields(run_id, release_revision_id, status, requested_by))
+}
+
+fn store_apply_run_from_fields(identity: ReleaseIdentityFields,
+                               core: ApplyRunRowCoreFields,
+                               timing: ApplyRunTimingFields) -> Result<ApplyRun, String> {
+  let run = ApplyRun(core.run_id,
+                     identity.app,
+                     identity.channel,
+                     core.release_revision_id,
+                     core.status,
+                     core.requested_by,
+                     timing.requested_unix_ms,
+                     timing.started_unix_ms,
+                     timing.finished_unix_ms,
+                     timing.runner_id,
+                     timing.result_message)
+  validate_apply_run(run)?
+  return Ok(run)
+}
+
+fn apply_run_from_row(row: Row) -> Result<ApplyRun, String> {
+  let identity = release_entry_identity_from_row(row)?
+  let core = apply_run_core_from_row(row)?
+  let timing = apply_run_timing_from_row(row)?
+  return store_apply_run_from_fields(identity, core, timing)
+}
+
+fn audit_event_core_from_row(row: Row) -> Result<AuditEventRowCoreFields, String> {
+  let event_id = row.get_int("event_id")?
+  let event_kind = row.get_string("event_kind")?
+  let message = row.get_string("message")?
+  let payload = row.get_json("payload")?
+  return Ok(AuditEventRowCoreFields(event_id, event_kind, message, payload))
+}
+
+fn audit_event_meta_from_row(row: Row) -> Result<AuditEventRowMetaFields, String> {
+  let actor = row.get_string("actor")?
+  let release_revision_id = row.get_int("release_revision_id")?
+  let apply_run_id = row.get_int("apply_run_id")?
+  let unix_ms = row.get_int("unix_ms")?
+  return Ok(AuditEventRowMetaFields(actor, release_revision_id, apply_run_id, unix_ms))
+}
+
+fn store_audit_event_from_fields(identity: ReleaseIdentityFields,
+                                 core: AuditEventRowCoreFields,
+                                 meta: AuditEventRowMetaFields) -> Result<AuditEvent, String> {
+  let event = AuditEvent(core.event_id,
+                         identity.app,
+                         identity.channel,
+                         core.event_kind,
+                         meta.actor,
+                         meta.release_revision_id,
+                         meta.apply_run_id,
+                         core.message,
+                         core.payload,
+                         meta.unix_ms)
+  validate_audit_event(event)?
+  return Ok(event)
+}
+
+fn audit_event_from_row(row: Row) -> Result<AuditEvent, String> {
+  let identity = release_entry_identity_from_row(row)?
+  let core = audit_event_core_from_row(row)?
+  let meta = audit_event_meta_from_row(row)?
+  return store_audit_event_from_fields(identity, core, meta)
+}
+
+fn select_release_state_sql() -> String {
+  return "SELECT app, channel, version, config_revision, description, revision_id, updated_by, updated_unix_ms FROM release_states WHERE app = ? AND channel = ?"
+}
+
+fn list_release_states_sql() -> String {
+  return "SELECT app, channel, version, config_revision, description, revision_id, updated_by, updated_unix_ms FROM release_states WHERE app = ? ORDER BY channel ASC"
+}
+
+fn select_release_revision_sql() -> String {
+  return "SELECT app, channel, version, config_revision, description, revision_id, updated_by, updated_unix_ms FROM release_revisions WHERE app = ? AND channel = ? AND revision_id = ?"
+}
+
+fn latest_approval_decision_sql() -> String {
+  return "SELECT decision, reason, decided_by, decided_unix_ms FROM approval_decisions WHERE app = ? AND channel = ? AND release_revision_id = ? ORDER BY decision_id DESC LIMIT 1"
+}
+
+fn insert_approval_decision_sql() -> String {
+  return "INSERT INTO approval_decisions(app, channel, release_revision_id, decision, reason, decided_by, decided_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn latest_apply_run_for_revision_sql() -> String {
+  return "SELECT run_id, app, channel, release_revision_id, status, requested_by, requested_unix_ms, started_unix_ms, finished_unix_ms, runner_id, result_message FROM apply_runs WHERE app = ? AND channel = ? AND release_revision_id = ? ORDER BY run_id DESC LIMIT 1"
+}
+
+fn oldest_pending_apply_run_sql() -> String {
+  return "SELECT run_id, app, channel, release_revision_id, status, requested_by, requested_unix_ms, started_unix_ms, finished_unix_ms, runner_id, result_message FROM apply_runs WHERE status = 'pending' ORDER BY run_id ASC LIMIT 1"
+}
+
+fn insert_apply_run_sql() -> String {
+  return "INSERT INTO apply_runs(app, channel, release_revision_id, status, requested_by, requested_unix_ms, started_unix_ms, finished_unix_ms, runner_id, result_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_apply_run_sql() -> String {
+  return "UPDATE apply_runs SET status = ?, started_unix_ms = ?, finished_unix_ms = ?, runner_id = ?, result_message = ? WHERE run_id = ?"
+}
+
+fn insert_audit_event_sql() -> String {
+  return "INSERT INTO audit_events(app, channel, event_kind, actor, release_revision_id, apply_run_id, message, payload, unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn list_audit_events_sql() -> String {
+  return "SELECT event_id, app, channel, event_kind, actor, release_revision_id, apply_run_id, message, payload, unix_ms FROM audit_events WHERE app = ? AND channel = ? ORDER BY event_id ASC"
+}
+
+fn latest_config_snapshot_sql() -> String {
+  return "SELECT revision_id FROM config_revisions WHERE app = ? AND channel = ? ORDER BY revision_id DESC LIMIT 1"
+}
+
+fn select_config_snapshot_sql() -> String {
+  return "SELECT revision_id FROM config_revisions WHERE app = ? AND channel = ? AND revision_id = ? LIMIT 1"
+}
+
+fn current_config_snapshot_revision_tx(tx: Transaction, app_name: String, channel: String) -> Result<Int, String> {
+  let rows = tx.query(latest_config_snapshot_sql(), two_string_params(app_name, channel))?
+  if rows.len()? == 0 {
+    return Ok(0)
+  }
+  let row = rows.row(0)?
+  return row.get_int("revision_id")
+}
+
+fn config_snapshot_exists_tx(tx: Transaction,
+                             app_name: String,
+                             channel: String,
+                             requested_config_revision: Int) -> Result<Bool, String> {
+  let rows = tx.query(select_config_snapshot_sql(), three_release_params(app_name, channel, requested_config_revision))?
+  return Ok(rows.len()? > 0)
+}
+
+fn lookup_release_entry(tx: Transaction, app_name: String, channel: String) -> Result<ReleaseLookup, String> {
+  let rows = tx.query(select_release_state_sql(), two_string_params(app_name, channel))?
+  let count = rows.len()?
+  if count == 0 {
+    return Ok(ReleaseLookup(false, release_not_found_placeholder()))
+  }
+  let row = rows.row(0)?
+  let entry = release_entry_from_row(row)?
+  return Ok(ReleaseLookup(true, entry))
+}
+
+fn lookup_release_entry_required(tx: Transaction, app_name: String, channel: String) -> Result<ReleaseEntry, String> {
+  let lookup = lookup_release_entry(tx, app_name, channel)?
+  if !lookup.found {
+    return Err("release state not found")
+  }
+  return Ok(lookup.entry)
+}
+
+fn release_gate_from_tx(tx: Transaction,
+                        app_name: String,
+                        channel: String,
+                        expected_revision_id: Int) -> Result<ReleaseGate, String> {
+  let current = lookup_release_entry_required(tx, app_name, channel)?
+  let revision_check = release_revision_check(current.revision_id, expected_revision_id)
+  if !revision_check.matched {
+    return Ok(blocked_release_gate(revision_check.outcome))
+  }
+  return Ok(allowed_release_gate(current))
+}
+
+fn first_release_entry(rows: ResultSet) -> Result<ReleaseEntry, String> {
+  let count = rows.len()?
+  if count == 0 {
+    return Err("release state not found")
+  }
+  let row = rows.row(0)?
+  return release_entry_from_row(row)
+}
+
+fn release_entries_json(rows: ResultSet) -> Result<Json, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let row = rows.row(index)?
+    let entry = release_entry_from_row(row)?
+    builder = array_push(builder, entry.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn current_approval_decision_conn(conn: Connection, entry: ReleaseEntry) -> Result<ApprovalDecision, String> {
+  let rows = conn.query(latest_approval_decision_sql(), three_release_params(entry.app, entry.channel, entry.revision_id))?
+  let count = rows.len()?
+  if count == 0 {
+    return Ok(pending_approval_decision(entry))
+  }
+  let row = rows.row(0)?
+  return approval_decision_from_row(ReleaseIdentityFields(entry.app, entry.channel), entry.revision_id, row)
+}
+
+fn current_approval_decision_tx(tx: Transaction, entry: ReleaseEntry) -> Result<ApprovalDecision, String> {
+  let rows = tx.query(latest_approval_decision_sql(), three_release_params(entry.app, entry.channel, entry.revision_id))?
+  let count = rows.len()?
+  if count == 0 {
+    return Ok(pending_approval_decision(entry))
+  }
+  let row = rows.row(0)?
+  return approval_decision_from_row(ReleaseIdentityFields(entry.app, entry.channel), entry.revision_id, row)
+}
+
+fn latest_apply_run_for_revision_tx(tx: Transaction,
+                                    app_name: String,
+                                    channel: String,
+                                    release_revision_id: Int) -> Result<ApplyRunLookup, String> {
+  let rows = tx.query(latest_apply_run_for_revision_sql(), three_release_params(app_name, channel, release_revision_id))?
+  let count = rows.len()?
+  if count == 0 {
+    return Ok(ApplyRunLookup(false, idle_apply_run()))
+  }
+  let row = rows.row(0)?
+  let run = apply_run_from_row(row)?
+  return Ok(ApplyRunLookup(true, run))
+}
+
+fn oldest_pending_apply_run_tx(tx: Transaction) -> Result<ApplyRunLookup, String> {
+  let rows = tx.query0(oldest_pending_apply_run_sql())?
+  let count = rows.len()?
+  if count == 0 {
+    return Ok(ApplyRunLookup(false, idle_apply_run()))
+  }
+  let row = rows.row(0)?
+  let run = apply_run_from_row(row)?
+  return Ok(ApplyRunLookup(true, run))
+}
+
+fn audit_events_json(rows: ResultSet) -> Result<Json, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let row = rows.row(index)?
+    let event = audit_event_from_row(row)?
+    builder = array_push(builder, event.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn release_upsert_audit_event(entry: ReleaseEntry) -> AuditEvent {
+  return audit_event_record(entry.app,
+                            entry.channel,
+                            "release_upserted",
+                            entry.updated_by,
+                            entry.revision_id,
+                            0,
+                            "release desired state updated",
+                            object3("version",
+                                    string_value(entry.version),
+                                    "config_revision",
+                                    int_value(entry.config_revision),
+                                    "description",
+                                    string_value(entry.description)))
+}
+
+fn approval_decided_audit_event(decision: ApprovalDecision) -> AuditEvent {
+  return audit_event_record(decision.app,
+                            decision.channel,
+                            "approval_decided",
+                            decision.decided_by,
+                            decision.release_revision_id,
+                            0,
+                            "approval decision recorded",
+                            object2("decision",
+                                    string_value(decision.decision),
+                                    "reason",
+                                    string_value(decision.reason)))
+}
+
+fn apply_requested_audit_event(run: ApplyRun) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "release_apply_requested",
+                            run.requested_by,
+                            run.release_revision_id,
+                            run.run_id,
+                            "release apply requested",
+                            object2("run_id", int_value(run.run_id), "status", string_value(run.status)))
+}
+
+fn apply_started_audit_event(run: ApplyRun) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "release_apply_started",
+                            run.runner_id,
+                            run.release_revision_id,
+                            run.run_id,
+                            "release apply runner started",
+                            object2("run_id", int_value(run.run_id), "status", string_value(run.status)))
+}
+
+fn apply_completed_audit_event(run: ApplyRun) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "release_apply_completed",
+                            run.runner_id,
+                            run.release_revision_id,
+                            run.run_id,
+                            run.result_message,
+                            object2("run_id", int_value(run.run_id), "status", string_value(run.status)))
+}
+
+fn load_release_entry(app_name: String, channel: String) -> Result<ReleaseEntry, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  let conn = open(release_store_path())?
+  let rows = conn.query(select_release_state_sql(), two_string_params(app_name, channel))?
+  return first_release_entry(rows)
+}
+
+fn load_release_revision_entry(app_name: String,
+                               channel: String,
+                               release_revision_id: Int) -> Result<ReleaseEntry, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  if release_revision_id < 0 {
+    return Err("release revision_id must be non-negative")
+  }
+  let conn = open(release_store_path())?
+  let rows = conn.query(select_release_revision_sql(), three_release_params(app_name, channel, release_revision_id))?
+  return first_release_entry(rows)
+}
+
+fn load_release_entries(app_name: String) -> Result<Json, String> {
+  validate_app_segment(app_name)?
+  let conn = open(release_store_path())?
+  let rows = conn.query(list_release_states_sql(), one_string_param(app_name))?
+  return release_entries_json(rows)
+}
+
+fn load_approval_decision(app_name: String, channel: String) -> Result<ApprovalDecision, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  let conn = open(release_store_path())?
+  let entry = load_release_entry(app_name, channel)?
+  return current_approval_decision_conn(conn, entry)
+}
+
+fn load_audit_events(app_name: String, channel: String) -> Result<Json, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  let conn = open(release_store_path())?
+  let rows = conn.query(list_audit_events_sql(), two_string_params(app_name, channel))?
+  return audit_events_json(rows)
+}
+
+fn release_applied_outcome(entry: ReleaseEntry) -> Json {
+  return object2("kind", string_value("applied"), "entry", entry.as_json())
+}
+
+fn release_precondition_required_outcome(current_revision_id: Int) -> Json {
+  return object2("kind", string_value("precondition_required"), "current_revision_id", int_value(current_revision_id))
+}
+
+fn release_conflict_outcome(expected_revision_id: Int, current_revision_id: Int) -> Json {
+  return object3("kind",
+                 string_value("conflict"),
+                 "expected_revision_id",
+                 int_value(expected_revision_id),
+                 "current_revision_id",
+                 int_value(current_revision_id))
+}
+
+fn approval_applied_outcome(decision: ApprovalDecision) -> Json {
+  return object2("kind", string_value("applied"), "decision", decision.as_json())
+}
+
+fn apply_run_queued_outcome(run: ApplyRun) -> Json {
+  return object2("kind", string_value("queued"), "run", run.as_json())
+}
+
+fn apply_run_not_approved_outcome(decision: ApprovalDecision) -> Json {
+  return object2("kind", string_value("not_approved"), "decision", decision.as_json())
+}
+
+fn apply_run_already_exists_outcome(kind: String, run: ApplyRun) -> Json {
+  return object2("kind", string_value(kind), "run", run.as_json())
+}
+
+fn runner_idle_outcome() -> Json {
+  return object2("kind", string_value("idle"), "run", idle_apply_run().as_json())
+}
+
+fn runner_processed_outcome(run: ApplyRun) -> Json {
+  return object2("kind", string_value("processed"), "run", run.as_json())
+}
+
+fn insert_release_state_sql() -> String {
+  return "INSERT INTO release_states(app, channel, version, config_revision, description, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_release_state_sql() -> String {
+  return "UPDATE release_states SET version = ?, config_revision = ?, description = ?, revision_id = ?, updated_by = ?, updated_unix_ms = ? WHERE app = ? AND channel = ?"
+}
+
+fn insert_release_revision_sql() -> String {
+  return "INSERT INTO release_revisions(app, channel, version, config_revision, description, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn created_release_entry(app_name: String,
+                         channel: String,
+                         request: ReleasePutRequest,
+                         updated_by: String) -> ReleaseEntry {
+  return ReleaseEntry(app_name,
+                      channel,
+                      request.version,
+                      request.config_revision,
+                      request.description,
+                      1,
+                      updated_by,
+                      unix_millis())
+}
+
+fn updated_release_entry(existing: ReleaseEntry,
+                         request: ReleasePutRequest,
+                         updated_by: String) -> ReleaseEntry {
+  return ReleaseEntry(existing.app,
+                      existing.channel,
+                      request.version,
+                      request.config_revision,
+                      request.description,
+                      existing.revision_id + 1,
+                      updated_by,
+                      unix_millis())
+}
+
+fn record_release_revision_tx(tx: Transaction, entry: ReleaseEntry) -> Result<Bool, String> {
+  tx.execute(insert_release_revision_sql(), release_insert_params(entry))?
+  return Ok(true)
+}
+
+fn approval_decision_record(app_name: String,
+                            channel: String,
+                            release_revision_id: Int,
+                            request: ApprovalDecisionRequest,
+                            decided_by: String) -> ApprovalDecision {
+  return ApprovalDecision(app_name,
+                          channel,
+                          release_revision_id,
+                          request.decision,
+                          request.reason,
+                          decided_by,
+                          unix_millis())
+}
+
+fn create_release_outcome(tx: Transaction,
+                          app_name: String,
+                          channel: String,
+                          request: ReleasePutRequest,
+                          updated_by: String) -> Result<Json, String> {
+  let entry = created_release_entry(app_name, channel, request, updated_by)
+  tx.execute(insert_release_state_sql(), release_insert_params(entry))?
+  record_release_revision_tx(tx, entry)?
+  append_audit_event_tx(tx, release_upsert_audit_event(entry))?
+  tx.commit()?
+  return Ok(release_applied_outcome(entry))
+}
+
+fn update_release_outcome(tx: Transaction,
+                          existing: ReleaseEntry,
+                          request: ReleasePutRequest,
+                          updated_by: String) -> Result<Json, String> {
+  let entry = updated_release_entry(existing, request, updated_by)
+  tx.execute(update_release_state_sql(), release_update_params(entry))?
+  record_release_revision_tx(tx, entry)?
+  append_audit_event_tx(tx, release_upsert_audit_event(entry))?
+  tx.commit()?
+  return Ok(release_applied_outcome(entry))
+}
+
+fn validate_release_write_request(app_name: String,
+                                  channel: String,
+                                  request: ReleasePutRequest,
+                                  updated_by: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  validate_release_put_request(request)?
+  validate_actor_segment(updated_by)?
+  return Ok(true)
+}
+
+fn validate_release_config_snapshot_request(tx: Transaction,
+                                            app_name: String,
+                                            channel: String,
+                                            request: ReleasePutRequest) -> Result<ConfigSnapshotCheck, String> {
+  let current_config_snapshot_revision = current_config_snapshot_revision_tx(tx, app_name, channel)?
+  if request.config_revision == 0 {
+    if current_config_snapshot_revision == 0 {
+      return Ok(matched_config_snapshot_check())
+    }
+    return Ok(ConfigSnapshotCheck(false,
+                                  release_config_snapshot_mismatch_outcome(request.config_revision,
+                                                                           current_config_snapshot_revision)))
+  }
+  let exists = config_snapshot_exists_tx(tx, app_name, channel, request.config_revision)?
+  if exists {
+    return Ok(matched_config_snapshot_check())
+  }
+  return Ok(ConfigSnapshotCheck(false,
+                                release_config_snapshot_mismatch_outcome(request.config_revision,
+                                                                         current_config_snapshot_revision)))
+}
+
+fn write_missing_release_entry(tx: Transaction,
+                               app_name: String,
+                               channel: String,
+                               request: ReleasePutRequest,
+                               expected_revision_id: Int,
+                               updated_by: String) -> Result<Json, String> {
+  if expected_revision_id != -1 {
+    return Ok(release_conflict_outcome(expected_revision_id, 0))
+  }
+  return create_release_outcome(tx, app_name, channel, request, updated_by)
+}
+
+fn write_existing_release_entry(tx: Transaction,
+                                existing: ReleaseEntry,
+                                request: ReleasePutRequest,
+                                expected_revision_id: Int,
+                                updated_by: String) -> Result<Json, String> {
+  if expected_revision_id == -1 {
+    return Ok(release_precondition_required_outcome(existing.revision_id))
+  }
+  if expected_revision_id != existing.revision_id {
+    return Ok(release_conflict_outcome(expected_revision_id, existing.revision_id))
+  }
+  return update_release_outcome(tx, existing, request, updated_by)
+}
+
+fn write_release_entry_tx(tx: Transaction,
+                          app_name: String,
+                          channel: String,
+                          request: ReleasePutRequest,
+                          expected_revision_id: Int,
+                          updated_by: String) -> Result<Json, String> {
+  let snapshot_check = validate_release_config_snapshot_request(tx, app_name, channel, request)?
+  if !snapshot_check.matched {
+    return Ok(snapshot_check.outcome)
+  }
+  let lookup = lookup_release_entry(tx, app_name, channel)?
+  if !lookup.found {
+    return write_missing_release_entry(tx, app_name, channel, request, expected_revision_id, updated_by)
+  }
+  return write_existing_release_entry(tx, lookup.entry, request, expected_revision_id, updated_by)
+}
+
+fn write_release_entry(app_name: String,
+                       channel: String,
+                       request: ReleasePutRequest,
+                       expected_revision_id: Int,
+                       updated_by: String) -> Result<Json, String> {
+  validate_release_write_request(app_name, channel, request, updated_by)?
+  let conn = open(release_store_path())?
+  let tx = conn.begin_transaction()?
+  return write_release_entry_tx(tx, app_name, channel, request, expected_revision_id, updated_by)
+}
+
+fn validate_approval_write_request(app_name: String,
+                                   channel: String,
+                                   request: ApprovalDecisionRequest,
+                                   decided_by: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  validate_approval_decision_request(request)?
+  validate_actor_segment(decided_by)?
+  return Ok(true)
+}
+
+fn validate_apply_run_request(app_name: String,
+                              channel: String,
+                              requested_by: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  validate_actor_segment(requested_by)?
+  return Ok(true)
+}
+
+fn write_approval_decision_tx(tx: Transaction,
+                              current: ReleaseEntry,
+                              request: ApprovalDecisionRequest,
+                              decided_by: String) -> Result<Json, String> {
+  let decision = approval_decision_record(current.app,
+                                          current.channel,
+                                          current.revision_id,
+                                          request,
+                                          decided_by)
+  tx.execute(insert_approval_decision_sql(), approval_insert_params(decision))?
+  append_audit_event_tx(tx, approval_decided_audit_event(decision))?
+  tx.commit()?
+  return Ok(approval_applied_outcome(decision))
+}
+
+fn write_approval_decision(app_name: String,
+                           channel: String,
+                           request: ApprovalDecisionRequest,
+                           expected_revision_id: Int,
+                           decided_by: String) -> Result<Json, String> {
+  validate_approval_write_request(app_name, channel, request, decided_by)?
+  let conn = open(release_store_path())?
+  let tx = conn.begin_transaction()?
+  let gate = release_gate_from_tx(tx, app_name, channel, expected_revision_id)?
+  if !gate.allowed {
+    return Ok(gate.outcome)
+  }
+  return write_approval_decision_tx(tx, gate.current, request, decided_by)
+}
+
+fn pending_apply_run(app_name: String,
+                     channel: String,
+                     release_revision_id: Int,
+                     requested_by: String) -> ApplyRun {
+  return ApplyRun(0,
+                  app_name,
+                  channel,
+                  release_revision_id,
+                  "pending",
+                  requested_by,
+                  unix_millis(),
+                  0,
+                  0,
+                  "",
+                  "")
+}
+
+fn applied_runner_run(run: ApplyRun) -> ApplyRun {
+  let finished_unix_ms = unix_millis()
+  return ApplyRun(run.run_id,
+                  run.app,
+                  run.channel,
+                  run.release_revision_id,
+                  "applied",
+                  run.requested_by,
+                  run.requested_unix_ms,
+                  finished_unix_ms,
+                  finished_unix_ms,
+                  "local-runner",
+                  "release applied locally")
+}
+
+fn queued_apply_run_with_id(run: ApplyRun, run_id: Int) -> ApplyRun {
+  return ApplyRun(run_id,
+                  run.app,
+                  run.channel,
+                  run.release_revision_id,
+                  run.status,
+                  run.requested_by,
+                  run.requested_unix_ms,
+                  run.started_unix_ms,
+                  run.finished_unix_ms,
+                  run.runner_id,
+                  run.result_message)
+}
+
+fn queue_apply_run_tx(tx: Transaction,
+                      app_name: String,
+                      channel: String,
+                      release_revision_id: Int,
+                      requested_by: String) -> Result<Json, String> {
+  let queued_run = pending_apply_run(app_name, channel, release_revision_id, requested_by)
+  tx.execute(insert_apply_run_sql(), apply_run_insert_params(queued_run))?
+  let run_id = last_insert_row_id(tx)?
+  let run = queued_apply_run_with_id(queued_run, run_id)
+  append_audit_event_tx(tx, apply_requested_audit_event(run))?
+  tx.commit()?
+  return Ok(apply_run_queued_outcome(run))
+}
+
+fn release_apply_queue_outcome(tx: Transaction,
+                               app_name: String,
+                               channel: String,
+                               current: ReleaseEntry,
+                               requested_by: String) -> Result<Json, String> {
+  let decision = current_approval_decision_tx(tx, current)?
+  if decision.decision != "approved" {
+    return Ok(apply_run_not_approved_outcome(decision))
+  }
+  let latest_run = latest_apply_run_for_revision_tx(tx, app_name, channel, current.revision_id)?
+  let request_check = latest_apply_run_request_check(latest_run)
+  if !request_check.allowed {
+    return Ok(request_check.outcome)
+  }
+  return queue_apply_run_tx(tx, app_name, channel, current.revision_id, requested_by)
+}
+
+fn request_apply_run(app_name: String,
+                     channel: String,
+                     expected_revision_id: Int,
+                     requested_by: String) -> Result<Json, String> {
+  validate_apply_run_request(app_name, channel, requested_by)?
+  let conn = open(release_store_path())?
+  let tx = conn.begin_transaction()?
+  let gate = release_gate_from_tx(tx, app_name, channel, expected_revision_id)?
+  if !gate.allowed {
+    return Ok(gate.outcome)
+  }
+  return release_apply_queue_outcome(tx, app_name, channel, gate.current, requested_by)
+}
+
+fn process_apply_run_tx(tx: Transaction, pending_run: ApplyRun) -> Result<Json, String> {
+  let applied_run = applied_runner_run(pending_run)
+  tx.execute(update_apply_run_sql(), apply_run_update_params(applied_run))?
+  append_audit_event_tx(tx, apply_started_audit_event(applied_run))?
+  append_audit_event_tx(tx, apply_completed_audit_event(applied_run))?
+  tx.commit()?
+  return Ok(runner_processed_outcome(applied_run))
+}
+
+fn run_apply_once() -> Result<Json, String> {
+  let conn = open(release_store_path())?
+  let tx = conn.begin_transaction()?
+  let pending_lookup = oldest_pending_apply_run_tx(tx)?
+  if !pending_lookup.found {
+    return Ok(runner_idle_outcome())
+  }
+  return process_apply_run_tx(tx, pending_lookup.run)
+}

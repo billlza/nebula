@@ -1,0 +1,279 @@
+module webhook_server
+import core::secrets
+import core::validate
+import core::webhook_contracts
+import core::workflow_contracts
+import crypto::mac
+import preview
+import service::context
+import service::errors
+import std::bytes
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+import workflow_store
+
+struct WebhookIdentity {
+  provider: String
+  app: String
+  channel: String
+}
+
+fn webhook_pattern() -> String {
+  return "/v1/webhooks/:provider/:app/:channel"
+}
+
+fn is_webhook_route(request: Request) -> Bool {
+  return path_matches(webhook_pattern(), request)
+}
+
+fn webhook_method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn webhook_signature_header_name() -> String {
+  return "X-Nebula-Webhook-Signature"
+}
+
+fn webhook_timestamp_header_name() -> String {
+  return "X-Nebula-Webhook-Timestamp"
+}
+
+fn ensure_webhook_preview(ctx: RequestContext) -> Result<Bool, Response> {
+  return ensure_capability_preview(ctx,
+                                   "webhook_preview_disabled",
+                                   "webhook_preview_invalid",
+                                   "public_webhook_integrations")
+}
+
+fn webhook_secret() -> Result<String, String> {
+  return secret_value("APP_PUBLIC_WEBHOOK_SECRET", "APP_PUBLIC_WEBHOOK_SECRET_FILE")
+}
+
+fn webhook_signature_input(timestamp_text: String, body: Bytes) -> Bytes {
+  return concat(from_string(text_concat(timestamp_text, ".")), body)
+}
+
+fn webhook_timestamp_from_header(raw: String) -> Result<Int, String> {
+  let value = as_int(parse(raw)?)?
+  if value < 0 {
+    return Err("webhook timestamp must be non-negative")
+  }
+  return Ok(value)
+}
+
+fn validate_webhook_timestamp(timestamp_unix_ms: Int, now_unix_ms: Int) -> Result<Bool, String> {
+  let window_ms = 300000
+  if timestamp_unix_ms > now_unix_ms {
+    if timestamp_unix_ms - now_unix_ms > window_ms {
+      return Err("webhook timestamp is outside replay window")
+    }
+    return Ok(true)
+  }
+  if now_unix_ms - timestamp_unix_ms > window_ms {
+    return Err("webhook timestamp is outside replay window")
+  }
+  return Ok(true)
+}
+
+fn webhook_header_value(ctx: RequestContext, request: Request, name: String) -> Result<String, Response> {
+  match header_value_unique(request, name) {
+    Ok(value) => {
+      return Ok(value)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_webhook_header", msg))
+    }
+  }
+}
+
+fn verified_webhook_timestamp(ctx: RequestContext, timestamp_text: String) -> Result<Bool, Response> {
+  match webhook_timestamp_from_header(timestamp_text) {
+    Ok(timestamp_unix_ms) => {
+      match validate_webhook_timestamp(timestamp_unix_ms, unix_millis()) {
+        Ok(_) => {}
+        Err(msg) => {
+          return Err(for_request(401, ctx, "webhook_timestamp_invalid", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_webhook_timestamp", msg))
+    }
+  }
+  return Ok(true)
+}
+
+fn verify_webhook_hmac(ctx: RequestContext,
+                       timestamp_text: String,
+                       body: Bytes,
+                       signature: String) -> Result<Bool, Response> {
+  match webhook_secret() {
+    Ok(secret) => {
+      match verify_hmac_sha256_hex(secret, webhook_signature_input(timestamp_text, body), signature) {
+        Ok(verified) => {
+          if verified {
+            return Ok(true)
+          }
+          return Err(for_request(401, ctx, "webhook_signature_invalid", "webhook signature did not match"))
+        }
+        Err(msg) => {
+          return Err(for_request(500, ctx, "webhook_signature_error", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(500, ctx, "webhook_secret_invalid", msg))
+    }
+  }
+}
+
+fn verify_webhook_signature(ctx: RequestContext, request: Request) -> Result<Bool, Response> {
+  let signature = webhook_header_value(ctx, request, webhook_signature_header_name())?
+  let timestamp_text = webhook_header_value(ctx, request, webhook_timestamp_header_name())?
+  verified_webhook_timestamp(ctx, timestamp_text)?
+  return verify_webhook_hmac(ctx, timestamp_text, request.body, signature)
+}
+
+fn webhook_identity_from_request(ctx: RequestContext, request: Request) -> Result<WebhookIdentity, Response> {
+  match route_params3(webhook_pattern(), request) {
+    Ok(params) => {
+      match validate_webhook_provider(params.first) {
+        Ok(_) => {}
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_webhook_provider", msg))
+        }
+      }
+      match validate_app_segment(params.second) {
+        Ok(_) => {}
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_webhook_app", msg))
+        }
+      }
+      match validate_channel_segment(params.third) {
+        Ok(_) => {
+          return Ok(WebhookIdentity(params.first, params.second, params.third))
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_webhook_channel", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_webhook_route", msg))
+    }
+  }
+}
+
+fn webhook_submit_request_from_http(ctx: RequestContext, request: Request) -> Result<WebhookSubmitRequest, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match webhook_submit_request_from_json(payload) {
+        Ok(value) => {
+          match validate_webhook_submit_request(value) {
+            Ok(_) => {
+              return Ok(value)
+            }
+            Err(msg) => {
+              return Err(for_request(400, ctx, "invalid_webhook_event", msg))
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_webhook_event", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn workflow_request_from_webhook(request: WebhookSubmitRequest) -> WorkflowEventSubmitRequest {
+  return WorkflowEventSubmitRequest(request.event_id,
+                                    request.event_kind,
+                                    request.release_revision_id,
+                                    request.payload)
+}
+
+fn webhook_submit_response(ctx: RequestContext, provider: String, outcome: Json) -> Result<Response, String> {
+  let run = workflow_run_from_json(get_value(outcome, "run")?)?
+  let envelope = WebhookSubmitEnvelope(provider, get_string(outcome, "kind")?, run, ctx.request_id_text, unix_millis())
+  validate_webhook_submit_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn webhook_submit_error_response(ctx: RequestContext, msg: String) -> Result<Response, String> {
+  if msg == "workflow definition not found" {
+    return Ok(for_request(409, ctx, "webhook_workflow_not_found", msg))
+  }
+  if msg == "release revision not found" {
+    return Ok(for_request(409, ctx, "webhook_release_revision_not_found", msg))
+  }
+  if msg == "workflow event kind is not enabled for this definition" {
+    return Ok(for_request(409, ctx, "webhook_event_kind_not_enabled", msg))
+  }
+  return Err(msg)
+}
+
+fn submit_verified_webhook(ctx: RequestContext,
+                           identity: WebhookIdentity,
+                           submit_request: WebhookSubmitRequest) -> Result<Response, String> {
+  match submit_workflow_event(identity.app,
+                              identity.channel,
+                              workflow_request_from_webhook(submit_request),
+                              "webhook") {
+    Ok(outcome) => {
+      return webhook_submit_response(ctx, identity.provider, outcome)
+    }
+    Err(msg) => {
+      return webhook_submit_error_response(ctx, msg)
+    }
+  }
+}
+
+fn handle_verified_webhook(ctx: RequestContext,
+                           request: Request,
+                           identity: WebhookIdentity) -> Result<Response, String> {
+  match webhook_submit_request_from_http(ctx, request) {
+    Ok(submit_request) => {
+      return submit_verified_webhook(ctx, identity, submit_request)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_webhook_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match webhook_identity_from_request(ctx, request) {
+    Ok(identity) => {
+      return handle_verified_webhook(ctx, request, identity)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_webhook_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if !method_matches(Post, request.method) {
+    return webhook_method_not_allowed()
+  }
+  match ensure_webhook_preview(ctx) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match verify_webhook_signature(ctx, request) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  return await handle_webhook_route_inner(ctx, request)
+}

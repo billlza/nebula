@@ -1,0 +1,250 @@
+module db
+import postgres_backend
+import sqlite_backend
+import std::env
+import std::json
+import std::result
+
+enum ConnectionInner {
+  Sqlite(SqliteConnection)
+  Postgres(PostgresConnection)
+}
+
+enum TransactionInner {
+  SqliteTx(SqliteTransaction)
+  PostgresTx(PostgresTransaction)
+}
+
+enum ResultSetInner {
+  SqliteRows(SqliteResultSet)
+  PostgresRows(PostgresResultSet)
+}
+
+enum RowInner {
+  SqliteRowValue(SqliteRow)
+  PostgresRowValue(PostgresRow)
+}
+
+struct Connection {
+  inner: ConnectionInner
+}
+
+struct Transaction {
+  inner: TransactionInner
+}
+
+struct ResultSet {
+  inner: ResultSetInner
+}
+
+struct Row {
+  inner: RowInner
+}
+
+fn data_backend() -> Result<String, String> {
+  let backend = get_or_default("APP_DATA_BACKEND", "sqlite")
+  if backend == "" || backend == "sqlite" {
+    return Ok("sqlite")
+  }
+  if backend == "postgres" {
+    return Ok("postgres")
+  }
+  return Err("APP_DATA_BACKEND must be sqlite or postgres")
+}
+
+fn no_params() -> Json {
+  return sqlite_no_params()
+}
+
+fn migration(version: Int, name: String, sql: String) -> Json {
+  return sqlite_migration(version, name, sql)
+}
+
+fn open(path: String) -> Result<Connection, String> {
+  let backend = data_backend()?
+  if backend == "postgres" {
+    return Ok(Connection(Postgres(postgres_open()?)))
+  }
+  return Ok(Connection(Sqlite(sqlite_open(path)?)))
+}
+
+fn Connection_close(self: Connection) -> Result<Void, String> {
+  match self.inner {
+    Sqlite(conn) => {
+      return conn.close()
+    }
+    Postgres(conn) => {
+      return conn.close()
+    }
+  }
+}
+
+fn Connection_begin_transaction(self: Connection) -> Result<Transaction, String> {
+  match self.inner {
+    Sqlite(conn) => {
+      return Ok(Transaction(SqliteTx(conn.begin_transaction()?)))
+    }
+    Postgres(conn) => {
+      return Ok(Transaction(PostgresTx(conn.begin_transaction()?)))
+    }
+  }
+}
+
+fn Connection_execute(self: Connection, sql: String, params: Json) -> Result<Int, String> {
+  match self.inner {
+    Sqlite(conn) => {
+      return conn.execute(sql, params)
+    }
+    Postgres(conn) => {
+      return conn.execute(sql, params)
+    }
+  }
+}
+
+fn Connection_execute0(self: Connection, sql: String) -> Result<Int, String> {
+  return self.execute(sql, no_params())
+}
+
+fn Connection_query(self: Connection, sql: String, params: Json) -> Result<ResultSet, String> {
+  match self.inner {
+    Sqlite(conn) => {
+      return Ok(ResultSet(SqliteRows(conn.query(sql, params)?)))
+    }
+    Postgres(conn) => {
+      return Ok(ResultSet(PostgresRows(conn.query(sql, params)?)))
+    }
+  }
+}
+
+fn Connection_query0(self: Connection, sql: String) -> Result<ResultSet, String> {
+  return self.query(sql, no_params())
+}
+
+fn Connection_run_migrations(self: Connection, migrations: Json) -> Result<Int, String> {
+  match self.inner {
+    Sqlite(conn) => {
+      return conn.run_migrations(migrations)
+    }
+    Postgres(conn) => {
+      return conn.run_migrations(migrations)
+    }
+  }
+}
+
+fn Transaction_execute(self: Transaction, sql: String, params: Json) -> Result<Int, String> {
+  match self.inner {
+    SqliteTx(tx) => {
+      return tx.execute(sql, params)
+    }
+    PostgresTx(tx) => {
+      return tx.execute(sql, params)
+    }
+  }
+}
+
+fn Transaction_execute0(self: Transaction, sql: String) -> Result<Int, String> {
+  return self.execute(sql, no_params())
+}
+
+fn Transaction_query(self: Transaction, sql: String, params: Json) -> Result<ResultSet, String> {
+  match self.inner {
+    SqliteTx(tx) => {
+      return Ok(ResultSet(SqliteRows(tx.query(sql, params)?)))
+    }
+    PostgresTx(tx) => {
+      return Ok(ResultSet(PostgresRows(tx.query(sql, params)?)))
+    }
+  }
+}
+
+fn Transaction_query0(self: Transaction, sql: String) -> Result<ResultSet, String> {
+  return self.query(sql, no_params())
+}
+
+fn Transaction_commit(self: Transaction) -> Result<Void, String> {
+  match self.inner {
+    SqliteTx(tx) => {
+      return tx.commit()
+    }
+    PostgresTx(tx) => {
+      return tx.commit()
+    }
+  }
+}
+
+fn Transaction_rollback(self: Transaction) -> Result<Void, String> {
+  match self.inner {
+    SqliteTx(tx) => {
+      return tx.rollback()
+    }
+    PostgresTx(tx) => {
+      return tx.rollback()
+    }
+  }
+}
+
+fn ResultSet_len(self: ResultSet) -> Result<Int, String> {
+  match self.inner {
+    SqliteRows(rows) => {
+      return rows.len()
+    }
+    PostgresRows(rows) => {
+      return rows.len()
+    }
+  }
+}
+
+fn ResultSet_row(self: ResultSet, index: Int) -> Result<Row, String> {
+  match self.inner {
+    SqliteRows(rows) => {
+      return Ok(Row(SqliteRowValue(rows.row(index)?)))
+    }
+    PostgresRows(rows) => {
+      return Ok(Row(PostgresRowValue(rows.row(index)?)))
+    }
+  }
+}
+
+fn Row_get_string(self: Row, column: String) -> Result<String, String> {
+  match self.inner {
+    SqliteRowValue(row) => {
+      return row.get_string(column)
+    }
+    PostgresRowValue(row) => {
+      return row.get_string(column)
+    }
+  }
+}
+
+fn Row_get_int(self: Row, column: String) -> Result<Int, String> {
+  match self.inner {
+    SqliteRowValue(row) => {
+      return row.get_int(column)
+    }
+    PostgresRowValue(row) => {
+      return row.get_int(column)
+    }
+  }
+}
+
+fn Row_get_bool(self: Row, column: String) -> Result<Bool, String> {
+  match self.inner {
+    SqliteRowValue(row) => {
+      return row.get_bool(column)
+    }
+    PostgresRowValue(row) => {
+      return row.get_bool(column)
+    }
+  }
+}
+
+fn Row_get_json(self: Row, column: String) -> Result<Json, String> {
+  match self.inner {
+    SqliteRowValue(row) => {
+      return row.get_json(column)
+    }
+    PostgresRowValue(row) => {
+      return row.get_json(column)
+    }
+  }
+}

@@ -1,0 +1,43 @@
+module server
+import std::http
+import std::http_json
+import std::json
+import std::net
+import std::result
+
+async fn handle_request(request: Request) -> Response {
+  return await dispatch1(
+    request,
+    Post,
+    "/echo",
+    handle_echo,
+    not_found_text("not found")
+  )
+}
+
+async fn handle_echo(request: Request) -> Response {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match get_string(payload, "name") {
+        Ok(name) => {
+          return ok_json(object1("name", string_value(name)))
+        }
+        Err(msg) => {
+          return bad_request_text(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return bad_request_text(msg)
+    }
+  }
+}
+
+async fn serve_once(listener: TcpListener) -> Void {
+  match await serve_n(listener, 1, handle_request) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

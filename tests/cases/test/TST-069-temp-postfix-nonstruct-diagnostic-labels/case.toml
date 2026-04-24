@@ -1,0 +1,7 @@
+id = "TST-069-temp-postfix-nonstruct-diagnostic-labels"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" check /Users/bill/Desktop/nebula/nebula/tests/fixtures/temp_postfix_nonstruct_field_label.nb --diag-format json > work/temp-postfix-field.json 2>&1 || true\n\"$NEBULA_BINARY\" check /Users/bill/Desktop/nebula/nebula/tests/fixtures/temp_postfix_nonstruct_method_label.nb --diag-format json > work/temp-postfix-method.json 2>&1 || true\ngrep -F 'field access on non-struct value: make_int()' work/temp-postfix-field.json\ngrep -F 'method call on non-struct value: make_int()' work/temp-postfix-method.json"
+expect_rc = 0

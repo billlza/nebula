@@ -1,0 +1,12 @@
+id = "TST-060-install-ps1-help-surface"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "if command -v pwsh >/dev/null 2>&1; then pwsh -File \"$NEBULA_REPO_ROOT/scripts/install.ps1\" -Help > work/install-ps1-help.out 2>&1; else grep -F 'Usage: install.ps1' \"$NEBULA_REPO_ROOT/scripts/install.ps1\" > work/install-ps1-help.out; fi"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'Usage: install.ps1' work/install-ps1-help.out && grep -F 'InstallPrefix' work/install-ps1-help.out && grep -F 'VerifyAttestations' work/install-ps1-help.out"
+expect_rc = 0

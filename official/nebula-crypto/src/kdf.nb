@@ -1,0 +1,9 @@
+module kdf
+import std::bytes
+import std::result
+
+extern fn __nebula_crypto_blake3_derive_key(context: String, material: Bytes, out_len: Int) -> Result<Bytes, String>
+
+fn blake3_derive_key(context: String, material: Bytes, out_len: Int) -> Result<Bytes, String> {
+  return __nebula_crypto_blake3_derive_key(context, material, out_len)
+}

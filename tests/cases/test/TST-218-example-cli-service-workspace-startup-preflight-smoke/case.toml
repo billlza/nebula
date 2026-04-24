@@ -1,0 +1,91 @@
+id = "TST-218-example-cli-service-workspace-startup-preflight-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import build_service_binary, copy_example, fetch_workspace
+
+
+def require_failure(result: subprocess.CompletedProcess[str], needle: str, context: str) -> None:
+    if result.returncode == 0:
+        print(result.stdout, end='')
+        print(result.stderr, end='')
+        raise SystemExit(f'{context} unexpectedly succeeded')
+    merged = result.stdout + result.stderr
+    if needle not in merged:
+        print(result.stdout, end='')
+        print(result.stderr, end='')
+        raise SystemExit(f'{context} did not contain expected text: {needle!r}')
+
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_startup_preflight')
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+service_binary = build_service_binary(binary, root)
+
+invalid_bool = subprocess.run(
+    [str(service_binary)],
+    capture_output=True,
+    text=True,
+    env={
+        **os.environ,
+        'APP_AUTH_REQUIRED': 'maybe',
+    },
+)
+require_failure(invalid_bool, 'startup preflight failed: APP_AUTH_REQUIRED must be true/false or 1/0', 'invalid APP_AUTH_REQUIRED')
+
+missing_admin = subprocess.run(
+    [str(service_binary)],
+    capture_output=True,
+    text=True,
+    env={
+        **os.environ,
+        'APP_AUTH_REQUIRED': '1',
+        'APP_READ_TOKEN': 'reader-token',
+        'APP_WRITE_TOKEN': 'writer-token',
+    },
+)
+require_failure(missing_admin, 'startup preflight failed: APP_ADMIN_TOKEN is required when APP_AUTH_REQUIRED is enabled', 'missing admin token')
+
+duplicate_tokens = subprocess.run(
+    [str(service_binary)],
+    capture_output=True,
+    text=True,
+    env={
+        **os.environ,
+        'APP_AUTH_REQUIRED': '1',
+        'APP_READ_TOKEN': 'shared-token',
+        'APP_WRITE_TOKEN': 'shared-token',
+        'APP_ADMIN_TOKEN': 'admin-token',
+    },
+)
+require_failure(duplicate_tokens, 'startup preflight failed: APP_READ_TOKEN must differ from APP_WRITE_TOKEN', 'duplicate tokens')
+
+occupied_state_dir = root / 'occupied-state'
+occupied_state_dir.write_text('occupied\\n', encoding='utf-8')
+bad_state_dir = subprocess.run(
+    [str(service_binary)],
+    capture_output=True,
+    text=True,
+    env={
+        **os.environ,
+        'APP_STATE_DIR': str(occupied_state_dir),
+    },
+)
+require_failure(bad_state_dir, 'startup preflight failed: failed to create database directory:', 'occupied state dir')
+
+print('example-cli-service-workspace-startup-preflight-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-startup-preflight-ok"]

@@ -1,0 +1,866 @@
+module workflow_validate
+import jobs_pkg::graph
+import jobs_pkg::request_validate
+import validate
+import workflow_contracts
+import workflow_jobs_adapter
+import std::json
+import std::result
+
+fn validate_workflow_trigger_kind(trigger_kind: String) -> Result<Bool, String> {
+  if trigger_kind == "internal_event" {
+    return Ok(true)
+  }
+  return Err("workflow trigger_kind must be internal_event")
+}
+
+fn validate_workflow_event_kind(event_kind: String) -> Result<Bool, String> {
+  if event_kind == "" {
+    return Err("workflow event_kind must be non-empty")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_kind(kind: String) -> Result<Bool, String> {
+  if kind == "approval_gate" || kind == "leased_task" {
+    return Ok(true)
+  }
+  return Err("workflow stage kind must be approval_gate or leased_task")
+}
+
+fn validate_workflow_task_kind(task_kind: String) -> Result<Bool, String> {
+  if task_kind == "apply_release" || task_kind == "shell_command" {
+    return Ok(true)
+  }
+  return Err("workflow task_kind must be apply_release or shell_command")
+}
+
+fn validate_workflow_stage_name(name: String) -> Result<Bool, String> {
+  if name == "" {
+    return Err("workflow stage name must be non-empty")
+  }
+  return Ok(true)
+}
+
+fn empty_dependency_array() -> Json {
+  return workflow_jobs_empty_dependency_array()
+}
+
+fn single_dependency_array(name: String) -> Json {
+  return workflow_jobs_single_dependency_array(name)
+}
+
+fn workflow_stage_json_at(stages: Json, index: Int) -> Result<Json, String> {
+  return workflow_jobs_stage_json_at(stages, index)
+}
+
+fn workflow_stage_name_at(stages: Json, index: Int) -> Result<String, String> {
+  return workflow_jobs_stage_name_at(stages, index)
+}
+
+fn workflow_stage_depends_on(stages: Json, index: Int) -> Result<Json, String> {
+  return workflow_jobs_stage_depends_on(stages, index)
+}
+
+fn workflow_stage_has_explicit_depends_on(stages: Json, index: Int) -> Result<Bool, String> {
+  return workflow_jobs_stage_has_explicit_depends_on(stages, index)
+}
+
+fn validate_approval_gate_stage(stage: WorkflowStageSpec) -> Result<Bool, String> {
+  if stage.task_kind != "" {
+    return Err("approval_gate stages must leave task_kind empty")
+  }
+  if stage.timeout_s != 0 || stage.max_attempts != 0 {
+    return Err("approval_gate stages must keep timeout_s/max_attempts at zero values")
+  }
+  return Ok(true)
+}
+
+fn validate_leased_task_stage(stage: WorkflowStageSpec) -> Result<Bool, String> {
+  validate_workflow_task_kind(stage.task_kind)?
+  if stage.timeout_s <= 0 {
+    return Err("leased_task timeout_s must be positive")
+  }
+  if stage.max_attempts <= 0 {
+    return Err("leased_task max_attempts must be positive")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_spec(stage: WorkflowStageSpec) -> Result<Bool, String> {
+  validate_workflow_stage_name(stage.name)?
+  validate_workflow_stage_kind(stage.kind)?
+  if stage.kind == "approval_gate" {
+    return validate_approval_gate_stage(stage)
+  }
+  return validate_leased_task_stage(stage)
+}
+
+fn workflow_stage_specs_leased_task_count(stages: Json) -> Result<Int, String> {
+  let count = array_len(stages)?
+  let leased_task_count = 0
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_spec_from_json(array_get(stages, index)?)?
+    validate_workflow_stage_spec(stage)?
+    if stage.kind == "leased_task" {
+      leased_task_count += 1
+    }
+    index += 1
+  }
+  return Ok(leased_task_count)
+}
+
+fn workflow_stage_index_by_name(stages: Json, name: String) -> Result<Int, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    if workflow_stage_name_at(stages, index)? == name {
+      return Ok(index)
+    }
+    index += 1
+  }
+  return Ok(-1)
+}
+
+fn validate_stage_dependency_name(stages: Json, stage_name: String, dependency: String) -> Result<Bool, String> {
+  if dependency == "" {
+    return Err("workflow stage depends_on entries must be non-empty")
+  }
+  if dependency == stage_name {
+    return Err("workflow stage must not depend on itself")
+  }
+  if workflow_stage_index_by_name(stages, dependency)? < 0 {
+    return Err(text_concat("workflow stage depends_on references unknown stage: ", dependency))
+  }
+  return Ok(true)
+}
+
+fn validate_stage_dependency_name_at(stages: Json,
+                                     stage_name: String,
+                                     depends_on: Json,
+                                     index: Int) -> Result<Bool, String> {
+  validate_stage_dependency_name(stages, stage_name, as_string(array_get(depends_on, index)?)?)?
+  return Ok(true)
+}
+
+fn dependency_first_index(depends_on: Json, name: String) -> Result<Int, String> {
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    if as_string(array_get(depends_on, index)?)? == name {
+      return Ok(index)
+    }
+    index += 1
+  }
+  return Ok(-1)
+}
+
+fn validate_stage_dependency_unique(depends_on: Json, index: Int) -> Result<Bool, String> {
+  let name = as_string(array_get(depends_on, index)?)?
+  if dependency_first_index(depends_on, name)? != index {
+    return Err(text_concat("workflow stage depends_on entries must be unique: ", name))
+  }
+  return Ok(true)
+}
+
+fn validate_stage_dependency_names_for(stages: Json, stage_name: String, depends_on: Json) -> Result<Bool, String> {
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    validate_stage_dependency_unique(depends_on, index)?
+    validate_stage_dependency_name_at(stages, stage_name, depends_on, index)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_stage_dependency_names(stages: Json, stage_index: Int) -> Result<Bool, String> {
+  return validate_stage_dependency_names_for(stages,
+                                             workflow_stage_name_at(stages, stage_index)?,
+                                             workflow_stage_depends_on(stages, stage_index)?)
+}
+
+fn validate_unique_stage_names(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    let name = workflow_stage_name_at(stages, index)?
+    if workflow_stage_index_by_name(stages, name)? != index {
+      return Err(text_concat("workflow stage name must be unique: ", name))
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn dependency_reaches_target(stages: Json, depends_on: Json, target: String, remaining: Int) -> Result<Bool, String> {
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    let dependency = as_string(array_get(depends_on, index)?)?
+    if dependency == target {
+      return Ok(true)
+    }
+    if workflow_dependency_reaches(stages, dependency, target, remaining - 1)? {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn workflow_dependency_reaches(stages: Json,
+                               current: String,
+                               target: String,
+                               remaining: Int) -> Result<Bool, String> {
+  if remaining <= 0 {
+    return Err("workflow stages must not contain dependency cycles")
+  }
+  let current_index = workflow_stage_index_by_name(stages, current)?
+  if current_index < 0 {
+    return Err(text_concat("workflow stage depends_on references unknown stage: ", current))
+  }
+  let depends_on = workflow_stage_depends_on(stages, current_index)?
+  return dependency_reaches_target(stages, depends_on, target, remaining)
+}
+
+fn validate_dependency_cycles(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    let name = workflow_stage_name_at(stages, index)?
+    if workflow_dependency_reaches(stages, name, name, count)? {
+      return Err("workflow stages must not contain dependency cycles")
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn workflow_stage_any_explicit_depends_on(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    if workflow_stage_has_explicit_depends_on(stages, index)? {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn validate_explicit_depends_on_completeness(stages: Json) -> Result<Bool, String> {
+  if !workflow_stage_any_explicit_depends_on(stages)? {
+    return Ok(true)
+  }
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    if !workflow_stage_has_explicit_depends_on(stages, index)? {
+      return Err("workflow stages must all declare depends_on when any stage uses depends_on")
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_dependency_names(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    validate_stage_dependency_names(stages, index)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_dependency_graph(stages: Json) -> Result<Bool, String> {
+  validate_unique_stage_names(stages)?
+  validate_explicit_depends_on_completeness(stages)?
+  validate_workflow_stage_dependency_names(stages)?
+  validate_dependency_cycles(stages)?
+  return validate_jobs_stage_dependency_graph(stages)
+}
+
+fn workflow_stage_for_jobs_graph_json(stages: Json, index: Int) -> Result<Json, String> {
+  return workflow_stage_as_job_stage_json(stages, index)
+}
+
+fn workflow_jobs_graph_json(stages: Json) -> Result<Json, String> {
+  return workflow_stages_as_job_stages_json(stages)
+}
+
+fn validate_jobs_stage_dependency_graph(stages: Json) -> Result<Bool, String> {
+  return validate_stage_graph(workflow_jobs_graph_json(stages)?)
+}
+
+fn validate_workflow_stage_specs_array(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  if count <= 0 {
+    return Err("workflow stages must contain at least one stage")
+  }
+  let leased_task_count = workflow_stage_specs_leased_task_count(stages)?
+  if leased_task_count <= 0 {
+    return Err("workflow stages must contain at least one leased_task stage")
+  }
+  validate_workflow_stage_dependency_graph(stages)?
+  return Ok(true)
+}
+
+fn validate_workflow_put_request(request: WorkflowPutRequest) -> Result<Bool, String> {
+  validate_workflow_trigger_kind(request.trigger_kind)?
+  validate_workflow_event_kind(request.event_kind)?
+  return validate_workflow_stage_specs_array(request.stages)
+}
+
+fn validate_workflow_definition_identity(definition: WorkflowDefinition) -> Result<Bool, String> {
+  validate_app_segment(definition.app)?
+  validate_channel_segment(definition.channel)?
+  return Ok(true)
+}
+
+fn validate_workflow_definition_state(definition: WorkflowDefinition) -> Result<Bool, String> {
+  if definition.revision_id <= 0 {
+    return Err("workflow definition revision_id must be positive")
+  }
+  validate_actor_segment(definition.updated_by)?
+  if definition.updated_unix_ms < 0 {
+    return Err("workflow definition updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_definition(definition: WorkflowDefinition) -> Result<Bool, String> {
+  validate_workflow_definition_identity(definition)?
+  validate_workflow_trigger_kind(definition.trigger_kind)?
+  validate_workflow_event_kind(definition.event_kind)?
+  validate_workflow_stage_specs_array(definition.stages)?
+  return validate_workflow_definition_state(definition)
+}
+
+fn validate_workflow_definition_envelope(envelope: WorkflowDefinitionEnvelope) -> Result<Bool, String> {
+  validate_workflow_definition(envelope.definition)?
+  if envelope.request_id == "" {
+    return Err("workflow definition envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("workflow definition envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_run_status(status: String) -> Result<Bool, String> {
+  if status == "blocked" || status == "ready" || status == "leased" || status == "completed" || status == "failed" {
+    return Ok(true)
+  }
+  return Err("workflow stage status must be blocked, ready, leased, completed, or failed")
+}
+
+fn validate_idle_worker_lease(lease: WorkerLease) -> Result<Bool, String> {
+  if lease.lease_id != "" || lease.run_id != 0 || lease.app != "" || lease.channel != "" ||
+     lease.stage_index != 0 || lease.stage_name != "" || lease.task_kind != "" ||
+     lease.release_revision_id != 0 || lease.lease_expires_unix_ms != 0 {
+    return Err("idle worker lease must keep scalar fields at zero values")
+  }
+  if stringify(lease.payload) != "null" {
+    return Err("idle worker lease must use null payload")
+  }
+  return Ok(true)
+}
+
+fn validate_worker_lease_identity(lease: WorkerLease) -> Result<Bool, String> {
+  if lease.lease_id == "" {
+    return Err("worker lease lease_id must be non-empty")
+  }
+  if lease.run_id <= 0 {
+    return Err("worker lease run_id must be positive")
+  }
+  validate_app_segment(lease.app)?
+  validate_channel_segment(lease.channel)?
+  if lease.stage_index < 0 {
+    return Err("worker lease stage_index must be non-negative")
+  }
+  validate_workflow_stage_name(lease.stage_name)?
+  return Ok(true)
+}
+
+fn validate_worker_lease_state(lease: WorkerLease) -> Result<Bool, String> {
+  validate_workflow_task_kind(lease.task_kind)?
+  if lease.release_revision_id < 0 {
+    return Err("worker lease release_revision_id must be non-negative")
+  }
+  if lease.lease_expires_unix_ms <= 0 {
+    return Err("worker lease lease_expires_unix_ms must be positive")
+  }
+  return Ok(true)
+}
+
+fn validate_active_worker_lease(lease: WorkerLease) -> Result<Bool, String> {
+  validate_worker_lease_identity(lease)?
+  return validate_worker_lease_state(lease)
+}
+
+fn validate_worker_lease(lease: WorkerLease) -> Result<Bool, String> {
+  if lease.lease_id == "" {
+    return validate_idle_worker_lease(lease)
+  }
+  return validate_active_worker_lease(lease)
+}
+
+fn validate_workflow_stage_run_identity(stage: WorkflowStageRun) -> Result<Bool, String> {
+  if stage.stage_index < 0 {
+    return Err("workflow stage_index must be non-negative")
+  }
+  validate_workflow_stage_name(stage.stage_name)?
+  validate_workflow_stage_kind(stage.kind)?
+  validate_workflow_stage_run_status(stage.status)?
+  if stage.attempt < 0 {
+    return Err("workflow stage attempt must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_run_payload(stage: WorkflowStageRun) -> Result<Bool, String> {
+  if stage.kind == "approval_gate" {
+    if stage.task_kind != "" || stage.lease_id != "" || stage.worker_id != "" || stage.lease_expires_unix_ms != 0 {
+      return Err("approval_gate stage runs must not carry lease/task fields")
+    }
+    return Ok(true)
+  }
+  return validate_workflow_task_kind(stage.task_kind)
+}
+
+fn validate_workflow_stage_run_timing(stage: WorkflowStageRun) -> Result<Bool, String> {
+  if stage.worker_id != "" {
+    validate_actor_segment(stage.worker_id)?
+  }
+  if stage.started_unix_ms < 0 || stage.finished_unix_ms < 0 || stage.lease_expires_unix_ms < 0 {
+    return Err("workflow stage unix_ms fields must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_stage_run(stage: WorkflowStageRun) -> Result<Bool, String> {
+  validate_workflow_stage_run_identity(stage)?
+  validate_workflow_stage_run_payload(stage)?
+  return validate_workflow_stage_run_timing(stage)
+}
+
+fn validate_workflow_stage_runs_array(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_from_json(array_get(stages, index)?)?
+    validate_workflow_stage_run(stage)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_run_status(status: String) -> Result<Bool, String> {
+  if status == "blocked" || status == "ready" || status == "leased" || status == "completed" || status == "failed" {
+    return Ok(true)
+  }
+  return Err("workflow run status must be blocked, ready, leased, completed, or failed")
+}
+
+fn validate_workflow_run_identity(run: WorkflowRun) -> Result<Bool, String> {
+  if run.run_id <= 0 {
+    return Err("workflow run_id must be positive")
+  }
+  validate_app_segment(run.app)?
+  validate_channel_segment(run.channel)?
+  if run.workflow_revision_id <= 0 {
+    return Err("workflow workflow_revision_id must be positive")
+  }
+  if run.event_id == "" {
+    return Err("workflow event_id must be non-empty")
+  }
+  validate_workflow_event_kind(run.event_kind)?
+  if run.release_revision_id < 0 {
+    return Err("workflow release_revision_id must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_run_state(run: WorkflowRun) -> Result<Bool, String> {
+  validate_workflow_run_status(run.status)?
+  if run.current_stage_index < 0 {
+    return Err("workflow current_stage_index must be non-negative")
+  }
+  validate_actor_segment(run.requested_by)?
+  if run.requested_unix_ms < 0 || run.finished_unix_ms < 0 {
+    return Err("workflow run unix_ms fields must be non-negative")
+  }
+  return validate_workflow_stage_runs_array(run.stages)
+}
+
+fn validate_workflow_run(run: WorkflowRun) -> Result<Bool, String> {
+  validate_workflow_run_identity(run)?
+  return validate_workflow_run_state(run)
+}
+
+fn validate_workflow_run_envelope(envelope: WorkflowRunEnvelope) -> Result<Bool, String> {
+  validate_workflow_run(envelope.run)?
+  if envelope.request_id == "" {
+    return Err("workflow run envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("workflow run envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_runs_array(runs: Json) -> Result<Bool, String> {
+  let count = array_len(runs)?
+  let index = 0
+  while index < count {
+    let run = workflow_run_from_json(array_get(runs, index)?)?
+    validate_workflow_run(run)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_run_list_envelope(envelope: WorkflowRunListEnvelope) -> Result<Bool, String> {
+  validate_app_segment(envelope.app)?
+  validate_channel_segment(envelope.channel)?
+  validate_workflow_runs_array(envelope.runs)?
+  if envelope.request_id == "" {
+    return Err("workflow run list envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("workflow run list envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_event_submit_request(request: WorkflowEventSubmitRequest) -> Result<Bool, String> {
+  if request.event_id == "" {
+    return Err("workflow event_id must be non-empty")
+  }
+  validate_workflow_event_kind(request.event_kind)?
+  if request.release_revision_id < 0 {
+    return Err("workflow release_revision_id must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_workflow_event_submit_outcome(outcome: String) -> Result<Bool, String> {
+  if outcome == "created" || outcome == "existing" {
+    return Ok(true)
+  }
+  return Err("workflow event submit outcome must be created or existing")
+}
+
+fn validate_workflow_event_submit_envelope(envelope: WorkflowEventSubmitEnvelope) -> Result<Bool, String> {
+  validate_workflow_event_submit_outcome(envelope.outcome)?
+  validate_workflow_run(envelope.run)?
+  if envelope.request_id == "" {
+    return Err("workflow event submit envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("workflow event submit envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_worker_claim_request(request: WorkerClaimRequest) -> Result<Bool, String> {
+  validate_actor_segment(request.worker_id)?
+  if request.task_kind != "" {
+    validate_workflow_task_kind(request.task_kind)?
+  }
+  return validate_worker_claim_request_shape(request.worker_id, request.task_kind)
+}
+
+fn validate_worker_claim_outcome(outcome: String) -> Result<Bool, String> {
+  if outcome == "idle" || outcome == "claimed" {
+    return Ok(true)
+  }
+  return Err("worker claim outcome must be idle or claimed")
+}
+
+fn validate_worker_claim_envelope(envelope: WorkerClaimEnvelope) -> Result<Bool, String> {
+  validate_worker_claim_outcome(envelope.outcome)?
+  validate_worker_lease(envelope.lease)?
+  if envelope.outcome == "idle" && envelope.lease.lease_id != "" {
+    return Err("idle worker claim outcomes must use the idle lease placeholder")
+  }
+  if envelope.outcome == "claimed" && envelope.lease.lease_id == "" {
+    return Err("claimed worker outcomes must carry a real lease")
+  }
+  if envelope.request_id == "" {
+    return Err("worker claim envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("worker claim envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_worker_heartbeat_request(request: WorkerHeartbeatRequest) -> Result<Bool, String> {
+  return validate_actor_segment(request.worker_id)
+}
+
+fn validate_worker_heartbeat_envelope(envelope: WorkerHeartbeatEnvelope) -> Result<Bool, String> {
+  validate_worker_lease(envelope.lease)?
+  if envelope.lease.lease_id == "" {
+    return Err("worker heartbeat must return a real lease")
+  }
+  if envelope.request_id == "" {
+    return Err("worker heartbeat envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("worker heartbeat envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_worker_complete_status(status: String) -> Result<Bool, String> {
+  if status == "succeeded" || status == "failed" {
+    return Ok(true)
+  }
+  return Err("worker complete status must be succeeded or failed")
+}
+
+fn validate_worker_complete_request(request: WorkerCompleteRequest) -> Result<Bool, String> {
+  validate_actor_segment(request.worker_id)?
+  return validate_worker_complete_status(request.status)
+}
+
+fn validate_worker_complete_request_for_lease(lease_id: String,
+                                              request: WorkerCompleteRequest) -> Result<Bool, String> {
+  validate_worker_complete_request(request)?
+  return validate_worker_complete_request_shape(request.worker_id, lease_id, request.status)
+}
+
+fn validate_worker_complete_envelope(envelope: WorkerCompleteEnvelope) -> Result<Bool, String> {
+  validate_workflow_run(envelope.run)?
+  if envelope.request_id == "" {
+    return Err("worker complete envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("worker complete envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_workflow_definition_validation_contract() -> Void {
+  let stages = array_builder()
+  stages = array_push(stages, WorkflowStageSpec("gate", "approval_gate", "", 0, 0).as_json())
+  stages = array_push(stages, WorkflowStageSpec("apply", "leased_task", "apply_release", 30, 3).as_json())
+  let definition = WorkflowDefinition("control-plane",
+                                      "prod",
+                                      "internal_event",
+                                      "release_apply_requested",
+                                      array_build(stages),
+                                      1,
+                                      "admin",
+                                      123)
+  match validate_workflow_definition(definition) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+fn test_depends_on(first: String, second: String) -> Json {
+  let builder = array_builder()
+  if first != "" {
+    builder = array_push(builder, string_value(first))
+  }
+  if second != "" {
+    builder = array_push(builder, string_value(second))
+  }
+  return array_build(builder)
+}
+
+fn test_stage_spec_json(name: String,
+                        kind: String,
+                        task_kind: String,
+                        timeout_s: Int,
+                        max_attempts: Int,
+                        depends_on: Json) -> Json {
+  return object6("name",
+                 string_value(name),
+                 "kind",
+                 string_value(kind),
+                 "task_kind",
+                 string_value(task_kind),
+                 "timeout_s",
+                 int_value(timeout_s),
+                 "max_attempts",
+                 int_value(max_attempts),
+                 "depends_on",
+                 depends_on)
+}
+
+fn test_dag_stage_specs() -> Json {
+  let stages = array_builder()
+  stages = array_push(stages, test_stage_spec_json("approval", "approval_gate", "", 0, 0, test_depends_on("", "")))
+  stages = array_push(stages, test_stage_spec_json("apply-a", "leased_task", "apply_release", 30, 3, test_depends_on("approval", "")))
+  stages = array_push(stages, test_stage_spec_json("apply-b", "leased_task", "apply_release", 30, 3, test_depends_on("approval", "")))
+  return array_build(stages)
+}
+
+fn assert_workflow_stages_rejected(stages: Json, expected: String) -> Void {
+  match validate_workflow_stage_specs_array(stages) {
+    Ok(_) => {
+      panic("workflow stages unexpectedly passed validation")
+    }
+    Err(msg) => {
+      assert(msg == expected, text_concat("unexpected workflow validation error: ", msg))
+    }
+  }
+}
+
+@test
+fn test_workflow_dag_dependency_validation_contract() -> Void {
+  match validate_workflow_stage_specs_array(test_dag_stage_specs()) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+
+  let unknown = array_builder()
+  unknown = array_push(unknown, test_stage_spec_json("apply", "leased_task", "apply_release", 30, 3, test_depends_on("missing", "")))
+  assert_workflow_stages_rejected(array_build(unknown),
+                                  "workflow stage depends_on references unknown stage: missing")
+
+  let cycle = array_builder()
+  cycle = array_push(cycle, test_stage_spec_json("a", "leased_task", "apply_release", 30, 3, test_depends_on("b", "")))
+  cycle = array_push(cycle, test_stage_spec_json("b", "leased_task", "apply_release", 30, 3, test_depends_on("a", "")))
+  assert_workflow_stages_rejected(array_build(cycle), "workflow stages must not contain dependency cycles")
+}
+
+@test
+fn test_workflow_dag_rejects_mixed_or_duplicate_dependencies() -> Void {
+  let mixed = array_builder()
+  mixed = array_push(mixed, test_stage_spec_json("approval", "approval_gate", "", 0, 0, test_depends_on("", "")))
+  mixed = array_push(mixed, WorkflowStageSpec("apply", "leased_task", "apply_release", 30, 3).as_json())
+  assert_workflow_stages_rejected(array_build(mixed),
+                                  "workflow stages must all declare depends_on when any stage uses depends_on")
+
+  let duplicate = array_builder()
+  duplicate = array_push(duplicate, test_stage_spec_json("approval", "approval_gate", "", 0, 0, test_depends_on("", "")))
+  duplicate = array_push(duplicate, test_stage_spec_json("apply", "leased_task", "apply_release", 30, 3, test_depends_on("approval", "approval")))
+  assert_workflow_stages_rejected(array_build(duplicate),
+                                  "workflow stage depends_on entries must be unique: approval")
+}
+
+@test
+fn test_worker_claim_idle_contract() -> Void {
+  let envelope = WorkerClaimEnvelope("idle", idle_worker_lease(), "req-idle", 10)
+  match validate_worker_claim_envelope(envelope) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_workflow_event_submit_contract() -> Void {
+  let stage_runs = array_builder()
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(0, "gate", "approval_gate", "", "blocked", 0, "", "", 0, 0, 0, "", null_value()).as_json())
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(1, "apply", "leased_task", "apply_release", "blocked", 1, "", "", 0, 0, 0, "", null_value()).as_json())
+  let run = WorkflowRun(1,
+                        "control-plane",
+                        "prod",
+                        1,
+                        "evt-1",
+                        "release_apply_requested",
+                        2,
+                        "blocked",
+                        0,
+                        "writer",
+                        100,
+                        0,
+                        "",
+                        array_build(stage_runs))
+  let envelope = WorkflowEventSubmitEnvelope("created", run, "req-event", 200)
+  match validate_workflow_event_submit_envelope(envelope) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_workflow_event_submit_existing_contract() -> Void {
+  let stage_runs = array_builder()
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(0, "approval", "approval_gate", "", "completed", 0, "", "", 0, 0, 10, "approval gate passed", null_value()).as_json())
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(1, "apply", "leased_task", "apply_release", "ready", 1, "", "", 0, 0, 0, "", null_value()).as_json())
+  let run = WorkflowRun(2,
+                        "control-plane",
+                        "prod",
+                        1,
+                        "evt-2",
+                        "release_apply_requested",
+                        3,
+                        "ready",
+                        1,
+                        "writer",
+                        110,
+                        0,
+                        "",
+                        array_build(stage_runs))
+  let envelope = WorkflowEventSubmitEnvelope("existing", run, "req-existing", 210)
+  match validate_workflow_event_submit_envelope(envelope) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_worker_complete_contract() -> Void {
+  let stage_runs = array_builder()
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(0, "approval", "approval_gate", "", "completed", 0, "", "", 0, 0, 10, "approval gate passed", null_value()).as_json())
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(1,
+                                           "apply",
+                                           "leased_task",
+                                           "apply_release",
+                                           "completed",
+                                           1,
+                                           "lease-2-1",
+                                           "ops-worker",
+                                           140,
+                                           120,
+                                           130,
+                                           "release applied locally",
+                                           null_value()).as_json())
+  let run = WorkflowRun(3,
+                        "control-plane",
+                        "prod",
+                        1,
+                        "evt-3",
+                        "release_apply_requested",
+                        4,
+                        "completed",
+                        1,
+                        "writer",
+                        115,
+                        130,
+                        "workflow completed",
+                        array_build(stage_runs))
+  let envelope = WorkerCompleteEnvelope(run, "req-complete", 220)
+  match validate_worker_complete_envelope(envelope) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

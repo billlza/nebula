@@ -1,0 +1,230 @@
+module bb84
+import crypto::hash
+import crypto::pqc.sign
+import crypto::rand
+import pqc::signed
+import std::bytes
+import std::json
+import std::result
+
+struct SimulationConfig {
+  qubit_count: Int
+  sample_reveal_bits: Int
+  channel_flip_ppm: Int
+  intercept_resend_ppm: Int
+  fail_classical_auth: Bool
+}
+
+struct SimulationReport {
+  raw_bits: Int
+  sifted_key_bits: Int
+  qber_ppm: Int
+  abort_reason: String
+  shared_key_hex: String
+}
+
+extern fn __nebula_qcomm_bb84_simulate(qubit_count: Int,
+                                       sample_reveal_bits: Int,
+                                       channel_flip_ppm: Int,
+                                       intercept_resend_ppm: Int,
+                                       fail_classical_auth: Bool,
+                                       seed: Bytes) -> Result<String, String>
+
+fn default_config(qubit_count: Int) -> SimulationConfig {
+  return SimulationConfig(qubit_count, qubit_count / 8, 0, 0, false)
+}
+
+fn with_sample_reveal(base: SimulationConfig, sample_reveal_bits: Int) -> SimulationConfig {
+  return SimulationConfig(base.qubit_count,
+                          sample_reveal_bits,
+                          base.channel_flip_ppm,
+                          base.intercept_resend_ppm,
+                          base.fail_classical_auth)
+}
+
+fn with_channel_flip_ppm(base: SimulationConfig, channel_flip_ppm: Int) -> SimulationConfig {
+  return SimulationConfig(base.qubit_count,
+                          base.sample_reveal_bits,
+                          channel_flip_ppm,
+                          base.intercept_resend_ppm,
+                          base.fail_classical_auth)
+}
+
+fn with_intercept_resend_ppm(base: SimulationConfig, intercept_resend_ppm: Int) -> SimulationConfig {
+  return SimulationConfig(base.qubit_count,
+                          base.sample_reveal_bits,
+                          base.channel_flip_ppm,
+                          intercept_resend_ppm,
+                          base.fail_classical_auth)
+}
+
+fn with_classical_auth_failure(base: SimulationConfig, fail_classical_auth: Bool) -> SimulationConfig {
+  return SimulationConfig(base.qubit_count,
+                          base.sample_reveal_bits,
+                          base.channel_flip_ppm,
+                          base.intercept_resend_ppm,
+                          fail_classical_auth)
+}
+
+fn SimulationReport_as_json(self: SimulationReport) -> Json {
+  return object5(
+    "raw_bits",
+    int_value(self.raw_bits),
+    "sifted_key_bits",
+    int_value(self.sifted_key_bits),
+    "qber_ppm",
+    int_value(self.qber_ppm),
+    "abort_reason",
+    string_value(self.abort_reason),
+    "shared_key_hex",
+    string_value(self.shared_key_hex)
+  )
+}
+
+fn simulation_report_from_json(value: Json) -> Result<SimulationReport, String> {
+  match get_int(value, "raw_bits") {
+    Ok(raw_bits) => {
+      match get_int(value, "sifted_key_bits") {
+        Ok(sifted_key_bits) => {
+          match get_int(value, "qber_ppm") {
+            Ok(qber_ppm) => {
+              match get_string(value, "abort_reason") {
+                Ok(abort_reason) => {
+                  match get_string(value, "shared_key_hex") {
+                    Ok(shared_key_hex) => {
+                      return Ok(SimulationReport(raw_bits,
+                                                 sifted_key_bits,
+                                                 qber_ppm,
+                                                 abort_reason,
+                                                 shared_key_hex))
+                    }
+                    Err(msg) => {
+                      return Err(msg)
+                    }
+                  }
+                }
+                Err(msg) => {
+                  return Err(msg)
+                }
+              }
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn simulation_report_from_json_text(text: String) -> Result<SimulationReport, String> {
+  match parse(text) {
+    Ok(value) => {
+      return simulation_report_from_json(value)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn report_auth_bytes(report: SimulationReport) -> Bytes {
+  return from_string(stringify(report.as_json()))
+}
+
+fn authenticate_report(report: SimulationReport, fail_classical_auth: Bool) -> Result<SimulationReport, String> {
+  if report.abort_reason != "" {
+    return Ok(report)
+  }
+  match ml_dsa_65_keypair() {
+    Ok(keypair) => {
+      match sign_body(keypair.secret_key(), report_auth_bytes(report)) {
+        Ok(signed_report) => {
+          if fail_classical_auth {
+            match verify_signed_body(keypair.public_key(), from_string("tampered"), signed_report) {
+              Ok(valid) => {
+                if valid {
+                  return Err("bb84 classical auth tamper simulation failed")
+                }
+              }
+              Err(msg) => {
+                return Err(msg)
+              }
+            }
+            return Ok(SimulationReport(report.raw_bits,
+                                       report.sifted_key_bits,
+                                       report.qber_ppm,
+                                       "classical_auth_failed",
+                                       ""))
+          }
+          match verify_signed_body(keypair.public_key(), report_auth_bytes(report), signed_report) {
+            Ok(valid) => {
+              if valid {
+                return Ok(report)
+              }
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+          return Ok(SimulationReport(report.raw_bits,
+                                     report.sifted_key_bits,
+                                     report.qber_ppm,
+                                     "classical_auth_failed",
+                                     ""))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn simulate_seeded(config: SimulationConfig, seed: Bytes) -> Result<SimulationReport, String> {
+  match __nebula_qcomm_bb84_simulate(config.qubit_count,
+                                     config.sample_reveal_bits,
+                                     config.channel_flip_ppm,
+                                     config.intercept_resend_ppm,
+                                     config.fail_classical_auth,
+                                     seed) {
+    Ok(text) => {
+      match simulation_report_from_json_text(text) {
+        Ok(report) => {
+          return authenticate_report(report, config.fail_classical_auth)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn simulate(config: SimulationConfig) -> Result<SimulationReport, String> {
+  match random_bytes(32) {
+    Ok(seed) => {
+      return simulate_seeded(config, seed)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn shared_key_bytes(report: SimulationReport) -> Result<Bytes, String> {
+  return from_hex(report.shared_key_hex)
+}

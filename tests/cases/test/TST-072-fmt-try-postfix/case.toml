@@ -1,0 +1,17 @@
+id = "TST-072-fmt-try-postfix"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "cp fixtures/format_try_expr.nb work/format_try_expr.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY fmt work/format_try_expr.nb"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'return make(1)?' work/format_try_expr.nb && grep -F 'enum Result<T, E> {' work/format_try_expr.nb"
+expect_rc = 0

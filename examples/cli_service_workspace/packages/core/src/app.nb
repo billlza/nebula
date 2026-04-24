@@ -1,0 +1,33 @@
+module app
+
+fn service_name() -> String {
+  return "cli-service-skeleton"
+}
+
+fn service_version() -> String {
+  return "0.1.0"
+}
+
+fn default_port() -> Int {
+  return 40480
+}
+
+fn default_base_url() -> String {
+  return "http://127.0.0.1:40480"
+}
+
+fn default_state_dir() -> String {
+  return "./state"
+}
+
+fn config_catalog_dir_name() -> String {
+  return "configs"
+}
+
+@test
+fn test_default_base_url_contract() -> Void {
+  expect_eq(default_port(), 40480)
+  assert(default_base_url() == "http://127.0.0.1:40480", "default base URL drifted")
+  assert(default_state_dir() == "./state", "default state dir drifted")
+  assert(config_catalog_dir_name() == "configs", "config catalog dir name drifted")
+}

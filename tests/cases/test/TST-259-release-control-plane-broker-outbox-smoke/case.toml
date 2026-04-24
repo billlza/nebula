@@ -1,0 +1,297 @@
+id = "TST-259-release-control-plane-broker-outbox-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/release_control_plane_broker_outbox')
+state_dir = root / 'state'
+ctl_out = root / '.ctl-out'
+admin_token = 'admin-broker-token'
+writer_token = 'writer-broker-token'
+reader_token = 'reader-broker-token'
+worker_token = 'worker-broker-token'
+service_env = {
+    'APP_STATE_DIR': str(state_dir),
+    'APP_EXTERNAL_BROKER_PREVIEW': '1',
+    'APP_EXTERNAL_BROKER_URL': 'http://127.0.0.1:1',
+    'APP_AUTH_REQUIRED': '1',
+    'APP_ADMIN_TOKEN': admin_token,
+    'APP_WRITE_TOKEN': writer_token,
+    'APP_READ_TOKEN': reader_token,
+    'APP_WORKER_TOKEN': worker_token,
+}
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, service_env)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+    prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    config_put = run_ctl(
+        binary, root,
+        'config', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--key', 'feature.flag',
+        '--bool', 'true',
+        '--description', 'broker outbox',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(config_put, 'config put')
+
+    release_put = run_ctl(
+        binary, root,
+        'release', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--version', '2026.04.23',
+        '--config-revision', '1',
+        '--description', 'broker outbox',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(release_put, 'release put')
+
+    submit = run_ctl(
+        binary, root,
+        'workflow', 'event', 'submit',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'broker-event-1',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(submit, 'workflow event submit')
+    run_id = json.loads(submit.stdout).get('run', {}).get('run_id')
+    if run_id != 1:
+        raise SystemExit(f'unexpected workflow run id: {submit.stdout!r}')
+
+    claim = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'claim',
+        '--worker-id', 'broker-worker',
+        '--topic', 'workflow.run.created',
+        '--now-unix-ms', '1000',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(claim, 'broker outbox claim')
+    claim_payload = json.loads(claim.stdout)
+    message = claim_payload.get('message', {})
+    meta = message.get('meta', {})
+    if claim_payload.get('outcome') != 'claimed' or message.get('topic') != 'workflow.run.created':
+        raise SystemExit(f'broker claim did not return workflow.run.created: {claim_payload!r}')
+    if message.get('status') != 'leased' or message.get('attempt') != 1:
+        raise SystemExit(f'broker claim did not lease with attempt=1: {claim_payload!r}')
+    if message.get('key') != 'control-plane/prod/1' or message.get('dedupe_key') != 'workflow-run-created:1':
+        raise SystemExit(f'broker outbox key/dedupe drifted: {claim_payload!r}')
+    message_id = message.get('message_id')
+    lease_id = meta.get('lease_id')
+
+    get_leased = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'get',
+        '--message-id', str(message_id),
+        '--url', base_url,
+        '--token', reader_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(get_leased, 'broker outbox get leased')
+    if json.loads(get_leased.stdout).get('message', {}).get('status') != 'leased':
+        raise SystemExit(f'broker get did not see leased state: {get_leased.stdout!r}')
+
+    wrong_worker = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'complete',
+        '--worker-id', 'other-worker',
+        '--message-id', str(message_id),
+        '--lease-id', lease_id,
+        '--status', 'published',
+        '--message', 'wrong worker',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if wrong_worker.returncode == 0 or 'broker_outbox_worker_mismatch' not in wrong_worker.stdout:
+        print(wrong_worker.stdout, end='')
+        print(wrong_worker.stderr, end='')
+        raise SystemExit('wrong worker unexpectedly completed broker outbox message')
+
+    failed = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'complete',
+        '--worker-id', 'broker-worker',
+        '--message-id', str(message_id),
+        '--lease-id', lease_id,
+        '--status', 'failed',
+        '--message', 'retry later',
+        '--next-attempt-unix-ms', '2000',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(failed, 'broker outbox complete failed')
+    failed_message = json.loads(failed.stdout).get('message', {})
+    if failed_message.get('status') != 'pending' or failed_message.get('meta', {}).get('next_attempt_unix_ms') != 2000:
+        raise SystemExit(f'broker failed completion did not schedule retry: {failed.stdout!r}')
+
+    empty = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'claim',
+        '--worker-id', 'broker-worker',
+        '--topic', 'workflow.run.created',
+        '--now-unix-ms', '1999',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(empty, 'broker outbox claim before retry')
+    if json.loads(empty.stdout).get('outcome') != 'empty':
+        raise SystemExit(f'broker claim should be empty before retry time: {empty.stdout!r}')
+
+    retry = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'claim',
+        '--worker-id', 'broker-worker',
+        '--topic', 'workflow.run.created',
+        '--now-unix-ms', '2000',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(retry, 'broker outbox claim retry')
+    retry_message = json.loads(retry.stdout).get('message', {})
+    retry_lease = retry_message.get('meta', {}).get('lease_id')
+    if retry_message.get('status') != 'leased' or retry_message.get('attempt') != 2:
+        raise SystemExit(f'broker retry claim did not lease attempt=2: {retry.stdout!r}')
+
+    published = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'complete',
+        '--worker-id', 'broker-worker',
+        '--message-id', str(message_id),
+        '--lease-id', retry_lease,
+        '--status', 'published',
+        '--message', 'published',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(published, 'broker outbox complete published')
+    if json.loads(published.stdout).get('message', {}).get('status') != 'published':
+        raise SystemExit(f'broker message did not publish: {published.stdout!r}')
+
+    terminal = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'complete',
+        '--worker-id', 'broker-worker',
+        '--message-id', str(message_id),
+        '--lease-id', retry_lease,
+        '--status', 'published',
+        '--message', 'again',
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if terminal.returncode == 0 or 'broker_outbox_state_conflict' not in terminal.stdout:
+        print(terminal.stdout, end='')
+        print(terminal.stderr, end='')
+        raise SystemExit('terminal broker message unexpectedly completed twice')
+
+    reader_claim = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'claim',
+        '--worker-id', 'broker-worker',
+        '--now-unix-ms', '3000',
+        '--url', base_url,
+        '--token', reader_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if reader_claim.returncode == 0 or 'required role: worker' not in reader_claim.stdout:
+        print(reader_claim.stdout, end='')
+        print(reader_claim.stderr, end='')
+        raise SystemExit('reader token unexpectedly claimed broker outbox')
+finally:
+    terminate_process(proc)
+
+service_binary = root / '.service-out' / 'main.out'
+fail_env = {
+    **os.environ,
+    'NEBULA_BIND_HOST': '127.0.0.1',
+    'NEBULA_PORT': '0',
+    'APP_STATE_DIR': str(root / 'state-preview-fail'),
+    'APP_EXTERNAL_BROKER_PREVIEW': '1',
+    'APP_EXTERNAL_BROKER_URL': 'http://127.0.0.1:1',
+    'APP_AUTH_REQUIRED': '1',
+    'APP_READ_TOKEN': reader_token,
+    'APP_WRITE_TOKEN': writer_token,
+    'APP_ADMIN_TOKEN': admin_token,
+}
+failed_start = subprocess.run([str(service_binary)], capture_output=True, text=True, env=fail_env, timeout=10)
+if failed_start.returncode == 0:
+    raise SystemExit('external broker preview unexpectedly started without worker token')
+if 'startup preflight failed: external_broker preview requires APP_WORKER_TOKEN or APP_WORKER_TOKEN_FILE' not in failed_start.stdout:
+    print(failed_start.stdout, end='')
+    print(failed_start.stderr, end='')
+    raise SystemExit('external broker preview missing worker-token diagnostic')
+
+print('release-control-plane-broker-outbox-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-broker-outbox-ok"]

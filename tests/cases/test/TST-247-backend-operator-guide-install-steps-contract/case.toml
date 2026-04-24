@@ -1,0 +1,8 @@
+id = "TST-247-backend-operator-guide-install-steps-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport os\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\noperator_guide = (repo_root / 'docs' / 'backend_operator_guide.md').read_text(encoding='utf-8')\nfor fragment in [\n    '## Release Control Plane Install Steps',\n    'systemd-tmpfiles --create /etc/tmpfiles.d/release-control-plane.conf',\n    'deploy/logrotate/release-control-plane.observe',\n    'deploy/nginx/release-control-plane.conf',\n    'run `nginx -t`',\n    'deploy/container/Dockerfile.runtime',\n    'deploy/k8s/statefulset.yaml',\n    'keep observe output on stdout/stderr',\n]:\n    if fragment not in operator_guide:\n        raise SystemExit(f'backend_operator_guide.md missing fragment: {fragment!r}')\nprint('backend-operator-guide-install-steps-ok')\nPY"
+expect_rc = 0
+expect_stdout_contains = ["backend-operator-guide-install-steps-ok"]

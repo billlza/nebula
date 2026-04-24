@@ -1,0 +1,416 @@
+module webhook
+import args
+import client
+import core::secrets
+import core::validate
+import core::webhook_contracts
+import crypto::mac
+import errors
+import std::bytes
+import std::fs
+import std::json
+import std::result
+
+struct WebhookCliArgs {
+  action: String
+  provider: String
+  app_name: String
+  channel: String
+  event_id: String
+  event_kind: String
+  release_revision_text: String
+  body_file: String
+  timestamp_unix_ms_text: String
+  signature: String
+}
+
+struct WebhookParseProgress {
+  parsed: WebhookCliArgs
+  next_index: Int
+}
+
+fn default_webhook_args() -> WebhookCliArgs {
+  return WebhookCliArgs("", "", "", "", "", "", "", "", "", "")
+}
+
+fn rebuild_webhook_args(action: String,
+                        provider: String,
+                        app_name: String,
+                        channel: String,
+                        event_id: String,
+                        event_kind: String,
+                        release_revision_text: String,
+                        body_file: String,
+                        timestamp_unix_ms_text: String,
+                        signature: String) -> WebhookCliArgs {
+  return WebhookCliArgs(action,
+                        provider,
+                        app_name,
+                        channel,
+                        event_id,
+                        event_kind,
+                        release_revision_text,
+                        body_file,
+                        timestamp_unix_ms_text,
+                        signature)
+}
+
+fn webhook_with_action(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(value, parsed.provider, parsed.app_name, parsed.channel, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_provider(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, value, parsed.app_name, parsed.channel, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_app(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, value, parsed.channel, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_channel(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, value, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_event_id(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, parsed.channel, value,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_event_kind(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, parsed.channel, parsed.event_id,
+                              value, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_release_revision(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, parsed.channel, parsed.event_id,
+                              parsed.event_kind, value, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_body_file(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, parsed.channel, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, value,
+                              parsed.timestamp_unix_ms_text, parsed.signature)
+}
+
+fn webhook_with_timestamp(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, parsed.channel, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              value, parsed.signature)
+}
+
+fn webhook_with_signature(parsed: WebhookCliArgs, value: String) -> WebhookCliArgs {
+  return rebuild_webhook_args(parsed.action, parsed.provider, parsed.app_name, parsed.channel, parsed.event_id,
+                              parsed.event_kind, parsed.release_revision_text, parsed.body_file,
+                              parsed.timestamp_unix_ms_text, value)
+}
+
+fn webhook_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn webhook_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn webhook_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn webhook_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= webhook_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return webhook_arg_text(argv_json, index + 1)
+}
+
+fn webhook_progress(parsed: WebhookCliArgs, next_index: Int) -> WebhookParseProgress {
+  return WebhookParseProgress(parsed, next_index)
+}
+
+fn parse_webhook_flag(argv_json: Json,
+                      parsed: WebhookCliArgs,
+                      index: Int,
+                      arg: String) -> Result<WebhookParseProgress, String> {
+  let value = webhook_next_value(argv_json, index, arg)?
+  if arg == "--provider" {
+    return Ok(webhook_progress(webhook_with_provider(parsed, value), index + 2))
+  }
+  if arg == "--app" {
+    return Ok(webhook_progress(webhook_with_app(parsed, value), index + 2))
+  }
+  if arg == "--channel" {
+    return Ok(webhook_progress(webhook_with_channel(parsed, value), index + 2))
+  }
+  if arg == "--event-id" {
+    return Ok(webhook_progress(webhook_with_event_id(parsed, value), index + 2))
+  }
+  if arg == "--event-kind" {
+    return Ok(webhook_progress(webhook_with_event_kind(parsed, value), index + 2))
+  }
+  if arg == "--release-revision" {
+    return Ok(webhook_progress(webhook_with_release_revision(parsed, value), index + 2))
+  }
+  if arg == "--body-file" {
+    return Ok(webhook_progress(webhook_with_body_file(parsed, value), index + 2))
+  }
+  if arg == "--timestamp-unix-ms" {
+    return Ok(webhook_progress(webhook_with_timestamp(parsed, value), index + 2))
+  }
+  if arg == "--signature" {
+    return Ok(webhook_progress(webhook_with_signature(parsed, value), index + 2))
+  }
+  return Err("unexpected webhook argument")
+}
+
+fn parse_webhook_cli_args(parsed: ParsedArgs) -> Result<WebhookCliArgs, String> {
+  let argv_json = webhook_argv(parsed)
+  let count = webhook_arg_count(argv_json)?
+  let index = 0
+  let state = default_webhook_args()
+  while index < count {
+    let arg = webhook_arg_text(argv_json, index)?
+    if state.action == "" {
+      state = webhook_with_action(state, arg)
+      index += 1
+      continue
+    }
+    let progress = parse_webhook_flag(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn require_webhook_flag(value: String, label: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(label, " is required"))
+  }
+  return Ok(true)
+}
+
+fn reject_webhook_flag(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed for this webhook subcommand"))
+  }
+  return Ok(true)
+}
+
+fn require_webhook_verify_args(args: WebhookCliArgs) -> Result<Bool, String> {
+  require_webhook_flag(args.provider, "--provider")?
+  require_webhook_flag(args.event_id, "--event-id")?
+  require_webhook_flag(args.timestamp_unix_ms_text, "--timestamp-unix-ms")?
+  require_webhook_flag(args.body_file, "--body-file")?
+  require_webhook_flag(args.signature, "--signature")?
+  return Ok(true)
+}
+
+fn reject_webhook_verify_only_args(args: WebhookCliArgs) -> Result<Bool, String> {
+  reject_webhook_flag(args.app_name, "--app")?
+  reject_webhook_flag(args.channel, "--channel")?
+  reject_webhook_flag(args.event_kind, "--event-kind")?
+  reject_webhook_flag(args.release_revision_text, "--release-revision")?
+  return Ok(true)
+}
+
+fn require_webhook_submit_args(args: WebhookCliArgs) -> Result<Bool, String> {
+  require_webhook_verify_args(args)?
+  require_webhook_flag(args.app_name, "--app")?
+  require_webhook_flag(args.channel, "--channel")?
+  require_webhook_flag(args.event_kind, "--event-kind")?
+  require_webhook_flag(args.release_revision_text, "--release-revision")?
+  return Ok(true)
+}
+
+fn finalize_webhook_args(args: WebhookCliArgs) -> Result<WebhookCliArgs, String> {
+  if args.action == "verify" {
+    require_webhook_verify_args(args)?
+    reject_webhook_verify_only_args(args)?
+    return Ok(args)
+  }
+  if args.action == "submit-local" {
+    require_webhook_submit_args(args)?
+    return Ok(args)
+  }
+  return Err("unknown webhook subcommand")
+}
+
+fn webhook_non_negative_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value < 0 {
+    return Err(text_concat(label, " must be a non-negative integer"))
+  }
+  return Ok(value)
+}
+
+fn webhook_positive_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value <= 0 {
+    return Err(text_concat(label, " must be a positive integer"))
+  }
+  return Ok(value)
+}
+
+fn webhook_signature_input(timestamp_text: String, body: Bytes) -> Bytes {
+  return concat(from_string(text_concat(timestamp_text, ".")), body)
+}
+
+fn webhook_secret() -> Result<String, String> {
+  return secret_value("APP_PUBLIC_WEBHOOK_SECRET", "APP_PUBLIC_WEBHOOK_SECRET_FILE")
+}
+
+fn verified_webhook_signature_result(signature: String,
+                                     timestamp_text: String,
+                                     body: Bytes) -> Result<WebhookVerificationResult, String> {
+  let verified = verify_hmac_sha256_hex(webhook_secret()?,
+                                        webhook_signature_input(timestamp_text, body),
+                                        signature)?
+  if verified {
+    return Ok(WebhookVerificationResult(true, "verified", "signature verified"))
+  }
+  return Ok(WebhookVerificationResult(false, "signature_mismatch", "signature did not match"))
+}
+
+fn verify_webhook_args(args: WebhookCliArgs) -> Result<WebhookVerificationResult, String> {
+  validate_webhook_provider(args.provider)?
+  if args.event_id == "" {
+    return Err("webhook event_id must be non-empty")
+  }
+  webhook_non_negative_int(args.timestamp_unix_ms_text, "--timestamp-unix-ms")?
+  let body = from_string(read_string(args.body_file)?)
+  return verified_webhook_signature_result(args.signature, args.timestamp_unix_ms_text, body)
+}
+
+fn webhook_path(args: WebhookCliArgs) -> String {
+  return text_concat3("/v1/webhooks/", args.provider, text_concat("/", text_concat(args.app_name, text_concat("/", args.channel))))
+}
+
+fn webhook_body_request(args: WebhookCliArgs, body: Bytes) -> Result<WebhookSubmitRequest, String> {
+  let request = webhook_submit_request_from_json(parse(to_string(body))?)?
+  validate_webhook_submit_request(request)?
+  if request.event_id != args.event_id || request.event_kind != args.event_kind {
+    return Err("webhook body event fields do not match CLI flags")
+  }
+  if request.release_revision_id != webhook_positive_int(args.release_revision_text, "--release-revision")? {
+    return Err("webhook body release_revision_id does not match CLI flag")
+  }
+  return Ok(request)
+}
+
+fn parse_webhook_submit_reply(reply: JsonResponse) -> Result<WebhookSubmitEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = webhook_submit_envelope_from_json(reply.payload)?
+  validate_webhook_submit_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn emit_webhook_verification(result: WebhookVerificationResult, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(result.as_json()))
+    return 0
+  }
+  print(text_concat("verified=", stringify(bool_value(result.verified))))
+  print(text_concat("code=", result.code))
+  print(text_concat("message=", result.message))
+  return 0
+}
+
+fn emit_webhook_submit(envelope: WebhookSubmitEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("provider=", envelope.provider))
+  print(text_concat("outcome=", envelope.outcome))
+  print(text_concat("run_id=", int_text(envelope.run.run_id)))
+  print(text_concat("event_id=", envelope.run.event_id))
+  return 0
+}
+
+fn webhook_usage_error(msg: String) -> Int {
+  print(msg)
+  return 2
+}
+
+fn webhook_runtime_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn finalized_webhook_args(parsed: ParsedArgs) -> Result<WebhookCliArgs, Int> {
+  match parse_webhook_cli_args(parsed) {
+    Ok(value) => {
+      match finalize_webhook_args(value) {
+        Ok(finalized) => { return Ok(finalized) }
+        Err(msg) => { return Err(webhook_usage_error(msg)) }
+      }
+    }
+    Err(msg) => { return Err(webhook_usage_error(msg)) }
+  }
+}
+
+async fn run_webhook_verify(args: WebhookCliArgs, json_mode: Bool) -> Int {
+  match verify_webhook_args(args) {
+    Ok(result) => {
+      return emit_webhook_verification(result, json_mode)
+    }
+    Err(msg) => { return webhook_runtime_error(msg) }
+  }
+}
+
+async fn run_webhook_submit_local(base_url: String,
+                                  options: ClientOptions,
+                                  args: WebhookCliArgs,
+                                  json_mode: Bool) -> Int {
+  let body = from_string("")
+  match read_string(args.body_file) {
+    Ok(text) => {
+      body = from_string(text)
+    }
+    Err(msg) => { return webhook_runtime_error(msg) }
+  }
+  match webhook_body_request(args, body) {
+    Ok(_) => {}
+    Err(msg) => { return webhook_usage_error(msg) }
+  }
+  match await post_body_with_headers2(base_url,
+                                      webhook_path(args),
+                                      body,
+                                      options,
+                                      "X-Nebula-Webhook-Signature",
+                                      args.signature,
+                                      "X-Nebula-Webhook-Timestamp",
+                                      args.timestamp_unix_ms_text) {
+    Ok(reply) => {
+      match parse_webhook_submit_reply(reply) {
+        Ok(envelope) => { return emit_webhook_submit(envelope, json_mode) }
+        Err(msg) => { return webhook_runtime_error(msg) }
+      }
+    }
+    Err(msg) => { return webhook_runtime_error(msg) }
+  }
+}
+
+async fn run_webhook_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match finalized_webhook_args(parsed) {
+    Ok(args) => {
+      if args.action == "verify" {
+        return await run_webhook_verify(args, parsed.json_mode)
+      }
+      return await run_webhook_submit_local(base_url, options, args, parsed.json_mode)
+    }
+    Err(exit_code) => { return exit_code }
+  }
+}

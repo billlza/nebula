@@ -1,0 +1,12 @@
+control-plane.example.internal {
+  encode zstd gzip
+
+  reverse_proxy 127.0.0.1:40480 {
+    transport http {
+      versions 1.1
+    }
+    header_up X-Forwarded-Proto {scheme}
+    header_up X-Forwarded-Host {host}
+    header_up X-Request-Id {http.request.id}
+  }
+}

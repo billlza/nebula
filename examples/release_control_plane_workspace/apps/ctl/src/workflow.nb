@@ -1,0 +1,920 @@
+module workflow
+import args
+import client
+import core::validate
+import core::workflow_contracts
+import core::workflow_validate
+import errors
+import std::fs
+import std::json
+import std::result
+
+struct WorkflowCliArgs {
+  subcommand: String
+  detail_subcommand: String
+  app_name: String
+  channel: String
+  if_match_text: String
+  run_id_text: String
+  event_id_text: String
+  event_kind_text: String
+  release_revision_text: String
+  spec_file: String
+  payload_file: String
+}
+
+struct WorkflowParseProgress {
+  parsed: WorkflowCliArgs
+  next_index: Int
+}
+
+fn workflow_args() -> WorkflowCliArgs {
+  return WorkflowCliArgs("", "", "", "", "", "", "", "", "", "", "")
+}
+
+fn workflow_rebuild_args(subcommand: String,
+                         detail_subcommand: String,
+                         app_name: String,
+                         channel: String,
+                         if_match_text: String,
+                         run_id_text: String,
+                         event_id_text: String,
+                         event_kind_text: String,
+                         release_revision_text: String,
+                         spec_file: String,
+                         payload_file: String) -> WorkflowCliArgs {
+  return WorkflowCliArgs(subcommand,
+                         detail_subcommand,
+                         app_name,
+                         channel,
+                         if_match_text,
+                         run_id_text,
+                         event_id_text,
+                         event_kind_text,
+                         release_revision_text,
+                         spec_file,
+                         payload_file)
+}
+
+fn workflow_with_subcommand(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(value,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_detail_subcommand(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               value,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_app(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               value,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_channel(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               value,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_if_match(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               value,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_run_id(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               value,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_event_id(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               value,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_event_kind(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               value,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_release_revision(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               value,
+                               parsed.spec_file,
+                               parsed.payload_file)
+}
+
+fn workflow_with_spec_file(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               value,
+                               parsed.payload_file)
+}
+
+fn workflow_with_payload_file(parsed: WorkflowCliArgs, value: String) -> WorkflowCliArgs {
+  return workflow_rebuild_args(parsed.subcommand,
+                               parsed.detail_subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.if_match_text,
+                               parsed.run_id_text,
+                               parsed.event_id_text,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.spec_file,
+                               value)
+}
+
+fn workflow_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn workflow_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn workflow_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn workflow_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= workflow_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return workflow_arg_text(argv_json, index + 1)
+}
+
+fn workflow_progress(parsed: WorkflowCliArgs, next_index: Int) -> WorkflowParseProgress {
+  return WorkflowParseProgress(parsed, next_index)
+}
+
+fn workflow_parse_flag(argv_json: Json,
+                     parsed: WorkflowCliArgs,
+                     index: Int,
+                     arg: String) -> Result<WorkflowParseProgress, String> {
+  let value = workflow_next_value(argv_json, index, arg)?
+  if arg == "--app" {
+    return Ok(workflow_progress(workflow_with_app(parsed, value), index + 2))
+  }
+  if arg == "--channel" {
+    return Ok(workflow_progress(workflow_with_channel(parsed, value), index + 2))
+  }
+  if arg == "--if-match" {
+    return Ok(workflow_progress(workflow_with_if_match(parsed, value), index + 2))
+  }
+  if arg == "--run-id" {
+    return Ok(workflow_progress(workflow_with_run_id(parsed, value), index + 2))
+  }
+  if arg == "--event-id" {
+    return Ok(workflow_progress(workflow_with_event_id(parsed, value), index + 2))
+  }
+  if arg == "--event-kind" {
+    return Ok(workflow_progress(workflow_with_event_kind(parsed, value), index + 2))
+  }
+  if arg == "--release-revision" {
+    return Ok(workflow_progress(workflow_with_release_revision(parsed, value), index + 2))
+  }
+  if arg == "--spec-file" {
+    return Ok(workflow_progress(workflow_with_spec_file(parsed, value), index + 2))
+  }
+  if arg == "--payload-file" {
+    return Ok(workflow_progress(workflow_with_payload_file(parsed, value), index + 2))
+  }
+  return Err("unexpected workflow argument")
+}
+
+fn workflow_parse_current_arg(argv_json: Json,
+                              parsed: WorkflowCliArgs,
+                              index: Int,
+                              arg: String) -> Result<WorkflowParseProgress, String> {
+  if parsed.subcommand == "" {
+    return Ok(workflow_progress(workflow_with_subcommand(parsed, arg), index + 1))
+  }
+  if parsed.subcommand == "event" && parsed.detail_subcommand == "" {
+    return Ok(workflow_progress(workflow_with_detail_subcommand(parsed, arg), index + 1))
+  }
+  return workflow_parse_flag(argv_json, parsed, index, arg)
+}
+
+fn parse_workflow_cli_args(parsed: ParsedArgs) -> Result<WorkflowCliArgs, String> {
+  let argv_json = workflow_argv(parsed)
+  let count = workflow_arg_count(argv_json)?
+  let index = 0
+  let state = workflow_args()
+  while index < count {
+    let arg = workflow_arg_text(argv_json, index)?
+    let progress = workflow_parse_current_arg(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn require_workflow_scope(args: WorkflowCliArgs) -> Result<Bool, String> {
+  if args.app_name == "" {
+    return Err("--app is required")
+  }
+  if args.channel == "" {
+    return Err("--channel is required")
+  }
+  return Ok(true)
+}
+
+fn reject_workflow_flag(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed for this workflow subcommand"))
+  }
+  return Ok(true)
+}
+
+fn workflow_flag_text(args: WorkflowCliArgs, label: String) -> Result<String, String> {
+  if label == "--if-match" {
+    return Ok(args.if_match_text)
+  }
+  if label == "--run-id" {
+    return Ok(args.run_id_text)
+  }
+  if label == "--event-id" {
+    return Ok(args.event_id_text)
+  }
+  if label == "--event-kind" {
+    return Ok(args.event_kind_text)
+  }
+  if label == "--release-revision" {
+    return Ok(args.release_revision_text)
+  }
+  if label == "--spec-file" {
+    return Ok(args.spec_file)
+  }
+  if label == "--payload-file" {
+    return Ok(args.payload_file)
+  }
+  return Err(text_concat("unknown workflow flag: ", label))
+}
+
+fn workflow_flag_labels(first: String,
+                        second: String,
+                        third: String,
+                        fourth: String,
+                        fifth: String,
+                        sixth: String,
+                        seventh: String) -> Json {
+  let builder = array_builder()
+  if first != "" {
+    builder = array_push(builder, string_value(first))
+  }
+  if second != "" {
+    builder = array_push(builder, string_value(second))
+  }
+  if third != "" {
+    builder = array_push(builder, string_value(third))
+  }
+  if fourth != "" {
+    builder = array_push(builder, string_value(fourth))
+  }
+  if fifth != "" {
+    builder = array_push(builder, string_value(fifth))
+  }
+  if sixth != "" {
+    builder = array_push(builder, string_value(sixth))
+  }
+  if seventh != "" {
+    builder = array_push(builder, string_value(seventh))
+  }
+  return array_build(builder)
+}
+
+fn reject_named_workflow_flags(args: WorkflowCliArgs, labels: Json) -> Result<Bool, String> {
+  let count = array_len(labels)?
+  let index = 0
+  while index < count {
+    let label = as_string(array_get(labels, index)?)?
+    reject_workflow_flag(workflow_flag_text(args, label)?, label)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn require_named_workflow_flag(args: WorkflowCliArgs, label: String) -> Result<Bool, String> {
+  if workflow_flag_text(args, label)? == "" {
+    return Err(text_concat(label, " is required"))
+  }
+  return Ok(true)
+}
+
+fn finalize_workflow_get_args(args: WorkflowCliArgs) -> Result<WorkflowCliArgs, String> {
+  require_workflow_scope(args)?
+  reject_named_workflow_flags(args,
+                              workflow_flag_labels("--if-match",
+                                                   "--run-id",
+                                                   "--event-id",
+                                                   "--event-kind",
+                                                   "--release-revision",
+                                                   "--spec-file",
+                                                   "--payload-file"))?
+  return Ok(args)
+}
+
+fn finalize_workflow_put_args(args: WorkflowCliArgs) -> Result<WorkflowCliArgs, String> {
+  require_workflow_scope(args)?
+  require_named_workflow_flag(args, "--spec-file")?
+  reject_named_workflow_flags(args,
+                              workflow_flag_labels("--run-id",
+                                                   "--event-id",
+                                                   "--event-kind",
+                                                   "--release-revision",
+                                                   "--payload-file",
+                                                   "",
+                                                   ""))?
+  return Ok(args)
+}
+
+fn finalize_workflow_runs_args(args: WorkflowCliArgs) -> Result<WorkflowCliArgs, String> {
+  require_workflow_scope(args)?
+  reject_named_workflow_flags(args,
+                              workflow_flag_labels("--if-match",
+                                                   "--run-id",
+                                                   "--event-id",
+                                                   "--event-kind",
+                                                   "--release-revision",
+                                                   "--spec-file",
+                                                   "--payload-file"))?
+  return Ok(args)
+}
+
+fn finalize_workflow_run_args(args: WorkflowCliArgs) -> Result<WorkflowCliArgs, String> {
+  require_workflow_scope(args)?
+  require_named_workflow_flag(args, "--run-id")?
+  reject_named_workflow_flags(args,
+                              workflow_flag_labels("--if-match",
+                                                   "--event-id",
+                                                   "--event-kind",
+                                                   "--release-revision",
+                                                   "--spec-file",
+                                                   "--payload-file",
+                                                   ""))?
+  return Ok(args)
+}
+
+fn finalize_workflow_event_args(args: WorkflowCliArgs) -> Result<WorkflowCliArgs, String> {
+  if args.detail_subcommand != "submit" {
+    return Err("workflow event requires submit")
+  }
+  require_workflow_scope(args)?
+  require_named_workflow_flag(args, "--event-id")?
+  require_named_workflow_flag(args, "--event-kind")?
+  require_named_workflow_flag(args, "--release-revision")?
+  reject_named_workflow_flags(args,
+                              workflow_flag_labels("--if-match",
+                                                   "--run-id",
+                                                   "--spec-file",
+                                                   "",
+                                                   "",
+                                                   "",
+                                                   ""))?
+  return Ok(args)
+}
+
+fn finalize_workflow_cli_args(args: WorkflowCliArgs) -> Result<WorkflowCliArgs, String> {
+  if args.subcommand == "" {
+    return Err("missing workflow subcommand")
+  }
+  if args.subcommand == "get" {
+    return finalize_workflow_get_args(args)
+  }
+  if args.subcommand == "put" {
+    return finalize_workflow_put_args(args)
+  }
+  if args.subcommand == "runs" {
+    return finalize_workflow_runs_args(args)
+  }
+  if args.subcommand == "run" {
+    return finalize_workflow_run_args(args)
+  }
+  if args.subcommand == "event" {
+    return finalize_workflow_event_args(args)
+  }
+  return Err("unknown workflow subcommand")
+}
+
+fn workflow_definition_path(app_name: String, channel: String) -> String {
+  return text_concat3("/v1/workflows/", app_name, text_concat("/", channel))
+}
+
+fn workflow_runs_path(app_name: String, channel: String) -> String {
+  return text_concat(workflow_definition_path(app_name, channel), "/runs")
+}
+
+fn workflow_run_path(app_name: String, channel: String, run_id: Int) -> String {
+  return text_concat(workflow_runs_path(app_name, channel), text_concat("/", int_text(run_id)))
+}
+
+fn workflow_events_path(app_name: String, channel: String) -> String {
+  return text_concat(workflow_definition_path(app_name, channel), "/events")
+}
+
+fn workflow_if_match_header(args: WorkflowCliArgs) -> Result<String, String> {
+  if args.if_match_text == "" {
+    return Ok("")
+  }
+  let revision_id = as_int(parse(args.if_match_text)?)?
+  if revision_id < 0 {
+    return Err("--if-match must be a non-negative integer")
+  }
+  return Ok(stringify(string_value(int_text(revision_id))))
+}
+
+fn workflow_positive_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value <= 0 {
+    return Err(text_concat(label, " must be a positive integer"))
+  }
+  return Ok(value)
+}
+
+fn workflow_non_negative_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value < 0 {
+    return Err(text_concat(label, " must be a non-negative integer"))
+  }
+  return Ok(value)
+}
+
+fn workflow_spec_request(args: WorkflowCliArgs) -> Result<WorkflowPutRequest, String> {
+  let payload = parse(read_string(args.spec_file)?)?
+  let request = workflow_put_request_from_json(payload)?
+  validate_workflow_put_request(request)?
+  return Ok(request)
+}
+
+fn workflow_payload_json(path: String) -> Result<Json, String> {
+  if path == "" {
+    return parse("{}")
+  }
+  return parse(read_string(path)?)
+}
+
+fn workflow_event_request(args: WorkflowCliArgs) -> Result<WorkflowEventSubmitRequest, String> {
+  let request = WorkflowEventSubmitRequest(args.event_id_text,
+                                           args.event_kind_text,
+                                           workflow_non_negative_int(args.release_revision_text, "--release-revision")?,
+                                           workflow_payload_json(args.payload_file)?)
+  validate_workflow_event_submit_request(request)?
+  return Ok(request)
+}
+
+fn parse_workflow_definition_reply(reply: JsonResponse) -> Result<WorkflowDefinitionEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = workflow_definition_envelope_from_json(reply.payload)?
+  validate_workflow_definition_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_workflow_run_reply(reply: JsonResponse) -> Result<WorkflowRunEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = workflow_run_envelope_from_json(reply.payload)?
+  validate_workflow_run_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_workflow_runs_reply(reply: JsonResponse) -> Result<WorkflowRunListEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = workflow_run_list_envelope_from_json(reply.payload)?
+  validate_workflow_run_list_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_workflow_event_reply(reply: JsonResponse) -> Result<WorkflowEventSubmitEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = workflow_event_submit_envelope_from_json(reply.payload)?
+  validate_workflow_event_submit_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn print_workflow_definition_text(definition: WorkflowDefinition) -> Result<Bool, String> {
+  print(text_concat("app=", definition.app))
+  print(text_concat("channel=", definition.channel))
+  print(text_concat("trigger_kind=", definition.trigger_kind))
+  print(text_concat("event_kind=", definition.event_kind))
+  print(text_concat("revision_id=", int_text(definition.revision_id)))
+  return print_workflow_definition_meta(definition)
+}
+
+fn print_workflow_definition_meta(definition: WorkflowDefinition) -> Result<Bool, String> {
+  print(text_concat("updated_by=", definition.updated_by))
+  print(text_concat("updated_unix_ms=", int_text(definition.updated_unix_ms)))
+  print(text_concat("stages=", int_text(array_len(definition.stages)?)))
+  return Ok(true)
+}
+
+fn print_workflow_run_line(run_json: Json) -> Result<Bool, String> {
+  let run = workflow_run_from_json(run_json)?
+  validate_workflow_run(run)?
+  let line = text_concat3("run_id=",
+                          int_text(run.run_id),
+                          text_concat(" status=", run.status))
+  line = text_concat(line, text_concat(" event_kind=", run.event_kind))
+  line = text_concat(line, text_concat(" release_revision_id=", int_text(run.release_revision_id)))
+  print(text_concat(line, text_concat(" current_stage_index=", int_text(run.current_stage_index))))
+  return Ok(true)
+}
+
+fn print_workflow_run_identity(run: WorkflowRun) -> Void {
+  print(text_concat("run_id=", int_text(run.run_id)))
+  print(text_concat("app=", run.app))
+  print(text_concat("channel=", run.channel))
+  print(text_concat("workflow_revision_id=", int_text(run.workflow_revision_id)))
+  print(text_concat("event_id=", run.event_id))
+  print(text_concat("event_kind=", run.event_kind))
+  print(text_concat("release_revision_id=", int_text(run.release_revision_id)))
+}
+
+fn print_workflow_run_state(run: WorkflowRun) -> Void {
+  print(text_concat("status=", run.status))
+  print(text_concat("current_stage_index=", int_text(run.current_stage_index)))
+  print(text_concat("requested_by=", run.requested_by))
+  print(text_concat("requested_unix_ms=", int_text(run.requested_unix_ms)))
+  print(text_concat("finished_unix_ms=", int_text(run.finished_unix_ms)))
+  print(text_concat("result_message=", run.result_message))
+}
+
+fn print_workflow_stage_detail(stage: WorkflowStageRun) -> Void {
+  let line = text_concat3("stage[", int_text(stage.stage_index), text_concat("]=", stage.stage_name))
+  line = text_concat(line, text_concat(" status=", stage.status))
+  line = text_concat(line, text_concat(" kind=", stage.kind))
+  line = text_concat(line, text_concat(" task_kind=", stage.task_kind))
+  print(text_concat(line, text_concat(" attempt=", int_text(stage.attempt))))
+}
+
+fn print_workflow_stage_details(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    print_workflow_stage_detail(workflow_stage_run_from_json(array_get(stages, index)?)?)
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn print_workflow_run_details(run: WorkflowRun) -> Result<Bool, String> {
+  print_workflow_run_identity(run)
+  print_workflow_run_state(run)
+  return print_workflow_stage_details(run.stages)
+}
+
+fn emit_workflow_definition(envelope: WorkflowDefinitionEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match print_workflow_definition_text(envelope.definition) {
+    Ok(_) => { return 0 }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn print_workflow_runs_text(envelope: WorkflowRunListEnvelope) -> Result<Bool, String> {
+  let count = array_len(envelope.runs)?
+  if count == 0 {
+    print("runs=0")
+    return Ok(true)
+  }
+  let index = 0
+  while index < count {
+    match print_workflow_run_line(array_get(envelope.runs, index)?) {
+      Ok(_) => {}
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn emit_workflow_runs(envelope: WorkflowRunListEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match print_workflow_runs_text(envelope) {
+    Ok(_) => {
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn emit_workflow_run(envelope: WorkflowRunEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match print_workflow_run_details(envelope.run) {
+    Ok(_) => { return 0 }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn emit_workflow_event(envelope: WorkflowEventSubmitEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("outcome=", envelope.outcome))
+  print(text_concat("run_id=", int_text(envelope.run.run_id)))
+  print(text_concat("status=", envelope.run.status))
+  print(text_concat("event_id=", envelope.run.event_id))
+  return 0
+}
+
+fn workflow_usage_error(msg: String) -> Int {
+  print(msg)
+  return 2
+}
+
+fn workflow_runtime_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn finalized_workflow_args(parsed: ParsedArgs) -> Result<WorkflowCliArgs, Int> {
+  match parse_workflow_cli_args(parsed) {
+    Ok(value) => {
+      match finalize_workflow_cli_args(value) {
+        Ok(finalized) => {
+          return Ok(finalized)
+        }
+        Err(msg) => {
+          return Err(workflow_usage_error(msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(workflow_usage_error(msg))
+    }
+  }
+}
+
+async fn run_workflow_get_subcommand(base_url: String,
+                                     options: ClientOptions,
+                                     args: WorkflowCliArgs,
+                                     json_mode: Bool) -> Int {
+  match await get_json(base_url, workflow_definition_path(args.app_name, args.channel), options) {
+    Ok(reply) => {
+      match parse_workflow_definition_reply(reply) {
+        Ok(envelope) => {
+          return emit_workflow_definition(envelope, json_mode)
+        }
+        Err(msg) => {
+          return workflow_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return workflow_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_workflow_put_subcommand(base_url: String,
+                                     options: ClientOptions,
+                                     args: WorkflowCliArgs,
+                                     json_mode: Bool) -> Int {
+  let request = workflow_spec_request(args)
+  match request {
+    Ok(value) => {
+      match workflow_if_match_header(args) {
+        Ok(if_match) => {
+          match await put_json(base_url,
+                               workflow_definition_path(args.app_name, args.channel),
+                               value.as_json(),
+                               options,
+                               if_match) {
+            Ok(reply) => {
+              match parse_workflow_definition_reply(reply) {
+                Ok(envelope) => {
+                  return emit_workflow_definition(envelope, json_mode)
+                }
+                Err(msg) => {
+                  return workflow_runtime_error(msg)
+                }
+              }
+            }
+            Err(msg) => {
+              return workflow_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return workflow_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return workflow_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_workflow_runs_subcommand(base_url: String,
+                                      options: ClientOptions,
+                                      args: WorkflowCliArgs,
+                                      json_mode: Bool) -> Int {
+  match await get_json(base_url, workflow_runs_path(args.app_name, args.channel), options) {
+    Ok(reply) => {
+      match parse_workflow_runs_reply(reply) {
+        Ok(envelope) => {
+          return emit_workflow_runs(envelope, json_mode)
+        }
+        Err(msg) => {
+          return workflow_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return workflow_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_workflow_run_subcommand(base_url: String,
+                                     options: ClientOptions,
+                                     args: WorkflowCliArgs,
+                                     json_mode: Bool) -> Int {
+  match workflow_positive_int(args.run_id_text, "--run-id") {
+    Ok(run_id) => {
+      match await get_json(base_url, workflow_run_path(args.app_name, args.channel, run_id), options) {
+        Ok(reply) => {
+          match parse_workflow_run_reply(reply) {
+            Ok(envelope) => {
+              return emit_workflow_run(envelope, json_mode)
+            }
+            Err(msg) => {
+              return workflow_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return workflow_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return workflow_usage_error(msg)
+    }
+  }
+}
+
+async fn run_workflow_event_subcommand(base_url: String,
+                                       options: ClientOptions,
+                                       args: WorkflowCliArgs,
+                                       json_mode: Bool) -> Int {
+  match workflow_event_request(args) {
+    Ok(request) => {
+      match await post_json(base_url, workflow_events_path(args.app_name, args.channel), request.as_json(), options) {
+        Ok(reply) => {
+          match parse_workflow_event_reply(reply) {
+            Ok(envelope) => {
+              return emit_workflow_event(envelope, json_mode)
+            }
+            Err(msg) => {
+              return workflow_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return workflow_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return workflow_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_workflow_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match finalized_workflow_args(parsed) {
+    Ok(args) => {
+      if args.subcommand == "get" {
+        return await run_workflow_get_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      if args.subcommand == "put" {
+        return await run_workflow_put_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      if args.subcommand == "runs" {
+        return await run_workflow_runs_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      if args.subcommand == "run" {
+        return await run_workflow_run_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      return await run_workflow_event_subcommand(base_url, options, args, parsed.json_mode)
+    }
+    Err(exit_code) => {
+      return exit_code
+    }
+  }
+}

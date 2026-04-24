@@ -1,0 +1,762 @@
+module contracts
+import std::json
+import std::result
+
+struct ServiceInfo {
+  service: String
+  version: String
+  profile: String
+  request_id: String
+  unix_ms: Int
+}
+
+struct WhoAmIEnvelope {
+  auth_enabled: Bool
+  actor: String
+  role: String
+  request_id: String
+  unix_ms: Int
+}
+
+struct ReleasePutRequest {
+  version: String
+  config_revision: Int
+  description: String
+}
+
+struct ReleaseEntry {
+  app: String
+  channel: String
+  version: String
+  config_revision: Int
+  description: String
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ReleaseEntryEnvelope {
+  entry: ReleaseEntry
+  request_id: String
+  unix_ms: Int
+}
+
+struct ReleaseListEnvelope {
+  app: String
+  releases: Json
+  request_id: String
+  unix_ms: Int
+}
+
+struct ApprovalDecisionRequest {
+  decision: String
+  reason: String
+}
+
+struct ApprovalDecision {
+  app: String
+  channel: String
+  release_revision_id: Int
+  decision: String
+  reason: String
+  decided_by: String
+  decided_unix_ms: Int
+}
+
+struct ApprovalDecisionEnvelope {
+  decision: ApprovalDecision
+  request_id: String
+  unix_ms: Int
+}
+
+struct ApplyRun {
+  run_id: Int
+  app: String
+  channel: String
+  release_revision_id: Int
+  status: String
+  requested_by: String
+  requested_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  runner_id: String
+  result_message: String
+}
+
+struct ApplyRunEnvelope {
+  run: ApplyRun
+  request_id: String
+  unix_ms: Int
+}
+
+struct ApplyRunnerOnceEnvelope {
+  outcome: String
+  run: ApplyRun
+  request_id: String
+  unix_ms: Int
+}
+
+struct AuditEvent {
+  event_id: Int
+  app: String
+  channel: String
+  event_kind: String
+  actor: String
+  release_revision_id: Int
+  apply_run_id: Int
+  message: String
+  payload: Json
+  unix_ms: Int
+}
+
+struct AuditListEnvelope {
+  app: String
+  channel: String
+  events: Json
+  request_id: String
+  unix_ms: Int
+}
+
+struct ReleaseIdentityFields {
+  app: String
+  channel: String
+}
+
+struct ReleaseStateFields {
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ApplyRunTimingFields {
+  requested_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  runner_id: String
+  result_message: String
+}
+
+struct ApprovalDecisionBodyFields {
+  release_revision_id: Int
+  decision: String
+  reason: String
+}
+
+struct ApprovalDecisionMetaFields {
+  decided_by: String
+  decided_unix_ms: Int
+}
+
+struct ApplyRunCoreFields {
+  run_id: Int
+  release_revision_id: Int
+  status: String
+  requested_by: String
+}
+
+struct AuditEventCoreFields {
+  event_id: Int
+  event_kind: String
+  message: String
+  payload: Json
+}
+
+struct AuditEventMetaFields {
+  actor: String
+  release_revision_id: Int
+  apply_run_id: Int
+  unix_ms: Int
+}
+
+struct EnvelopeMetadata {
+  request_id: String
+  unix_ms: Int
+}
+
+fn ServiceInfo_as_json(self: ServiceInfo) -> Json {
+  return object5(
+    "service",
+    string_value(self.service),
+    "version",
+    string_value(self.version),
+    "profile",
+    string_value(self.profile),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn WhoAmIEnvelope_as_json(self: WhoAmIEnvelope) -> Json {
+  return object5(
+    "auth_enabled",
+    bool_value(self.auth_enabled),
+    "actor",
+    string_value(self.actor),
+    "role",
+    string_value(self.role),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ReleasePutRequest_as_json(self: ReleasePutRequest) -> Json {
+  return object3(
+    "version",
+    string_value(self.version),
+    "config_revision",
+    int_value(self.config_revision),
+    "description",
+    string_value(self.description)
+  )
+}
+
+fn ReleaseEntry_as_json(self: ReleaseEntry) -> Json {
+  return object7(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "version",
+    string_value(self.version),
+    "config_revision",
+    int_value(self.config_revision),
+    "description",
+    string_value(self.description),
+    "revision_id",
+    int_value(self.revision_id),
+    "meta",
+    object2(
+      "updated_by",
+      string_value(self.updated_by),
+      "updated_unix_ms",
+      int_value(self.updated_unix_ms)
+    )
+  )
+}
+
+fn ReleaseEntryEnvelope_as_json(self: ReleaseEntryEnvelope) -> Json {
+  return object3(
+    "entry",
+    self.entry.as_json(),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ReleaseListEnvelope_as_json(self: ReleaseListEnvelope) -> Json {
+  return object4(
+    "app",
+    string_value(self.app),
+    "releases",
+    self.releases,
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ApprovalDecisionRequest_as_json(self: ApprovalDecisionRequest) -> Json {
+  return object2(
+    "decision",
+    string_value(self.decision),
+    "reason",
+    string_value(self.reason)
+  )
+}
+
+fn ApprovalDecision_as_json(self: ApprovalDecision) -> Json {
+  return object6(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "release_revision_id",
+    int_value(self.release_revision_id),
+    "decision",
+    string_value(self.decision),
+    "reason",
+    string_value(self.reason),
+    "meta",
+    object2(
+      "decided_by",
+      string_value(self.decided_by),
+      "decided_unix_ms",
+      int_value(self.decided_unix_ms)
+    )
+  )
+}
+
+fn ApprovalDecisionEnvelope_as_json(self: ApprovalDecisionEnvelope) -> Json {
+  return object3(
+    "decision",
+    self.decision.as_json(),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ApplyRun_as_json(self: ApplyRun) -> Json {
+  return object7(
+    "run_id",
+    int_value(self.run_id),
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "release_revision_id",
+    int_value(self.release_revision_id),
+    "status",
+    string_value(self.status),
+    "requested_by",
+    string_value(self.requested_by),
+    "meta",
+    object5(
+      "requested_unix_ms",
+      int_value(self.requested_unix_ms),
+      "started_unix_ms",
+      int_value(self.started_unix_ms),
+      "finished_unix_ms",
+      int_value(self.finished_unix_ms),
+      "runner_id",
+      string_value(self.runner_id),
+      "result_message",
+      string_value(self.result_message)
+    )
+  )
+}
+
+fn ApplyRunEnvelope_as_json(self: ApplyRunEnvelope) -> Json {
+  return object3(
+    "run",
+    self.run.as_json(),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ApplyRunnerOnceEnvelope_as_json(self: ApplyRunnerOnceEnvelope) -> Json {
+  return object4(
+    "outcome",
+    string_value(self.outcome),
+    "run",
+    self.run.as_json(),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn AuditEvent_as_json(self: AuditEvent) -> Json {
+  return object7(
+    "event_id",
+    int_value(self.event_id),
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "event_kind",
+    string_value(self.event_kind),
+    "message",
+    string_value(self.message),
+    "payload",
+    self.payload,
+    "meta",
+    object4(
+      "actor",
+      string_value(self.actor),
+      "release_revision_id",
+      int_value(self.release_revision_id),
+      "apply_run_id",
+      int_value(self.apply_run_id),
+      "unix_ms",
+      int_value(self.unix_ms)
+    )
+  )
+}
+
+fn AuditListEnvelope_as_json(self: AuditListEnvelope) -> Json {
+  return object5(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "events",
+    self.events,
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn service_info_from_json(value: Json) -> Result<ServiceInfo, String> {
+  let service = get_string(value, "service")?
+  let version = get_string(value, "version")?
+  let profile = get_string(value, "profile")?
+  let request_id = get_string(value, "request_id")?
+  let unix_ms = get_int(value, "unix_ms")?
+  return Ok(ServiceInfo(service, version, profile, request_id, unix_ms))
+}
+
+fn whoami_envelope_from_json(value: Json) -> Result<WhoAmIEnvelope, String> {
+  let auth_enabled = get_bool(value, "auth_enabled")?
+  let actor = get_string(value, "actor")?
+  let role = get_string(value, "role")?
+  let request_id = get_string(value, "request_id")?
+  let unix_ms = get_int(value, "unix_ms")?
+  return Ok(WhoAmIEnvelope(auth_enabled, actor, role, request_id, unix_ms))
+}
+
+fn release_put_request_from_json(value: Json) -> Result<ReleasePutRequest, String> {
+  let version = get_string(value, "version")?
+  let config_revision = get_int(value, "config_revision")?
+  let description = get_string(value, "description")?
+  return Ok(ReleasePutRequest(version, config_revision, description))
+}
+
+fn approval_decision_request_from_json(value: Json) -> Result<ApprovalDecisionRequest, String> {
+  let decision = get_string(value, "decision")?
+  let reason = get_string(value, "reason")?
+  return Ok(ApprovalDecisionRequest(decision, reason))
+}
+
+fn release_identity_fields_from_json(value: Json) -> Result<ReleaseIdentityFields, String> {
+  let app = get_string(value, "app")?
+  let channel = get_string(value, "channel")?
+  return Ok(ReleaseIdentityFields(app, channel))
+}
+
+fn release_state_fields_from_json(value: Json) -> Result<ReleaseStateFields, String> {
+  let meta = get_value(value, "meta")?
+  let revision_id = get_int(value, "revision_id")?
+  let updated_by = get_string(meta, "updated_by")?
+  let updated_unix_ms = get_int(meta, "updated_unix_ms")?
+  return Ok(ReleaseStateFields(revision_id, updated_by, updated_unix_ms))
+}
+
+fn apply_run_timing_meta_from_json(value: Json) -> Result<Json, String> {
+  return get_value(value, "meta")
+}
+
+fn apply_run_timing_fields_from_meta(meta: Json) -> Result<ApplyRunTimingFields, String> {
+  let requested_unix_ms = get_int(meta, "requested_unix_ms")?
+  let started_unix_ms = get_int(meta, "started_unix_ms")?
+  let finished_unix_ms = get_int(meta, "finished_unix_ms")?
+  let runner_id = get_string(meta, "runner_id")?
+  let result_message = get_string(meta, "result_message")?
+  return Ok(ApplyRunTimingFields(requested_unix_ms,
+                                 started_unix_ms,
+                                 finished_unix_ms,
+                                 runner_id,
+                                 result_message))
+}
+
+fn apply_run_timing_fields_from_json(value: Json) -> Result<ApplyRunTimingFields, String> {
+  let meta = apply_run_timing_meta_from_json(value)?
+  return apply_run_timing_fields_from_meta(meta)
+}
+
+fn approval_decision_body_fields_from_json(value: Json) -> Result<ApprovalDecisionBodyFields, String> {
+  let release_revision_id = get_int(value, "release_revision_id")?
+  let decision = get_string(value, "decision")?
+  let reason = get_string(value, "reason")?
+  return Ok(ApprovalDecisionBodyFields(release_revision_id, decision, reason))
+}
+
+fn approval_decision_meta_fields_from_json(value: Json) -> Result<ApprovalDecisionMetaFields, String> {
+  let meta = get_value(value, "meta")?
+  let decided_by = get_string(meta, "decided_by")?
+  let decided_unix_ms = get_int(meta, "decided_unix_ms")?
+  return Ok(ApprovalDecisionMetaFields(decided_by, decided_unix_ms))
+}
+
+fn apply_run_core_fields_from_json(value: Json) -> Result<ApplyRunCoreFields, String> {
+  let run_id = get_int(value, "run_id")?
+  let release_revision_id = get_int(value, "release_revision_id")?
+  let status = get_string(value, "status")?
+  let requested_by = get_string(value, "requested_by")?
+  return Ok(ApplyRunCoreFields(run_id, release_revision_id, status, requested_by))
+}
+
+fn audit_event_core_fields_from_json(value: Json) -> Result<AuditEventCoreFields, String> {
+  let event_id = get_int(value, "event_id")?
+  let event_kind = get_string(value, "event_kind")?
+  let message = get_string(value, "message")?
+  let payload = get_value(value, "payload")?
+  return Ok(AuditEventCoreFields(event_id, event_kind, message, payload))
+}
+
+fn audit_event_meta_fields_from_json(value: Json) -> Result<AuditEventMetaFields, String> {
+  let meta = get_value(value, "meta")?
+  let actor = get_string(meta, "actor")?
+  let release_revision_id = get_int(meta, "release_revision_id")?
+  let apply_run_id = get_int(meta, "apply_run_id")?
+  let unix_ms = get_int(meta, "unix_ms")?
+  return Ok(AuditEventMetaFields(actor, release_revision_id, apply_run_id, unix_ms))
+}
+
+fn envelope_metadata_from_json(value: Json) -> Result<EnvelopeMetadata, String> {
+  let request_id = get_string(value, "request_id")?
+  let unix_ms = get_int(value, "unix_ms")?
+  return Ok(EnvelopeMetadata(request_id, unix_ms))
+}
+
+fn release_entry_from_json(value: Json) -> Result<ReleaseEntry, String> {
+  let identity = release_identity_fields_from_json(value)?
+  let version = get_string(value, "version")?
+  let config_revision = get_int(value, "config_revision")?
+  let description = get_string(value, "description")?
+  let state = release_state_fields_from_json(value)?
+  return Ok(ReleaseEntry(identity.app,
+                         identity.channel,
+                         version,
+                         config_revision,
+                         description,
+                         state.revision_id,
+                         state.updated_by,
+                         state.updated_unix_ms))
+}
+
+fn release_entry_envelope_from_json(value: Json) -> Result<ReleaseEntryEnvelope, String> {
+  let entry_json = get_value(value, "entry")?
+  let entry = release_entry_from_json(entry_json)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ReleaseEntryEnvelope(entry, metadata.request_id, metadata.unix_ms))
+}
+
+fn release_list_envelope_from_json(value: Json) -> Result<ReleaseListEnvelope, String> {
+  let app = get_string(value, "app")?
+  let releases = get_value(value, "releases")?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ReleaseListEnvelope(app, releases, metadata.request_id, metadata.unix_ms))
+}
+
+fn approval_decision_from_fields(identity: ReleaseIdentityFields,
+                                 body: ApprovalDecisionBodyFields,
+                                 meta: ApprovalDecisionMetaFields) -> ApprovalDecision {
+  return ApprovalDecision(identity.app,
+                          identity.channel,
+                          body.release_revision_id,
+                          body.decision,
+                          body.reason,
+                          meta.decided_by,
+                          meta.decided_unix_ms)
+}
+
+fn approval_decision_from_json(value: Json) -> Result<ApprovalDecision, String> {
+  let identity = release_identity_fields_from_json(value)?
+  let body = approval_decision_body_fields_from_json(value)?
+  let meta = approval_decision_meta_fields_from_json(value)?
+  return Ok(approval_decision_from_fields(identity, body, meta))
+}
+
+fn approval_decision_envelope_from_json(value: Json) -> Result<ApprovalDecisionEnvelope, String> {
+  let decision_json = get_value(value, "decision")?
+  let decision = approval_decision_from_json(decision_json)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ApprovalDecisionEnvelope(decision, metadata.request_id, metadata.unix_ms))
+}
+
+fn apply_run_from_fields(identity: ReleaseIdentityFields,
+                         core: ApplyRunCoreFields,
+                         timing: ApplyRunTimingFields) -> ApplyRun {
+  return ApplyRun(core.run_id,
+                  identity.app,
+                  identity.channel,
+                  core.release_revision_id,
+                  core.status,
+                  core.requested_by,
+                  timing.requested_unix_ms,
+                  timing.started_unix_ms,
+                  timing.finished_unix_ms,
+                  timing.runner_id,
+                  timing.result_message)
+}
+
+fn apply_run_from_json(value: Json) -> Result<ApplyRun, String> {
+  let identity = release_identity_fields_from_json(value)?
+  let core = apply_run_core_fields_from_json(value)?
+  let timing = apply_run_timing_fields_from_json(value)?
+  return Ok(apply_run_from_fields(identity, core, timing))
+}
+
+fn apply_run_envelope_from_json(value: Json) -> Result<ApplyRunEnvelope, String> {
+  let run_json = get_value(value, "run")?
+  let run = apply_run_from_json(run_json)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ApplyRunEnvelope(run, metadata.request_id, metadata.unix_ms))
+}
+
+fn apply_runner_once_envelope_from_json(value: Json) -> Result<ApplyRunnerOnceEnvelope, String> {
+  let outcome = get_string(value, "outcome")?
+  let run_json = get_value(value, "run")?
+  let run = apply_run_from_json(run_json)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ApplyRunnerOnceEnvelope(outcome, run, metadata.request_id, metadata.unix_ms))
+}
+
+fn audit_event_from_fields(identity: ReleaseIdentityFields,
+                           core: AuditEventCoreFields,
+                           meta: AuditEventMetaFields) -> AuditEvent {
+  return AuditEvent(core.event_id,
+                    identity.app,
+                    identity.channel,
+                    core.event_kind,
+                    meta.actor,
+                    meta.release_revision_id,
+                    meta.apply_run_id,
+                    core.message,
+                    core.payload,
+                    meta.unix_ms)
+}
+
+fn audit_event_from_json(value: Json) -> Result<AuditEvent, String> {
+  let identity = release_identity_fields_from_json(value)?
+  let core = audit_event_core_fields_from_json(value)?
+  let meta = audit_event_meta_fields_from_json(value)?
+  return Ok(audit_event_from_fields(identity, core, meta))
+}
+
+fn audit_list_envelope_from_json(value: Json) -> Result<AuditListEnvelope, String> {
+  let identity = release_identity_fields_from_json(value)?
+  let events = get_value(value, "events")?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(AuditListEnvelope(identity.app,
+                              identity.channel,
+                              events,
+                              metadata.request_id,
+                              metadata.unix_ms))
+}
+
+@test
+fn test_release_entry_envelope_roundtrip() -> Void {
+  let entry = ReleaseEntry("control-plane", "prod", "2026.04.21", 7, "initial", 1, "writer", 123)
+  let envelope = ReleaseEntryEnvelope(entry, "req-1", 456)
+  match release_entry_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.entry.app == "control-plane", "release entry app drifted")
+      assert(decoded.entry.channel == "prod", "release entry channel drifted")
+      assert(decoded.entry.version == "2026.04.21", "release entry version drifted")
+      assert(decoded.entry.config_revision == 7, "release entry config revision drifted")
+      assert(decoded.entry.revision_id == 1, "release entry revision drifted")
+      assert(decoded.entry.updated_by == "writer", "release entry actor drifted")
+      assert(decoded.request_id == "req-1", "release entry request_id drifted")
+      assert(decoded.unix_ms == 456, "release entry unix_ms drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_release_list_envelope_roundtrip() -> Void {
+  let builder = array_builder()
+  builder = array_push(builder, ReleaseEntry("control-plane", "prod", "2026.04.21", 7, "", 1, "writer", 123).as_json())
+  builder = array_push(builder, ReleaseEntry("control-plane", "staging", "2026.04.22", 8, "", 2, "writer", 124).as_json())
+  let envelope = ReleaseListEnvelope("control-plane", array_build(builder), "req-2", 789)
+  match release_list_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      match array_len(decoded.releases) {
+        Ok(count) => {
+          assert(decoded.app == "control-plane", "release list app drifted")
+          assert(decoded.request_id == "req-2", "release list request_id drifted")
+          assert(decoded.unix_ms == 789, "release list unix_ms drifted")
+          assert(count == 2, "release list count drifted")
+        }
+        Err(msg) => {
+          panic(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_approval_decision_envelope_roundtrip() -> Void {
+  let decision = ApprovalDecision("control-plane", "prod", 2, "approved", "ship it", "admin", 222)
+  let envelope = ApprovalDecisionEnvelope(decision, "req-3", 333)
+  match approval_decision_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.decision.app == "control-plane", "approval app drifted")
+      assert(decoded.decision.channel == "prod", "approval channel drifted")
+      assert(decoded.decision.release_revision_id == 2, "approval release revision drifted")
+      assert(decoded.decision.decision == "approved", "approval decision drifted")
+      assert(decoded.decision.reason == "ship it", "approval reason drifted")
+      assert(decoded.decision.decided_by == "admin", "approval actor drifted")
+      assert(decoded.request_id == "req-3", "approval request_id drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_apply_run_envelope_roundtrip() -> Void {
+  let run = ApplyRun(4, "control-plane", "prod", 2, "applied", "writer", 10, 11, 12, "local-runner", "release applied locally")
+  let envelope = ApplyRunEnvelope(run, "req-4", 444)
+  match apply_run_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.run.run_id == 4, "apply run id drifted")
+      assert(decoded.run.status == "applied", "apply status drifted")
+      assert(decoded.run.requested_by == "writer", "apply requested_by drifted")
+      assert(decoded.run.runner_id == "local-runner", "apply runner_id drifted")
+      assert(decoded.run.result_message == "release applied locally", "apply result drifted")
+      assert(decoded.request_id == "req-4", "apply request_id drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_audit_list_envelope_roundtrip() -> Void {
+  let builder = array_builder()
+  builder = array_push(builder,
+                       AuditEvent(1,
+                                  "control-plane",
+                                  "prod",
+                                  "release_upserted",
+                                  "writer",
+                                  2,
+                                  0,
+                                  "release desired state updated",
+                                  object1("version", string_value("2026.04.21")),
+                                  555).as_json())
+  let envelope = AuditListEnvelope("control-plane", "prod", array_build(builder), "req-5", 666)
+  match audit_list_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      match array_len(decoded.events) {
+        Ok(count) => {
+          assert(decoded.app == "control-plane", "audit app drifted")
+          assert(decoded.channel == "prod", "audit channel drifted")
+          assert(decoded.request_id == "req-5", "audit request_id drifted")
+          assert(count == 1, "audit count drifted")
+        }
+        Err(msg) => {
+          panic(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

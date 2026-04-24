@@ -1,0 +1,228 @@
+module auth
+import core::contracts
+import core::validate
+import service::context
+import service::errors
+import service::middleware
+import std::env
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::task
+import std::time
+
+fn auth_required_from_env() -> Result<Bool, String> {
+  let raw = get_or_default("APP_AUTH_REQUIRED", "")
+  if raw == "" {
+    return Ok(false)
+  }
+  if raw == "1" || raw == "true" || raw == "TRUE" || raw == "yes" || raw == "on" {
+    return Ok(true)
+  }
+  if raw == "0" || raw == "false" || raw == "FALSE" || raw == "no" || raw == "off" {
+    return Ok(false)
+  }
+  return Err("APP_AUTH_REQUIRED must be true/false or 1/0")
+}
+
+fn auth_enabled() -> Bool {
+  match auth_required_from_env() {
+    Ok(enabled) => {
+      return enabled
+    }
+    Err(_) => {
+      return false
+    }
+  }
+}
+
+fn role_rank(role: String) -> Int {
+  if role == "reader" {
+    return 1
+  }
+  if role == "writer" {
+    return 2
+  }
+  if role == "admin" {
+    return 3
+  }
+  return 0
+}
+
+fn role_allows(actual_role: String, required_role: String) -> Bool {
+  return role_rank(actual_role) >= role_rank(required_role)
+}
+
+fn auth_principal(actor: String, role: String) -> Principal {
+  return principal(actor, object1("role", string_value(role)))
+}
+
+fn principal_actor(value: Principal) -> Result<String, String> {
+  validate_actor_segment(value.subject)?
+  return Ok(value.subject)
+}
+
+fn principal_role(value: Principal) -> Result<String, String> {
+  let role = get_string(value.claims, "role")?
+  validate_role(role)?
+  return Ok(role)
+}
+
+fn updated_by_actor(ctx: RequestContext) -> Result<String, String> {
+  let value = ctx.principal()?
+  return principal_actor(value)
+}
+
+fn anonymous_admin_decision() -> AuthDecision {
+  return allow_principal(auth_principal("anonymous", "admin"))
+}
+
+fn match_header_token(value: String) -> Result<Principal, String> {
+  let admin_token = get_or_default("APP_ADMIN_TOKEN", "")
+  if admin_token != "" && value == text_concat("Bearer ", admin_token) {
+    return Ok(auth_principal("admin", "admin"))
+  }
+  let writer_token = get_or_default("APP_WRITE_TOKEN", "")
+  if writer_token != "" && value == text_concat("Bearer ", writer_token) {
+    return Ok(auth_principal("writer", "writer"))
+  }
+  let reader_token = get_or_default("APP_READ_TOKEN", "")
+  if reader_token != "" && value == text_concat("Bearer ", reader_token) {
+    return Ok(auth_principal("reader", "reader"))
+  }
+  return Err("authorization token is invalid")
+}
+
+fn unauthorized(ctx: RequestContext, message: String) -> Response {
+  return for_request(401, ctx, "unauthorized", message)
+}
+
+fn forbidden(ctx: RequestContext, required_role: String) -> Response {
+  return for_request(403, ctx, "forbidden", text_concat("required role: ", required_role))
+}
+
+fn require_token(name: String, value: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(name, " is required when APP_AUTH_REQUIRED is enabled"))
+  }
+  return Ok(true)
+}
+
+fn require_distinct_tokens(first_name: String,
+                           first_value: String,
+                           second_name: String,
+                           second_value: String) -> Result<Bool, String> {
+  if first_value == second_value {
+    return Err(text_concat3(first_name, " must differ from ", second_name))
+  }
+  return Ok(true)
+}
+
+fn require_auth_tokens(reader_token: String,
+                       writer_token: String,
+                       admin_token: String) -> Result<Bool, String> {
+  require_token("APP_READ_TOKEN", reader_token)?
+  require_token("APP_WRITE_TOKEN", writer_token)?
+  require_token("APP_ADMIN_TOKEN", admin_token)?
+  return Ok(true)
+}
+
+fn require_distinct_auth_tokens(reader_token: String,
+                                writer_token: String,
+                                admin_token: String) -> Result<Bool, String> {
+  require_distinct_tokens("APP_READ_TOKEN", reader_token, "APP_WRITE_TOKEN", writer_token)?
+  require_distinct_tokens("APP_READ_TOKEN", reader_token, "APP_ADMIN_TOKEN", admin_token)?
+  require_distinct_tokens("APP_WRITE_TOKEN", writer_token, "APP_ADMIN_TOKEN", admin_token)?
+  return Ok(true)
+}
+
+fn validate_auth_configuration() -> Result<Bool, String> {
+  let enabled = auth_required_from_env()?
+  if !enabled {
+    return Ok(true)
+  }
+  let reader_token = get_or_default("APP_READ_TOKEN", "")
+  let writer_token = get_or_default("APP_WRITE_TOKEN", "")
+  let admin_token = get_or_default("APP_ADMIN_TOKEN", "")
+  require_auth_tokens(reader_token, writer_token, admin_token)?
+  require_distinct_auth_tokens(reader_token, writer_token, admin_token)?
+  return Ok(true)
+}
+
+fn authorize_header_value(ctx: RequestContext,
+                          header_value: String,
+                          required_role: String) -> Result<AuthDecision, String> {
+  let value = match_header_token(header_value)?
+  let actual_role = principal_role(value)?
+  if role_allows(actual_role, required_role) {
+    return Ok(allow_principal(value))
+  }
+  return Ok(deny(forbidden(ctx, required_role)))
+}
+
+fn authorize_role(ctx: RequestContext, request: Request, required_role: String) -> Result<AuthDecision, String> {
+  match auth_required_from_env() {
+    Ok(enabled) => {
+      if !enabled {
+        return Ok(anonymous_admin_decision())
+      }
+      match header_value_unique(request, "Authorization") {
+        Ok(value) => {
+          match authorize_header_value(ctx, value, required_role) {
+            Ok(decision) => {
+              return Ok(decision)
+            }
+            Err(detail) => {
+              return Ok(deny(unauthorized(ctx, detail)))
+            }
+          }
+        }
+        Err(_) => {
+          return Ok(deny(unauthorized(ctx, "authorization header is required")))
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(deny(for_request(500, ctx, "auth_config_invalid", msg)))
+    }
+  }
+}
+
+async fn verify_reader(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "reader")
+}
+
+async fn verify_writer(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "writer")
+}
+
+async fn verify_admin(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "admin")
+}
+
+async fn authorize_reader_result(ctx: RequestContext,
+                                 request: Request,
+                                 next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_reader, next)
+}
+
+async fn authorize_writer_result(ctx: RequestContext,
+                                 request: Request,
+                                 next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_writer, next)
+}
+
+async fn authorize_admin_result(ctx: RequestContext,
+                                request: Request,
+                                next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_admin, next)
+}
+
+fn whoami_response(ctx: RequestContext) -> Result<Response, String> {
+  let value = ctx.principal()?
+  let actor = principal_actor(value)?
+  let role = principal_role(value)?
+  let envelope = WhoAmIEnvelope(auth_enabled(), actor, role, ctx.request_id_text, unix_millis())
+  return Ok(ok_json(envelope.as_json()))
+}

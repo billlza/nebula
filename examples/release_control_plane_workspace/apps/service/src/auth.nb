@@ -1,0 +1,742 @@
+module auth
+import auth_pkg::jwt
+import core::contracts
+import core::policy
+import core::secrets
+import core::validate
+import service::context
+import service::errors
+import service::middleware
+import std::env
+import std::fs
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::task
+import std::time
+
+fn auth_required_from_env() -> Result<Bool, String> {
+  let raw = get_or_default("APP_AUTH_REQUIRED", "")
+  if raw == "" {
+    return Ok(false)
+  }
+  if raw == "1" || raw == "true" || raw == "TRUE" || raw == "yes" || raw == "on" {
+    return Ok(true)
+  }
+  if raw == "0" || raw == "false" || raw == "FALSE" || raw == "no" || raw == "off" {
+    return Ok(false)
+  }
+  return Err("APP_AUTH_REQUIRED must be true/false or 1/0")
+}
+
+fn auth_enabled() -> Bool {
+  match auth_required_from_env() {
+    Ok(enabled) => {
+      return enabled
+    }
+    Err(_) => {
+      return false
+    }
+  }
+}
+
+fn auth_mode_from_env() -> Result<String, String> {
+  let raw = get_or_default("APP_AUTH_MODE", "token")
+  if raw == "" || raw == "token" {
+    return Ok("token")
+  }
+  if raw == "jwt" {
+    return Ok("jwt")
+  }
+  return Err("APP_AUTH_MODE must be token or jwt")
+}
+
+fn env_flag_enabled(name: String) -> Result<Bool, String> {
+  let raw = get_or_default(name, "")
+  if raw == "1" || raw == "true" || raw == "TRUE" || raw == "yes" || raw == "on" {
+    return Ok(true)
+  }
+  if raw == "" || raw == "0" || raw == "false" || raw == "FALSE" || raw == "no" || raw == "off" {
+    return Ok(false)
+  }
+  return Err(text_concat(name, " must be true/false or 1/0"))
+}
+
+fn configured_jwt_issuer() -> String {
+  return get_or_default("APP_AUTH_JWT_ISSUER", "")
+}
+
+fn configured_jwt_audience() -> String {
+  return get_or_default("APP_AUTH_JWT_AUDIENCE", "")
+}
+
+fn configured_jwks_file() -> String {
+  return get_or_default("APP_AUTH_JWKS_FILE", "")
+}
+
+fn configured_auth_scope_file() -> String {
+  return get_or_default("APP_AUTH_SCOPE_FILE", "")
+}
+
+fn configured_jwks_text() -> Result<String, String> {
+  let path = configured_jwks_file()
+  if path == "" {
+    return Err("APP_AUTH_JWKS_FILE is required when APP_AUTH_MODE=jwt")
+  }
+  return read_string(path)
+}
+
+fn jwt_now_unix_s() -> Int {
+  return unix_millis() / 1000
+}
+
+fn jwt_validation_config_from_env() -> Result<JwtValidationConfig, String> {
+  let issuer = configured_jwt_issuer()
+  let audience = configured_jwt_audience()
+  let jwks_text = configured_jwks_text()?
+  return Ok(JwtValidationConfig(issuer, audience, jwks_text, jwt_now_unix_s()))
+}
+
+fn role_rank(role: String) -> Int {
+  if role == "reader" {
+    return 1
+  }
+  if role == "writer" {
+    return 2
+  }
+  if role == "admin" {
+    return 3
+  }
+  return 0
+}
+
+fn role_allows(actual_role: String, required_role: String) -> Bool {
+  if required_role == "worker" {
+    return actual_role == "worker"
+  }
+  if actual_role == "worker" {
+    return false
+  }
+  return role_rank(actual_role) >= role_rank(required_role)
+}
+
+fn auth_principal_claims(role: String, app_scope: Json, channel_scope: Json) -> Result<Json, String> {
+  let permissions = permissions_for_role(role)?
+  return Ok(object4("role",
+                    string_value(role),
+                    "permissions",
+                    permissions,
+                    "app_scope",
+                    normalize_scope_json("app", app_scope)?,
+                    "channel_scope",
+                    normalize_scope_json("channel", channel_scope)?))
+}
+
+fn auth_principal(actor: String, role: String) -> Principal {
+  let claims = object1("role", string_value(role))
+  match auth_principal_claims(role, wildcard_scope(), wildcard_scope()) {
+    Ok(claims) => {
+      return principal(actor, claims)
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+  return principal(actor, claims)
+}
+
+fn empty_resource_scope_policy() -> ResourceScopePolicy {
+  return ResourceScopePolicy(array_build(array_builder()))
+}
+
+fn configured_resource_scope_policy() -> Result<ResourceScopePolicy, String> {
+  let path = configured_auth_scope_file()
+  if path == "" {
+    return Ok(empty_resource_scope_policy())
+  }
+  let raw = read_string(path)?
+  let policy = resource_scope_policy_from_json(parse(raw)?)?
+  validate_resource_scope_policy(policy)?
+  return Ok(policy)
+}
+
+fn wildcard_auth_principal(actor: String, role: String) -> Result<Principal, String> {
+  let claims = auth_principal_claims(role, wildcard_scope(), wildcard_scope())?
+  return Ok(principal(actor, claims))
+}
+
+fn scoped_auth_principal(actor: String, role: String) -> Result<Principal, String> {
+  let policy = configured_resource_scope_policy()?
+  let binding = resource_scope_binding_for_subject(policy, actor)?
+  let claims = auth_principal_claims(role, binding.app_scope, binding.channel_scope)?
+  return Ok(principal(actor, claims))
+}
+
+fn configured_auth_principal(actor: String, role: String) -> Result<Principal, String> {
+  validate_actor_segment(actor)?
+  validate_role(role)?
+  if configured_auth_scope_file() == "" {
+    return wildcard_auth_principal(actor, role)
+  }
+  return scoped_auth_principal(actor, role)
+}
+
+fn jwt_roles_contains(roles: Json, expected: String) -> Result<Bool, String> {
+  let count = array_len(roles)?
+  let index = 0
+  while index < count {
+    let value = array_get(roles, index)?
+    let role = as_string(value)?
+    if role == expected {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn highest_role_from_jwt_claims(claims: JwtClaims) -> Result<String, String> {
+  if jwt_roles_contains(claims.roles, "admin")? {
+    return Ok("admin")
+  }
+  if jwt_roles_contains(claims.roles, "writer")? {
+    return Ok("writer")
+  }
+  if jwt_roles_contains(claims.roles, "reader")? {
+    return Ok("reader")
+  }
+  if jwt_roles_contains(claims.roles, "worker")? {
+    return Ok("worker")
+  }
+  return Err("jwt roles claim must include one of reader/writer/admin/worker")
+}
+
+fn jwt_principal_from_claims(claims: JwtClaims) -> Result<Principal, String> {
+  validate_actor_segment(claims.subject)?
+  let role = highest_role_from_jwt_claims(claims)?
+  return configured_auth_principal(claims.subject, role)
+}
+
+fn principal_actor(value: Principal) -> Result<String, String> {
+  validate_actor_segment(value.subject)?
+  return Ok(value.subject)
+}
+
+fn principal_role(value: Principal) -> Result<String, String> {
+  let role = get_string(value.claims, "role")?
+  validate_role(role)?
+  return Ok(role)
+}
+
+fn principal_permissions(value: Principal) -> Result<Json, String> {
+  match get_value(value.claims, "permissions") {
+    Ok(permissions) => {
+      validate_permission_array(permissions)?
+      return Ok(permissions)
+    }
+    Err(_) => {
+      return permissions_for_role(principal_role(value)?)
+    }
+  }
+}
+
+fn principal_scope_claim(value: Principal, field: String, scope_kind: String) -> Result<Json, String> {
+  match get_value(value.claims, field) {
+    Ok(scope) => {
+      return normalize_scope_json(scope_kind, scope)
+    }
+    Err(_) => {
+      return Ok(wildcard_scope())
+    }
+  }
+}
+
+fn principal_app_scope(value: Principal) -> Result<Json, String> {
+  return principal_scope_claim(value, "app_scope", "app")
+}
+
+fn principal_channel_scope(value: Principal) -> Result<Json, String> {
+  return principal_scope_claim(value, "channel_scope", "channel")
+}
+
+fn principal_permission_allowed(value: Principal, permission: String) -> Result<Bool, String> {
+  return permission_in_array(principal_permissions(value)?, permission)
+}
+
+fn principal_scope_allows(value: Principal, app_name: String, channel: String) -> Result<Bool, String> {
+  if app_name != "" && !scope_allows_app(principal_app_scope(value)?, app_name)? {
+    return Ok(false)
+  }
+  if channel != "" && !scope_allows_channel(principal_channel_scope(value)?, channel)? {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn updated_by_actor(ctx: RequestContext) -> Result<String, String> {
+  let value = ctx.principal()?
+  return principal_actor(value)
+}
+
+fn anonymous_admin_decision() -> AuthDecision {
+  return allow_principal(auth_principal("anonymous", "admin"))
+}
+
+fn configured_admin_token() -> Result<String, String> {
+  return secret_value("APP_ADMIN_TOKEN", "APP_ADMIN_TOKEN_FILE")
+}
+
+fn configured_writer_token() -> Result<String, String> {
+  return secret_value("APP_WRITE_TOKEN", "APP_WRITE_TOKEN_FILE")
+}
+
+fn configured_reader_token() -> Result<String, String> {
+  return secret_value("APP_READ_TOKEN", "APP_READ_TOKEN_FILE")
+}
+
+fn configured_worker_token() -> Result<String, String> {
+  return secret_value("APP_WORKER_TOKEN", "APP_WORKER_TOKEN_FILE")
+}
+
+fn bearer_token_matches(header_value: String, token: String) -> Bool {
+  return token != "" && header_value == text_concat("Bearer ", token)
+}
+
+fn matched_principal_from_tokens(value: String, tokens: AuthTokens) -> Result<Principal, String> {
+  if bearer_token_matches(value, tokens.admin) {
+    return configured_auth_principal("admin", "admin")
+  }
+  if bearer_token_matches(value, tokens.writer) {
+    return configured_auth_principal("writer", "writer")
+  }
+  if bearer_token_matches(value, tokens.reader) {
+    return configured_auth_principal("reader", "reader")
+  }
+  if bearer_token_matches(value, tokens.worker) {
+    return configured_auth_principal("worker", "worker")
+  }
+  return Err("authorization token is invalid")
+}
+
+fn match_header_token(value: String) -> Result<Principal, String> {
+  return matched_principal_from_tokens(value, configured_auth_tokens()?)
+}
+
+fn unauthorized(ctx: RequestContext, message: String) -> Response {
+  return for_request(401, ctx, "unauthorized", message)
+}
+
+fn forbidden(ctx: RequestContext, required_role: String) -> Response {
+  return for_request(403, ctx, "forbidden", text_concat("required role: ", required_role))
+}
+
+fn forbidden_permission(ctx: RequestContext, required_role: String, permission: String) -> Response {
+  let message = text_concat3("required role: ",
+                             required_role,
+                             text_concat(" permission=", permission))
+  return for_request(403, ctx, "forbidden", message)
+}
+
+fn permission_scope_target(app_name: String, channel: String) -> String {
+  if app_name == "" {
+    return "*"
+  }
+  if channel == "" {
+    return app_name
+  }
+  return text_concat3(app_name, "/", channel)
+}
+
+fn forbidden_scoped_permission(ctx: RequestContext,
+                               required_role: String,
+                               permission: String,
+                               app_name: String,
+                               channel: String) -> Response {
+  let message = text_concat3("required role: ",
+                             required_role,
+                             text_concat3(" permission=",
+                                          permission,
+                                          text_concat(" scope=", permission_scope_target(app_name, channel))))
+  return for_request(403, ctx, "forbidden", message)
+}
+
+fn require_token(name: String, value: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(name, " is required when APP_AUTH_REQUIRED is enabled"))
+  }
+  return Ok(true)
+}
+
+fn require_distinct_tokens(first_name: String,
+                           first_value: String,
+                           second_name: String,
+                           second_value: String) -> Result<Bool, String> {
+  if first_value == second_value {
+    return Err(text_concat3(first_name, " must differ from ", second_name))
+  }
+  return Ok(true)
+}
+
+fn require_auth_tokens(reader_token: String,
+                       writer_token: String,
+                       admin_token: String) -> Result<Bool, String> {
+  require_token("APP_READ_TOKEN", reader_token)?
+  require_token("APP_WRITE_TOKEN", writer_token)?
+  require_token("APP_ADMIN_TOKEN", admin_token)?
+  return Ok(true)
+}
+
+fn require_distinct_auth_tokens(reader_token: String,
+                                writer_token: String,
+                                admin_token: String) -> Result<Bool, String> {
+  require_distinct_tokens("APP_READ_TOKEN", reader_token, "APP_WRITE_TOKEN", writer_token)?
+  require_distinct_tokens("APP_READ_TOKEN", reader_token, "APP_ADMIN_TOKEN", admin_token)?
+  require_distinct_tokens("APP_WRITE_TOKEN", writer_token, "APP_ADMIN_TOKEN", admin_token)?
+  return Ok(true)
+}
+
+struct AuthTokens {
+  reader: String
+  writer: String
+  admin: String
+  worker: String
+}
+
+fn configured_auth_tokens() -> Result<AuthTokens, String> {
+  return Ok(AuthTokens(configured_reader_token()?,
+                       configured_writer_token()?,
+                       configured_admin_token()?,
+                       configured_worker_token()?))
+}
+
+fn require_optional_distinct_auth_tokens(tokens: AuthTokens) -> Result<Bool, String> {
+  if tokens.worker == "" {
+    return Ok(true)
+  }
+  require_distinct_tokens("APP_WORKER_TOKEN", tokens.worker, "APP_READ_TOKEN", tokens.reader)?
+  require_distinct_tokens("APP_WORKER_TOKEN", tokens.worker, "APP_WRITE_TOKEN", tokens.writer)?
+  require_distinct_tokens("APP_WORKER_TOKEN", tokens.worker, "APP_ADMIN_TOKEN", tokens.admin)?
+  return Ok(true)
+}
+
+fn validate_jwt_required_settings() -> Result<Bool, String> {
+  if configured_jwt_issuer() == "" {
+    return Err("APP_AUTH_JWT_ISSUER is required when APP_AUTH_MODE=jwt")
+  }
+  if configured_jwt_audience() == "" {
+    return Err("APP_AUTH_JWT_AUDIENCE is required when APP_AUTH_MODE=jwt")
+  }
+  let jwks_text = configured_jwks_text()?
+  validate_rs256_jwks(jwks_text)?
+  return Ok(true)
+}
+
+fn validate_jwt_auth_configuration() -> Result<Bool, String> {
+  let enabled = env_flag_enabled("APP_AUTH_JWT_PREVIEW")?
+  if !enabled {
+    return Err("APP_AUTH_MODE=jwt requires APP_AUTH_JWT_PREVIEW=1")
+  }
+  configured_resource_scope_policy()?
+  return validate_jwt_required_settings()
+}
+
+fn validate_token_auth_configuration() -> Result<Bool, String> {
+  let tokens = configured_auth_tokens()?
+  require_auth_tokens(tokens.reader, tokens.writer, tokens.admin)?
+  require_distinct_auth_tokens(tokens.reader, tokens.writer, tokens.admin)?
+  require_optional_distinct_auth_tokens(tokens)?
+  configured_resource_scope_policy()?
+  return Ok(true)
+}
+
+fn validate_auth_configuration() -> Result<Bool, String> {
+  let enabled = auth_required_from_env()?
+  let mode = auth_mode_from_env()?
+  if mode == "jwt" && !enabled {
+    return Err("APP_AUTH_MODE=jwt requires APP_AUTH_REQUIRED=1")
+  }
+  if !enabled {
+    return Ok(true)
+  }
+  if mode == "jwt" {
+    return validate_jwt_auth_configuration()
+  }
+  return validate_token_auth_configuration()
+}
+
+fn authorize_token_header_value(ctx: RequestContext,
+                                header_value: String,
+                                required_role: String) -> Result<AuthDecision, String> {
+  let value = match_header_token(header_value)?
+  let actual_role = principal_role(value)?
+  if role_allows(actual_role, required_role) {
+    return Ok(allow_principal(value))
+  }
+  return Ok(deny(forbidden(ctx, required_role)))
+}
+
+fn authorize_jwt_header_value(ctx: RequestContext,
+                              header_value: String,
+                              required_role: String) -> Result<AuthDecision, String> {
+  let config = jwt_validation_config_from_env()?
+  let claims = verify_rs256_authorization_header(header_value, config)?
+  let value = jwt_principal_from_claims(claims)?
+  let actual_role = principal_role(value)?
+  if role_allows(actual_role, required_role) {
+    return Ok(allow_principal(value))
+  }
+  return Ok(deny(forbidden(ctx, required_role)))
+}
+
+fn authorize_header_value(ctx: RequestContext,
+                          header_value: String,
+                          required_role: String) -> Result<AuthDecision, String> {
+  let mode = auth_mode_from_env()?
+  if mode == "jwt" {
+    return authorize_jwt_header_value(ctx, header_value, required_role)
+  }
+  return authorize_token_header_value(ctx, header_value, required_role)
+}
+
+fn authorize_token_header_value_permission(ctx: RequestContext,
+                                           header_value: String,
+                                           permission: String) -> Result<AuthDecision, String> {
+  let required_role = permission_required_role(permission)?
+  let value = match_header_token(header_value)?
+  if principal_permission_allowed(value, permission)? {
+    return Ok(allow_principal(value))
+  }
+  return Ok(deny(forbidden_permission(ctx, required_role, permission)))
+}
+
+fn authorize_jwt_header_value_permission(ctx: RequestContext,
+                                         header_value: String,
+                                         permission: String) -> Result<AuthDecision, String> {
+  let required_role = permission_required_role(permission)?
+  let config = jwt_validation_config_from_env()?
+  let claims = verify_rs256_authorization_header(header_value, config)?
+  let value = jwt_principal_from_claims(claims)?
+  if principal_permission_allowed(value, permission)? {
+    return Ok(allow_principal(value))
+  }
+  return Ok(deny(forbidden_permission(ctx, required_role, permission)))
+}
+
+fn authorize_header_value_permission(ctx: RequestContext,
+                                     header_value: String,
+                                     permission: String) -> Result<AuthDecision, String> {
+  validate_permission(permission)?
+  let mode = auth_mode_from_env()?
+  if mode == "jwt" {
+    return authorize_jwt_header_value_permission(ctx, header_value, permission)
+  }
+  return authorize_token_header_value_permission(ctx, header_value, permission)
+}
+
+fn authorize_role(ctx: RequestContext, request: Request, required_role: String) -> Result<AuthDecision, String> {
+  match auth_required_from_env() {
+    Ok(enabled) => {
+      if !enabled {
+        return Ok(anonymous_admin_decision())
+      }
+      match header_value_unique(request, "Authorization") {
+        Ok(value) => {
+          match authorize_header_value(ctx, value, required_role) {
+            Ok(decision) => {
+              return Ok(decision)
+            }
+            Err(detail) => {
+              return Ok(deny(unauthorized(ctx, detail)))
+            }
+          }
+        }
+        Err(_) => {
+          return Ok(deny(unauthorized(ctx, "authorization header is required")))
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(deny(for_request(500, ctx, "auth_config_invalid", msg)))
+    }
+  }
+}
+
+fn authorize_permission(ctx: RequestContext, request: Request, permission: String) -> Result<AuthDecision, String> {
+  match auth_required_from_env() {
+    Ok(enabled) => {
+      if !enabled {
+        return Ok(anonymous_admin_decision())
+      }
+      match header_value_unique(request, "Authorization") {
+        Ok(value) => {
+          match authorize_header_value_permission(ctx, value, permission) {
+            Ok(decision) => {
+              return Ok(decision)
+            }
+            Err(detail) => {
+              return Ok(deny(unauthorized(ctx, detail)))
+            }
+          }
+        }
+        Err(_) => {
+          return Ok(deny(unauthorized(ctx, "authorization header is required")))
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(deny(for_request(500, ctx, "auth_config_invalid", msg)))
+    }
+  }
+}
+
+async fn verify_reader(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "reader")
+}
+
+async fn verify_writer(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "writer")
+}
+
+async fn verify_admin(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "admin")
+}
+
+async fn verify_worker(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  return authorize_role(ctx, request, "worker")
+}
+
+async fn authorize_reader_result(ctx: RequestContext,
+                                 request: Request,
+                                 next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_reader, next)
+}
+
+async fn authorize_writer_result(ctx: RequestContext,
+                                 request: Request,
+                                 next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_writer, next)
+}
+
+async fn authorize_admin_result(ctx: RequestContext,
+                                request: Request,
+                                next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_admin, next)
+}
+
+async fn authorize_worker_result(ctx: RequestContext,
+                                 request: Request,
+                                 next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_worker, next)
+}
+
+async fn authorize_permission_result(ctx: RequestContext,
+                                     request: Request,
+                                     permission: String,
+                                     next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  match authorize_permission(ctx, request, permission) {
+    Ok(decision) => {
+      match decision {
+        Allow => {
+          return await next(ctx, request)
+        }
+        AllowPrincipal(value) => {
+          return await next(ctx.with_principal(value), request)
+        }
+        Deny(response) => {
+          return Ok(response)
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(auth_verifier_failed(ctx, msg))
+    }
+  }
+}
+
+fn permission_scope_check_required(permission: String, app_name: String, channel: String) -> Result<Bool, String> {
+  match permission_supports_resource_scope(permission) {
+    Ok(enabled) => {
+      return Ok(enabled && (app_name != "" || channel != ""))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn scope_check_invalid(ctx: RequestContext, msg: String) -> Result<Bool, Response> {
+  return Err(for_request(500, ctx, "auth_config_invalid", msg))
+}
+
+fn permission_scope_denied_response(ctx: RequestContext,
+                                    permission: String,
+                                    app_name: String,
+                                    channel: String) -> Result<Bool, Response> {
+  match permission_required_role(permission) {
+    Ok(required_role) => {
+      return Err(forbidden_scoped_permission(ctx, required_role, permission, app_name, channel))
+    }
+    Err(msg) => {
+      return scope_check_invalid(ctx, msg)
+    }
+  }
+}
+
+fn permission_scope_allowed(ctx: RequestContext,
+                            permission: String,
+                            app_name: String,
+                            channel: String,
+                            value: Principal) -> Result<Bool, Response> {
+  match principal_scope_allows(value, app_name, channel) {
+    Ok(allowed) => {
+      if allowed {
+        return Ok(true)
+      }
+      return permission_scope_denied_response(ctx, permission, app_name, channel)
+    }
+    Err(msg) => {
+      return scope_check_invalid(ctx, msg)
+    }
+  }
+}
+
+fn require_permission_scope(ctx: RequestContext,
+                            permission: String,
+                            app_name: String,
+                            channel: String) -> Result<Bool, Response> {
+  match permission_scope_check_required(permission, app_name, channel) {
+    Ok(required) => {
+      if !required {
+        return Ok(true)
+      }
+    }
+    Err(msg) => {
+      return scope_check_invalid(ctx, msg)
+    }
+  }
+  match ctx.principal() {
+    Ok(value) => {
+      return permission_scope_allowed(ctx, permission, app_name, channel, value)
+    }
+    Err(msg) => {
+      return scope_check_invalid(ctx, msg)
+    }
+  }
+}
+
+fn principal_app_scope_from_ctx(ctx: RequestContext) -> Result<Json, String> {
+  return principal_app_scope(ctx.principal()?)
+}
+
+fn principal_channel_scope_from_ctx(ctx: RequestContext) -> Result<Json, String> {
+  return principal_channel_scope(ctx.principal()?)
+}
+
+fn whoami_response(ctx: RequestContext) -> Result<Response, String> {
+  let value = ctx.principal()?
+  let actor = principal_actor(value)?
+  let role = principal_role(value)?
+  let envelope = WhoAmIEnvelope(auth_enabled(), actor, role, ctx.request_id_text, unix_millis())
+  return Ok(ok_json(envelope.as_json()))
+}

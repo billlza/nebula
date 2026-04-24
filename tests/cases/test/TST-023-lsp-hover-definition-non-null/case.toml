@@ -8,5 +8,5 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "grep -F '\"hoverProvider\":true' work/lsp-transport.out && grep -F '\"definitionProvider\":true' work/lsp-transport.out && grep -F '\"textDocumentSync\":1' work/lsp-transport.out && grep -F 'publishDiagnostics' work/lsp-transport.out && grep -F '\"contents\":{\"kind\":\"markdown\"' work/lsp-transport.out && grep -F '\"id\":3,\"result\":{\"uri\":\"file://' work/lsp-transport.out"
+run = "grep -F '\"hoverProvider\":true' work/lsp-transport.out && grep -F '\"definitionProvider\":true' work/lsp-transport.out && grep -F '\"textDocumentSync\":{\"change\":2,\"openClose\":true}' work/lsp-transport.out && grep -F '\"renameProvider\":true' work/lsp-transport.out && grep -F '\"workspaceSymbolProvider\":true' work/lsp-transport.out && grep -F '\"codeActionProvider\":true' work/lsp-transport.out && grep -F '\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}' work/lsp-transport.out && grep -F '\"semanticTokensProvider\":{\"full\":true' work/lsp-transport.out && grep -F 'publishDiagnostics' work/lsp-transport.out && grep -F '\"contents\":{\"kind\":\"markdown\"' work/lsp-transport.out && grep -F '\"id\":3' work/lsp-transport.out && grep -F '\"range\":' work/lsp-transport.out && grep -F '\"uri\":\"file://' work/lsp-transport.out"
 expect_rc = 0

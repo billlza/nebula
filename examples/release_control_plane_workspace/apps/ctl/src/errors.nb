@@ -1,0 +1,37 @@
+module errors
+import client
+import core::validate
+import std::json
+import std::result
+
+fn payload_text(payload: Json, key: String) -> String {
+  match get_string(payload, key) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return ""
+    }
+  }
+}
+
+fn reply_error_text(reply: JsonResponse) -> String {
+  let line = text_concat("status=", int_text(reply.status))
+  let code = payload_text(reply.payload, "error")
+  let request_id = payload_text(reply.payload, "request_id_text")
+  let message = payload_text(reply.payload, "message")
+  if code != "" {
+    line = text_concat(line, text_concat(" error=", code))
+  }
+  if request_id != "" {
+    line = text_concat(line, text_concat(" request_id=", request_id))
+  }
+  if message != "" {
+    line = text_concat(line, text_concat(" message=", message))
+  }
+  return line
+}
+
+fn reply_error(reply: JsonResponse) -> Result<Bool, String> {
+  return Err(reply_error_text(reply))
+}

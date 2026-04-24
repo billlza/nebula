@@ -1,0 +1,50 @@
+module main
+import std::json
+import ui::ui
+
+struct DashboardState {
+  title: String
+  ready: Bool
+}
+
+ui Dashboard(state: DashboardState) {
+  view Window(title = state.title) {
+    view Column(spacing = 12) {
+      view Text(text = state.title)
+      view Button(text = "Refresh", action = "targets.refresh")
+    }
+  }
+}
+
+fn verify_tree(tree: Json) -> Void {
+  match get_string(tree, "schema") {
+    Ok(schema_text) => {
+      if schema_text != "nebula-ui.tree.v1" {
+        expect_eq(1, 0)
+      }
+    }
+    Err(_) => {
+      expect_eq(1, 0)
+    }
+  }
+  match get_string(tree, "component") {
+    Ok(component) => {
+      if component != "Window" {
+        expect_eq(1, 0)
+      }
+    }
+    Err(_) => {
+      expect_eq(1, 0)
+    }
+  }
+}
+
+@bench
+fn bench_nebula_ui_startup() -> Void {
+  let state = DashboardState("Local Ops", true)
+  verify_tree(Dashboard(state))
+}
+
+fn main() -> Void {
+  print("app-platform-nebula-ui-startup")
+}

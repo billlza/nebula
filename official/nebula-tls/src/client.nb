@@ -1,0 +1,241 @@
+module client
+import std::bytes
+import std::fs
+import std::json
+import std::net
+import std::result
+import std::task
+
+struct TlsTrustStore {}
+
+struct TlsServerName {}
+
+struct TlsClientIdentity {}
+
+struct TlsVersionPolicy {}
+
+struct TlsAlpnPolicy {}
+
+struct ClientConfig {}
+
+struct TlsClientStream {}
+
+extern fn __nebula_tls_trust_store_from_ca_pem(ca_pem: Bytes) -> Result<TlsTrustStore, String>
+extern fn __nebula_tls_trust_store_default_roots() -> Result<TlsTrustStore, String>
+extern fn __nebula_tls_server_name(name: String) -> Result<TlsServerName, String>
+extern fn __nebula_tls_client_identity_from_pem(certificate_pem: Bytes,
+                                                private_key_pem: Bytes) -> Result<TlsClientIdentity, String>
+extern fn __nebula_tls_tls12_only() -> TlsVersionPolicy
+extern fn __nebula_tls_tls12_or_13() -> TlsVersionPolicy
+extern fn __nebula_tls_tls13_only() -> TlsVersionPolicy
+extern fn __nebula_tls_alpn_none() -> TlsAlpnPolicy
+extern fn __nebula_tls_alpn_http11_only() -> TlsAlpnPolicy
+extern fn __nebula_tls_alpn_http11_or_http2() -> TlsAlpnPolicy
+extern fn __nebula_tls_alpn_http2_only() -> TlsAlpnPolicy
+extern fn __nebula_tls_client_config(trust_store: TlsTrustStore) -> ClientConfig
+extern fn __nebula_tls_client_config_with_identity(self: ClientConfig, identity: TlsClientIdentity) -> ClientConfig
+extern fn __nebula_tls_client_config_with_version_policy(self: ClientConfig, policy: TlsVersionPolicy) -> ClientConfig
+extern fn __nebula_tls_client_config_with_alpn_policy(self: ClientConfig, policy: TlsAlpnPolicy) -> ClientConfig
+extern fn __nebula_tls_handshake_named(stream: TcpStream,
+                                       server_name: TlsServerName,
+                                       config: ClientConfig) -> Future<Result<TlsClientStream, String>>
+extern fn __nebula_tls_stream_read(self: TlsClientStream, max_bytes: Int) -> Future<Result<Bytes, String>>
+extern fn __nebula_tls_stream_write(self: TlsClientStream, bytes: Bytes) -> Future<Result<Int, String>>
+extern fn __nebula_tls_stream_write_all(self: TlsClientStream, bytes: Bytes) -> Future<Result<Void, String>>
+extern fn __nebula_tls_stream_close(self: TlsClientStream) -> Future<Result<Void, String>>
+extern fn __nebula_tls_stream_abort(self: TlsClientStream) -> Result<Void, String>
+extern fn __nebula_tls_stream_peer_addr(self: TlsClientStream) -> Result<SocketAddr, String>
+extern fn __nebula_tls_stream_local_addr(self: TlsClientStream) -> Result<SocketAddr, String>
+extern fn __nebula_tls_stream_peer_subject(self: TlsClientStream) -> Result<String, String>
+extern fn __nebula_tls_stream_peer_identity_debug(self: TlsClientStream) -> Result<Json, String>
+extern fn __nebula_tls_stream_http2_debug_state(self: TlsClientStream) -> Result<Json, String>
+extern fn __nebula_tls_stream_peer_verified(self: TlsClientStream) -> Bool
+extern fn __nebula_tls_stream_tls_version(self: TlsClientStream) -> String
+extern fn __nebula_tls_stream_alpn_protocol(self: TlsClientStream) -> String
+
+fn trust_store_from_ca_pem(ca_pem: Bytes) -> Result<TlsTrustStore, String> {
+  return __nebula_tls_trust_store_from_ca_pem(ca_pem)
+}
+
+fn trust_store_from_ca_pem_text(ca_pem: String) -> Result<TlsTrustStore, String> {
+  return trust_store_from_ca_pem(from_string(ca_pem))
+}
+
+fn trust_store_default_roots() -> Result<TlsTrustStore, String> {
+  return __nebula_tls_trust_store_default_roots()
+}
+
+fn server_name(name: String) -> Result<TlsServerName, String> {
+  return __nebula_tls_server_name(name)
+}
+
+fn client_identity_from_pem(certificate_pem: Bytes,
+                            private_key_pem: Bytes) -> Result<TlsClientIdentity, String> {
+  return __nebula_tls_client_identity_from_pem(certificate_pem, private_key_pem)
+}
+
+fn client_identity_from_pem_text(certificate_pem: String,
+                                 private_key_pem: String) -> Result<TlsClientIdentity, String> {
+  return client_identity_from_pem(from_string(certificate_pem), from_string(private_key_pem))
+}
+
+fn client_identity_from_pem_files(certificate_path: String,
+                                  private_key_path: String) -> Result<TlsClientIdentity, String> {
+  let certificate_pem = read_string(certificate_path)?
+  let private_key_pem = read_string(private_key_path)?
+  return client_identity_from_pem_text(certificate_pem, private_key_pem)
+}
+
+fn tls12_only() -> TlsVersionPolicy {
+  return __nebula_tls_tls12_only()
+}
+
+fn tls12_or_13() -> TlsVersionPolicy {
+  return __nebula_tls_tls12_or_13()
+}
+
+fn tls13_only() -> TlsVersionPolicy {
+  return __nebula_tls_tls13_only()
+}
+
+fn alpn_none() -> TlsAlpnPolicy {
+  return __nebula_tls_alpn_none()
+}
+
+fn alpn_http11_only() -> TlsAlpnPolicy {
+  return __nebula_tls_alpn_http11_only()
+}
+
+fn alpn_http11_or_http2() -> TlsAlpnPolicy {
+  return __nebula_tls_alpn_http11_or_http2()
+}
+
+fn alpn_http2_only() -> TlsAlpnPolicy {
+  return __nebula_tls_alpn_http2_only()
+}
+
+fn client_config(trust_store: TlsTrustStore) -> ClientConfig {
+  return __nebula_tls_client_config(trust_store)
+}
+
+fn client_config_from_ca_pem(ca_pem: Bytes) -> Result<ClientConfig, String> {
+  let trust_store = trust_store_from_ca_pem(ca_pem)?
+  return Ok(client_config(trust_store))
+}
+
+fn client_config_from_ca_pem_text(ca_pem: String) -> Result<ClientConfig, String> {
+  return client_config_from_ca_pem(from_string(ca_pem))
+}
+
+fn client_config_default_roots() -> Result<ClientConfig, String> {
+  let trust_store = trust_store_default_roots()?
+  return Ok(client_config(trust_store))
+}
+
+fn with_client_identity(base: ClientConfig, identity: TlsClientIdentity) -> ClientConfig {
+  return __nebula_tls_client_config_with_identity(base, identity)
+}
+
+fn with_version_policy(base: ClientConfig, policy: TlsVersionPolicy) -> ClientConfig {
+  return __nebula_tls_client_config_with_version_policy(base, policy)
+}
+
+fn with_alpn_policy(base: ClientConfig, policy: TlsAlpnPolicy) -> ClientConfig {
+  return __nebula_tls_client_config_with_alpn_policy(base, policy)
+}
+
+async fn handshake_named(stream: TcpStream,
+                         name: TlsServerName,
+                         config: ClientConfig) -> Result<TlsClientStream, String> {
+  return await __nebula_tls_handshake_named(stream, name, config)
+}
+
+async fn handshake(stream: TcpStream, name: String, config: ClientConfig) -> Result<TlsClientStream, String> {
+  let validated_name = server_name(name)?
+  return await handshake_named(stream, validated_name, config)
+}
+
+async fn dial_named(addr: SocketAddr,
+                    name: TlsServerName,
+                    config: ClientConfig) -> Result<TlsClientStream, String> {
+  match await connect(addr) {
+    Ok(stream) => {
+      return await handshake_named(stream, name, config)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn dial(addr: SocketAddr, name: String, config: ClientConfig) -> Result<TlsClientStream, String> {
+  let validated_name = server_name(name)?
+  return await dial_named(addr, validated_name, config)
+}
+
+async fn dial_host(host: String, port: Int, config: ClientConfig) -> Result<TlsClientStream, String> {
+  if is_empty(from_string(host)) {
+    return Err("tls host must be non-empty")
+  }
+  let validated_name = server_name(host)?
+  match await connect_host(host, port) {
+    Ok(stream) => {
+      return await handshake_named(stream, validated_name, config)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn TlsClientStream_read(self: TlsClientStream, max_bytes: Int) -> Result<Bytes, String> {
+  return await __nebula_tls_stream_read(self, max_bytes)
+}
+
+async fn TlsClientStream_write(self: TlsClientStream, bytes: Bytes) -> Result<Int, String> {
+  return await __nebula_tls_stream_write(self, bytes)
+}
+
+async fn TlsClientStream_write_all(self: TlsClientStream, bytes: Bytes) -> Result<Void, String> {
+  return await __nebula_tls_stream_write_all(self, bytes)
+}
+
+async fn TlsClientStream_close(self: TlsClientStream) -> Result<Void, String> {
+  return await __nebula_tls_stream_close(self)
+}
+
+fn TlsClientStream_abort(self: TlsClientStream) -> Result<Void, String> {
+  return __nebula_tls_stream_abort(self)
+}
+
+fn TlsClientStream_peer_addr(self: TlsClientStream) -> Result<SocketAddr, String> {
+  return __nebula_tls_stream_peer_addr(self)
+}
+
+fn TlsClientStream_local_addr(self: TlsClientStream) -> Result<SocketAddr, String> {
+  return __nebula_tls_stream_local_addr(self)
+}
+
+fn TlsClientStream_peer_subject(self: TlsClientStream) -> Result<String, String> {
+  return __nebula_tls_stream_peer_subject(self)
+}
+
+fn TlsClientStream_peer_identity_debug(self: TlsClientStream) -> Result<Json, String> {
+  return __nebula_tls_stream_peer_identity_debug(self)
+}
+
+fn TlsClientStream_http2_debug_state(self: TlsClientStream) -> Result<Json, String> {
+  return __nebula_tls_stream_http2_debug_state(self)
+}
+
+fn TlsClientStream_peer_verified(self: TlsClientStream) -> Bool {
+  return __nebula_tls_stream_peer_verified(self)
+}
+
+fn TlsClientStream_tls_version(self: TlsClientStream) -> String {
+  return __nebula_tls_stream_tls_version(self)
+}
+
+fn TlsClientStream_alpn_protocol(self: TlsClientStream) -> String {
+  return __nebula_tls_stream_alpn_protocol(self)
+}

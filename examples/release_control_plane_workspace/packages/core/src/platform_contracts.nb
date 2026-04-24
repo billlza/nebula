@@ -1,0 +1,242 @@
+module platform_contracts
+import std::json
+import std::result
+
+struct PlatformCapability {
+  name: String
+  lane: String
+  status: String
+  default_enabled: Bool
+  risk: String
+  contract: String
+}
+
+struct PlatformCapabilityEnvelope {
+  capabilities: Json
+  request_id: String
+  unix_ms: Int
+}
+
+fn PlatformCapability_as_json(self: PlatformCapability) -> Json {
+  return object6("name",
+                 string_value(self.name),
+                 "lane",
+                 string_value(self.lane),
+                 "status",
+                 string_value(self.status),
+                 "default_enabled",
+                 bool_value(self.default_enabled),
+                 "risk",
+                 string_value(self.risk),
+                 "contract",
+                 string_value(self.contract))
+}
+
+fn PlatformCapabilityEnvelope_as_json(self: PlatformCapabilityEnvelope) -> Json {
+  return object3("capabilities",
+                 self.capabilities,
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn capability(name: String,
+              lane: String,
+              status: String,
+              default_enabled: Bool,
+              risk: String,
+              contract: String) -> PlatformCapability {
+  return PlatformCapability(name, lane, status, default_enabled, risk, contract)
+}
+
+fn dag_capability() -> PlatformCapability {
+  return capability("dag_workflows",
+                    "workflow",
+                    "preview_available",
+                    true,
+                    "ordering_and_cycle_safety",
+                    "DAG definitions support explicit dependency edges, unknown dependency rejection, and cycle validation")
+}
+
+fn schedule_capability() -> PlatformCapability {
+  return capability("cron_schedule",
+                    "workflow",
+                    "preview_contract_default_off",
+                    false,
+                    "time_and_replay_safety",
+                    "Opt-in deterministic schedule tick uses explicit now_unix_ms, stable event ids, and external cron/systemd ownership")
+}
+
+fn external_broker_capability() -> PlatformCapability {
+  return capability("external_broker",
+                    "integration",
+                    "preview_contract_default_off",
+                    false,
+                    "delivery_semantics",
+                    "Opt-in broker outbox provides at-least-once relay, stable dedupe keys, retry, and dead-letter diagnostics")
+}
+
+fn postgres_capability() -> PlatformCapability {
+  return capability("postgres",
+                    "data",
+                    "preview_contract_default_off",
+                    false,
+                    "migration_and_connection_safety",
+                    "Opt-in Postgres preview has an official libpq-backed package contract; SQLite remains the active default data plane")
+}
+
+fn jwt_auth_capability() -> PlatformCapability {
+  return capability("jwt_resource_server_auth",
+                    "auth",
+                    "preview_contract_default_off",
+                    false,
+                    "identity_boundary_safety",
+                    "Opt-in RS256 JWT resource-server auth validates Bearer tokens against local JWKS, issuer, audience, expiry, not-before, and roles; no sessions or IdP are implied")
+}
+
+fn shell_task_capability() -> PlatformCapability {
+  return capability("free_form_shell_command_tasks",
+                    "worker",
+                    "preview_contract_default_off",
+                    false,
+                    "command_execution_safety",
+                    "Opt-in shell sidecar workers use std::process, explicit allowlists, work-dir policy, timeouts, capped output, and workflow result_payload audit")
+}
+
+fn public_webhook_capability() -> PlatformCapability {
+  return capability("public_webhook_integrations",
+                    "ingress",
+                    "preview_contract_default_off",
+                    false,
+                    "public_ingress_authenticity",
+                    "Opt-in signed webhook ingress verifies HMAC-SHA256, replay window, and workflow event id dedupe")
+}
+
+fn distributed_deploy_capability() -> PlatformCapability {
+  return capability("distributed_deploy_orchestration",
+                    "orchestration",
+                    "preview_contract_default_off",
+                    false,
+                    "remote_execution_safety",
+                    "Opt-in deploy apply aliases submit target-allowlisted workflow events for shell sidecar workers; no remote agent or rollback orchestration is implied")
+}
+
+fn platform_workflow_capabilities(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  builder = array_push(builder, dag_capability().as_json())
+  builder = array_push(builder, schedule_capability().as_json())
+  return builder
+}
+
+fn platform_integration_capabilities(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  builder = array_push(builder, external_broker_capability().as_json())
+  builder = array_push(builder, postgres_capability().as_json())
+  builder = array_push(builder, jwt_auth_capability().as_json())
+  return builder
+}
+
+fn platform_risky_execution_capabilities(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  builder = array_push(builder, shell_task_capability().as_json())
+  builder = array_push(builder, public_webhook_capability().as_json())
+  builder = array_push(builder, distributed_deploy_capability().as_json())
+  return builder
+}
+
+fn platform_capabilities_json() -> Json {
+  let builder = array_builder()
+  builder = platform_workflow_capabilities(builder)
+  builder = platform_integration_capabilities(builder)
+  builder = platform_risky_execution_capabilities(builder)
+  return array_build(builder)
+}
+
+fn validate_capability_status(status: String) -> Result<Bool, String> {
+  if status == "preview_contract_default_off" || status == "preview_available" {
+    return Ok(true)
+  }
+  return Err("platform capability status must be preview_contract_default_off or preview_available")
+}
+
+fn platform_capability_from_json(value: Json) -> Result<PlatformCapability, String> {
+  return Ok(PlatformCapability(get_string(value, "name")?,
+                               get_string(value, "lane")?,
+                               get_string(value, "status")?,
+                               get_bool(value, "default_enabled")?,
+                               get_string(value, "risk")?,
+                               get_string(value, "contract")?))
+}
+
+fn validate_platform_capability(value: PlatformCapability) -> Result<Bool, String> {
+  if value.name == "" || value.lane == "" || value.risk == "" || value.contract == "" {
+    return Err("platform capability fields must be non-empty")
+  }
+  validate_capability_status(value.status)?
+  if value.status == "preview_contract_default_off" && value.default_enabled {
+    return Err("platform preview capabilities must be default-disabled")
+  }
+  if value.status == "preview_available" && !value.default_enabled {
+    return Err("available platform preview capabilities must be marked enabled")
+  }
+  return Ok(true)
+}
+
+fn validate_platform_capabilities_array(capabilities: Json) -> Result<Bool, String> {
+  let count = array_len(capabilities)?
+  if count != 8 {
+    return Err("platform capability matrix must contain eight entries")
+  }
+  let index = 0
+  while index < count {
+    let capability_value = platform_capability_from_json(array_get(capabilities, index)?)?
+    validate_platform_capability(capability_value)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn platform_capability_envelope_from_json(value: Json) -> Result<PlatformCapabilityEnvelope, String> {
+  return Ok(PlatformCapabilityEnvelope(get_value(value, "capabilities")?,
+                                       get_string(value, "request_id")?,
+                                       get_int(value, "unix_ms")?))
+}
+
+fn validate_platform_capability_envelope(envelope: PlatformCapabilityEnvelope) -> Result<Bool, String> {
+  validate_platform_capabilities_array(envelope.capabilities)?
+  if envelope.request_id == "" {
+    return Err("platform capability envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("platform capability envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_platform_capability_matrix_contract() -> Void {
+  let matrix = platform_capabilities_json()
+  match validate_platform_capabilities_array(matrix) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_platform_capability_envelope_roundtrip() -> Void {
+  let envelope = PlatformCapabilityEnvelope(platform_capabilities_json(), "req-platform", 123)
+  match platform_capability_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.request_id == "req-platform", "platform capability request_id drifted")
+      match validate_platform_capability_envelope(decoded) {
+        Ok(_) => {}
+        Err(msg) => {
+          panic(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

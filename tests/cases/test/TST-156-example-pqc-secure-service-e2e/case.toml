@@ -1,0 +1,7 @@
+id = "TST-156-example-pqc-secure-service-e2e"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/tests/lib/pqc_secure_service_smoke.py\""
+expect_rc = 0

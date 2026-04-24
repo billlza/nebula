@@ -1,0 +1,121 @@
+module approval
+import args
+import client
+import core::contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn approval_path(app_name: String, channel: String) -> String {
+  return text_concat3("/v1/releases/", app_name, text_concat("/", text_concat(channel, "/approval")))
+}
+
+fn print_approval_text(decision: ApprovalDecision) -> Void {
+  print(text_concat("app=", decision.app))
+  print(text_concat("channel=", decision.channel))
+  print(text_concat("release_revision_id=", int_text(decision.release_revision_id)))
+  print(text_concat("decision=", decision.decision))
+  print(text_concat("reason=", decision.reason))
+  print(text_concat("decided_by=", decision.decided_by))
+  print(text_concat("decided_unix_ms=", int_text(decision.decided_unix_ms)))
+}
+
+fn emit_approval(envelope: ApprovalDecisionEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_approval_text(envelope.decision)
+  return 0
+}
+
+fn parse_approval_reply(reply: JsonResponse) -> Result<ApprovalDecisionEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = approval_decision_envelope_from_json(reply.payload)?
+  validate_approval_decision_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn build_approval_request(parsed: ParsedArgs) -> Result<ApprovalDecisionRequest, String> {
+  validate_app_segment(parsed.app_name)?
+  validate_channel_segment(parsed.channel)?
+  let request = ApprovalDecisionRequest(parsed.decision_text, parsed.reason_text)
+  validate_approval_decision_request(request)?
+  return Ok(request)
+}
+
+fn if_match_header_value(parsed: ParsedArgs) -> Result<String, String> {
+  let parsed_revision = parse(parsed.if_match_text)?
+  let revision_id = as_int(parsed_revision)?
+  if revision_id < 0 {
+    return Err("--if-match must be a non-negative integer")
+  }
+  return Ok(stringify(string_value(int_text(revision_id))))
+}
+
+async fn fetch_approval(base_url: String,
+                        options: ClientOptions,
+                        parsed: ParsedArgs) -> Result<ApprovalDecisionEnvelope, String> {
+  validate_app_segment(parsed.app_name)?
+  validate_channel_segment(parsed.channel)?
+  match await get_json(base_url, approval_path(parsed.app_name, parsed.channel), options) {
+    Ok(reply) => {
+      return parse_approval_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn decide_approval(base_url: String,
+                         options: ClientOptions,
+                         parsed: ParsedArgs) -> Result<ApprovalDecisionEnvelope, String> {
+  let request = build_approval_request(parsed)?
+  let if_match_value = if_match_header_value(parsed)?
+  match await put_json(base_url,
+                       approval_path(parsed.app_name, parsed.channel),
+                       request.as_json(),
+                       options,
+                       if_match_value) {
+    Ok(reply) => {
+      return parse_approval_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn print_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+async fn run_approval_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand == "get" {
+    match await fetch_approval(base_url, options, parsed) {
+      Ok(envelope) => {
+        return emit_approval(envelope, parsed.json_mode)
+      }
+      Err(msg) => {
+        return print_error_exit(msg)
+      }
+    }
+  }
+  if parsed.subcommand == "decide" {
+    match await decide_approval(base_url, options, parsed) {
+      Ok(envelope) => {
+        return emit_approval(envelope, parsed.json_mode)
+      }
+      Err(msg) => {
+        return print_error_exit(msg)
+      }
+    }
+  }
+  print("unknown approval subcommand")
+  return 2
+}

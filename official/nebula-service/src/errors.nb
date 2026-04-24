@@ -1,0 +1,68 @@
+module errors
+import context
+import std::http
+import std::http_json
+import std::json
+import std::time
+
+fn json_error(status: Int,
+              service_name: String,
+              request_id: Int,
+              request_id_text: String,
+              code: String,
+              message: String) -> Response {
+  return json_response(status, object6(
+    "service",
+    string_value(service_name),
+    "error",
+    string_value(code),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "unix_ms",
+    int_value(unix_millis())
+  ))
+}
+
+fn for_request(status: Int,
+               ctx: RequestContext,
+               code: String,
+               message: String) -> Response {
+  return json_error(status, ctx.service_name, ctx.request_id, ctx.request_id_text, code, message)
+}
+
+fn for_local_request(status: Int,
+                     service_name: String,
+                     request_id: Int,
+                     code: String,
+                     message: String) -> Response {
+  let request_id_text = stringify(int_value(request_id))
+  return json_error(status, service_name, request_id, request_id_text, code, message)
+}
+
+fn bad_request(service_name: String, request_id: Int, message: String) -> Response {
+  return for_local_request(400, service_name, request_id, "bad_request", message)
+}
+
+fn request_timeout(service_name: String, request_id: Int) -> Response {
+  return for_local_request(408,
+                           service_name,
+                           request_id,
+                           "request_timeout",
+                           "request timeout")
+}
+
+fn handler_timeout(ctx: RequestContext) -> Response {
+  return for_request(408, ctx, "handler_timeout", "request timeout")
+}
+
+fn internal_error(ctx: RequestContext) -> Response {
+  return for_request(500, ctx, "internal_error", "internal server error")
+}
+
+fn draining(ctx: RequestContext) -> Response {
+  return for_request(503, ctx, "draining", "service is draining")
+}

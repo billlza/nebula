@@ -1,0 +1,12 @@
+schema_version = 1
+
+[package]
+name = "pqc-secure-service"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+crypto = { path = "../../official/nebula-crypto" }
+pqc = { path = "../../official/nebula-pqc-protocols" }
+service = { path = "../../official/nebula-service" }

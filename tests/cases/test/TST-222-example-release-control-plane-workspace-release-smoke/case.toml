@@ -1,0 +1,281 @@
+id = "TST-222-example-release-control-plane-workspace-release-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_release')
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+service_env = {
+    'APP_STATE_DIR': str((root / 'state').resolve()),
+    'APP_AUTH_REQUIRED': '1',
+    'APP_READ_TOKEN': 'reader-token',
+    'APP_WRITE_TOKEN': 'writer-token',
+    'APP_ADMIN_TOKEN': 'admin-token',
+}
+proc, stderr_lines, port = start_service(binary, root, extra_env=service_env)
+wait_until_health_ok(proc, stderr_lines, port)
+try:
+    base_url = f'http://127.0.0.1:{port}'
+    ctl_out = root / '.ctl-out'
+
+    status_result = run_ctl(binary, root, 'status', '--url', base_url, '--token', 'reader-token', out_dir=ctl_out)
+    require_success(status_result, 'ctl status')
+    if 'status=ok' not in status_result.stdout:
+        print_completed(status_result)
+        raise SystemExit('ctl status did not report ok')
+
+    whoami_result = run_ctl(binary, root, 'auth', 'whoami', '--url', base_url, '--token', 'admin-token', '--json', out_dir=ctl_out, no_build=True)
+    require_success(whoami_result, 'ctl auth whoami --json')
+    whoami_payload = json.loads(whoami_result.stdout)
+    if whoami_payload.get('actor') != 'admin' or whoami_payload.get('role') != 'admin':
+        print_completed(whoami_result)
+        raise SystemExit(f'unexpected whoami payload: {whoami_payload!r}')
+
+    config_create = run_ctl(
+        binary,
+        root,
+        'config',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--key',
+        'feature.flag',
+        '--bool',
+        'true',
+        '--description',
+        'release config',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(config_create, 'ctl config put create')
+    config_create_payload = json.loads(config_create.stdout)
+    create_config_revision = config_create_payload.get('entry', {}).get('revision_id')
+    if create_config_revision != 1:
+        print_completed(config_create)
+        raise SystemExit(f'unexpected config create payload: {config_create_payload!r}')
+
+    create_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--version',
+        '2026.04.21',
+        '--config-revision',
+        str(create_config_revision),
+        '--description',
+        'initial desired state',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(create_result, 'ctl release put create')
+    create_payload = json.loads(create_result.stdout)
+    entry = create_payload.get('entry', {})
+    if entry.get('version') != '2026.04.21' or entry.get('revision_id') != 1:
+        print_completed(create_result)
+        raise SystemExit(f'unexpected release create payload: {create_payload!r}')
+
+    get_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'get',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(get_result, 'ctl release get')
+    get_payload = json.loads(get_result.stdout)
+    if get_payload.get('entry', {}).get('config_revision') != create_config_revision:
+        print_completed(get_result)
+        raise SystemExit(f'unexpected release get payload: {get_payload!r}')
+
+    release_snapshot = run_ctl(
+        binary,
+        root,
+        'release',
+        'snapshot',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(release_snapshot, 'ctl release snapshot')
+    release_snapshot_payload = json.loads(release_snapshot.stdout)
+    if release_snapshot_payload.get('snapshot_revision_id') != create_config_revision or [entry.get('key') for entry in release_snapshot_payload.get('entries', [])] != ['feature.flag']:
+        print_completed(release_snapshot)
+        raise SystemExit(f'unexpected release snapshot payload: {release_snapshot_payload!r}')
+
+    list_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'list',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(list_result, 'ctl release list')
+    list_payload = json.loads(list_result.stdout)
+    releases = list_payload.get('releases', [])
+    if len(releases) != 1 or releases[0].get('channel') != 'prod':
+        print_completed(list_result)
+        raise SystemExit(f'unexpected release list payload: {list_payload!r}')
+
+    invalid_snapshot_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--version',
+        '2026.04.22',
+        '--config-revision',
+        '999',
+        '--description',
+        'invalid config snapshot',
+        '--if-match',
+        '1',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if invalid_snapshot_result.returncode == 0 or 'status=409' not in invalid_snapshot_result.stdout or 'release_config_snapshot_invalid' not in invalid_snapshot_result.stdout:
+        print_completed(invalid_snapshot_result)
+        raise SystemExit('release update with an invalid config snapshot did not fail as expected')
+
+    config_update = run_ctl(
+        binary,
+        root,
+        'config',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--key',
+        'feature.flag',
+        '--bool',
+        'false',
+        '--description',
+        'release config updated',
+        '--if-match',
+        str(create_config_revision),
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(config_update, 'ctl config put update')
+    config_update_payload = json.loads(config_update.stdout)
+    update_config_revision = config_update_payload.get('entry', {}).get('revision_id')
+    if update_config_revision != 2:
+        print_completed(config_update)
+        raise SystemExit(f'unexpected config update payload: {config_update_payload!r}')
+
+    update_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--version',
+        '2026.04.22',
+        '--config-revision',
+        str(update_config_revision),
+        '--description',
+        'promote desired state',
+        '--if-match',
+        '1',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(update_result, 'ctl release put update')
+    update_payload = json.loads(update_result.stdout)
+    if update_payload.get('entry', {}).get('revision_id') != 2:
+        print_completed(update_result)
+        raise SystemExit(f'unexpected release update payload: {update_payload!r}')
+
+    print('example-release-control-plane-workspace-release-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-release-ok"]

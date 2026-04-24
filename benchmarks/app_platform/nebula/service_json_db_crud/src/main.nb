@@ -1,0 +1,804 @@
+module main
+import core::contracts
+import core::validate
+import db_sqlite::sqlite
+import service::context
+import std::bytes
+import std::fs
+import std::http
+import std::http_json
+import std::json
+import std::result
+
+fn config_list_pattern() -> String {
+  return "/v1/configs/:project/:environment"
+}
+
+fn config_item_pattern() -> String {
+  return "/v1/configs/:project/:environment/:key"
+}
+
+fn config_history_pattern() -> String {
+  return "/v1/configs/:project/:environment/:key/history"
+}
+
+fn bench_db_path() -> String {
+  return "/tmp/nebula-app-platform-service-json-db-crud.sqlite"
+}
+
+fn ignore_remove(path: String) -> Void {
+  match remove_file(path) {
+    Ok(_) => {}
+    Err(_) => {}
+  }
+}
+
+fn cleanup_db_files() -> Void {
+  let db_path = bench_db_path()
+  ignore_remove(db_path)
+  ignore_remove(text_concat(db_path, "-wal"))
+  ignore_remove(text_concat(db_path, "-shm"))
+}
+
+fn config_migrations() -> Json {
+  let builder = array_builder()
+  let create_entries_sql = "CREATE TABLE IF NOT EXISTS config_entries (project TEXT NOT NULL, environment TEXT NOT NULL, key TEXT NOT NULL, description TEXT NOT NULL, kind TEXT NOT NULL, string_value TEXT NOT NULL, bool_value INTEGER NOT NULL, int_value INTEGER NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (project, environment, key))"
+  builder = array_push(builder, migration(1, "create_config_entries", create_entries_sql))
+  let create_revisions_sql = "CREATE TABLE IF NOT EXISTS config_revisions (revision_id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, environment TEXT NOT NULL, key TEXT NOT NULL, action TEXT NOT NULL, description TEXT NOT NULL, kind TEXT NOT NULL, string_value TEXT NOT NULL, bool_value INTEGER NOT NULL, int_value INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL)"
+  builder = array_push(builder, migration(2, "create_config_revisions", create_revisions_sql))
+  return array_build(builder)
+}
+
+fn one_string_param(value: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(value))
+  return array_build(builder)
+}
+
+fn two_string_params(first: String, second: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(first))
+  builder = array_push(builder, string_value(second))
+  return array_build(builder)
+}
+
+fn three_identity_params(project: String, environment: String, key: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(project))
+  builder = array_push(builder, string_value(environment))
+  builder = array_push(builder, string_value(key))
+  return array_build(builder)
+}
+
+fn builder_with_identity(builder: JsonArrayBuilder,
+                         project: String,
+                         environment: String,
+                         key: String) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(project))
+  builder = array_push(builder, string_value(environment))
+  builder = array_push(builder, string_value(key))
+  return builder
+}
+
+fn builder_with_value(builder: JsonArrayBuilder, value: ConfigValue) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(value.kind))
+  builder = array_push(builder, string_value(value.string_value))
+  builder = array_push(builder, bool_value(value.bool_value))
+  builder = array_push(builder, int_value(value.int_value))
+  return builder
+}
+
+fn builder_with_updated_meta(builder: JsonArrayBuilder,
+                             updated_by: String,
+                             updated_unix_ms: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(updated_by))
+  builder = array_push(builder, int_value(updated_unix_ms))
+  return builder
+}
+
+fn revision_insert_params(project: String,
+                          environment: String,
+                          key: String,
+                          action: String,
+                          description: String,
+                          value: ConfigValue,
+                          updated_by: String,
+                          updated_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = builder_with_identity(builder, project, environment, key)
+  builder = array_push(builder, string_value(action))
+  builder = array_push(builder, string_value(description))
+  builder = builder_with_value(builder, value)
+  builder = builder_with_updated_meta(builder, updated_by, updated_unix_ms)
+  return array_build(builder)
+}
+
+fn entry_upsert_params(project: String,
+                       environment: String,
+                       key: String,
+                       description: String,
+                       value: ConfigValue,
+                       revision_id: Int,
+                       updated_by: String,
+                       updated_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = builder_with_identity(builder, project, environment, key)
+  builder = array_push(builder, string_value(description))
+  builder = builder_with_value(builder, value)
+  builder = array_push(builder, int_value(revision_id))
+  builder = builder_with_updated_meta(builder, updated_by, updated_unix_ms)
+  return array_build(builder)
+}
+
+fn benchmark_context() -> RequestContext {
+  return RequestContext("app-platform-service-json-db-crud",
+                        1,
+                        "bench-req-1",
+                        false,
+                        0,
+                        1700000000000,
+                        false,
+                        true,
+                        "bench-admin",
+                        object1("role", string_value("admin")),
+                        false,
+                        false,
+                        "",
+                        "",
+                        null_value(),
+                        object1("bench", bool_value(true)))
+}
+
+fn open_catalog() -> Result<Connection, String> {
+  cleanup_db_files()
+  let conn = open(bench_db_path())?
+  conn.run_migrations(config_migrations())?
+  return Ok(conn)
+}
+
+struct ConfigEntryRowIdentity {
+  project: String
+  environment: String
+  key: String
+  description: String
+}
+
+struct ConfigUpdatedMeta {
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ConfigRevisionRowIdentity {
+  revision_id: Int
+  project: String
+  environment: String
+  key: String
+  action: String
+  description: String
+}
+
+fn config_value_from_row(row: Row) -> Result<ConfigValue, String> {
+  let value = ConfigValue(row.get_string("kind")?,
+                          row.get_string("string_value")?,
+                          row.get_bool("bool_value")?,
+                          row.get_int("int_value")?)
+  validate_config_value(value)?
+  return Ok(value)
+}
+
+fn config_entry_row_identity(row: Row) -> Result<ConfigEntryRowIdentity, String> {
+  return Ok(ConfigEntryRowIdentity(row.get_string("project")?,
+                                   row.get_string("environment")?,
+                                   row.get_string("key")?,
+                                   row.get_string("description")?))
+}
+
+fn config_updated_meta(row: Row) -> Result<ConfigUpdatedMeta, String> {
+  return Ok(ConfigUpdatedMeta(row.get_string("updated_by")?, row.get_int("updated_unix_ms")?))
+}
+
+fn config_entry_from_row(row: Row) -> Result<ConfigEntry, String> {
+  let identity = config_entry_row_identity(row)?
+  let meta = config_updated_meta(row)?
+  let entry = ConfigEntry(identity.project,
+                          identity.environment,
+                          identity.key,
+                          identity.description,
+                          config_value_from_row(row)?,
+                          row.get_int("revision_id")?,
+                          meta.updated_by,
+                          meta.updated_unix_ms)
+  validate_config_entry(entry)?
+  return Ok(entry)
+}
+
+fn config_revision_row_identity(row: Row) -> Result<ConfigRevisionRowIdentity, String> {
+  return Ok(ConfigRevisionRowIdentity(row.get_int("revision_id")?,
+                                      row.get_string("project")?,
+                                      row.get_string("environment")?,
+                                      row.get_string("key")?,
+                                      row.get_string("action")?,
+                                      row.get_string("description")?))
+}
+
+fn config_revision_from_row(row: Row) -> Result<ConfigRevision, String> {
+  let identity = config_revision_row_identity(row)?
+  let meta = config_updated_meta(row)?
+  let revision = ConfigRevision(identity.revision_id,
+                                identity.project,
+                                identity.environment,
+                                identity.key,
+                                identity.action,
+                                identity.description,
+                                config_value_from_row(row)?,
+                                meta.updated_by,
+                                meta.updated_unix_ms)
+  validate_config_revision(revision)?
+  return Ok(revision)
+}
+
+fn load_entry(conn: Connection, project: String, environment: String, key: String) -> Result<ConfigEntry, String> {
+  let rows = conn.query("SELECT project, environment, key, description, kind, string_value, bool_value, int_value, revision_id, updated_by, updated_unix_ms FROM config_entries WHERE project = ? AND environment = ? AND key = ?",
+                        three_identity_params(project, environment, key))?
+  if rows.len()? == 0 {
+    return Err("config entry not found")
+  }
+  return config_entry_from_row(rows.row(0)?)
+}
+
+fn list_entries(conn: Connection, project: String, environment: String) -> Result<Json, String> {
+  let rows = conn.query("SELECT project, environment, key, description, kind, string_value, bool_value, int_value, revision_id, updated_by, updated_unix_ms FROM config_entries WHERE project = ? AND environment = ? ORDER BY key ASC",
+                        two_string_params(project, environment))?
+  let builder = array_builder()
+  let index = 0
+  let count = rows.len()?
+  while index < count {
+    let entry = config_entry_from_row(rows.row(index)?)?
+    builder = array_push(builder, entry.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn list_history(conn: Connection, project: String, environment: String, key: String) -> Result<Json, String> {
+  let rows = conn.query("SELECT revision_id, project, environment, key, action, description, kind, string_value, bool_value, int_value, updated_by, updated_unix_ms FROM config_revisions WHERE project = ? AND environment = ? AND key = ? ORDER BY revision_id ASC",
+                        three_identity_params(project, environment, key))?
+  let builder = array_builder()
+  let index = 0
+  let count = rows.len()?
+  while index < count {
+    let revision = config_revision_from_row(rows.row(index)?)?
+    builder = array_push(builder, revision.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn latest_revision_id(conn: Connection, project: String, environment: String, key: String) -> Result<Int, String> {
+  let rows = conn.query("SELECT revision_id FROM config_revisions WHERE project = ? AND environment = ? AND key = ? ORDER BY revision_id DESC LIMIT 1",
+                        three_identity_params(project, environment, key))?
+  if rows.len()? == 0 {
+    return Err("config revision not found")
+  }
+  return rows.row(0)?.get_int("revision_id")
+}
+
+fn current_revision_id(conn: Connection, project: String, environment: String, key: String) -> Result<Int, String> {
+  match load_entry(conn, project, environment, key) {
+    Ok(entry) => {
+      return Ok(entry.revision_id)
+    }
+    Err(msg) => {
+      if msg == "config entry not found" {
+        return Ok(-1)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+fn validate_mutation_identity(project: String,
+                              environment: String,
+                              key: String,
+                              updated_by: String) -> Result<Bool, String> {
+  validate_project_segment(project)?
+  validate_environment_segment(environment)?
+  validate_key_segment(key)?
+  return validate_actor_segment(updated_by)
+}
+
+fn precondition_required_outcome(current_revision: Int) -> Json {
+  return object2("kind",
+                 string_value("precondition_required"),
+                 "current_revision_id",
+                 int_value(current_revision))
+}
+
+fn conflict_outcome(expected_revision_id: Int, current_revision: Int) -> Json {
+  return object3("kind",
+                 string_value("conflict"),
+                 "expected_revision_id",
+                 int_value(expected_revision_id),
+                 "current_revision_id",
+                 int_value(current_revision))
+}
+
+fn insert_revision(conn: Connection,
+                   project: String,
+                   environment: String,
+                   key: String,
+                   action: String,
+                   description: String,
+                   value: ConfigValue,
+                   updated_by: String,
+                   updated_unix_ms: Int) -> Result<Int, String> {
+  conn.execute("INSERT INTO config_revisions(project, environment, key, action, description, kind, string_value, bool_value, int_value, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               revision_insert_params(project,
+                                      environment,
+                                      key,
+                                      action,
+                                      description,
+                                      value,
+                                      updated_by,
+                                      updated_unix_ms))?
+  return latest_revision_id(conn, project, environment, key)
+}
+
+fn applied_put_outcome(conn: Connection,
+                       project: String,
+                       environment: String,
+                       key: String,
+                       request: ConfigPutRequest,
+                       updated_by: String,
+                       updated_unix_ms: Int) -> Result<Json, String> {
+  let revision_id = insert_revision(conn,
+                                    project,
+                                    environment,
+                                    key,
+                                    "put",
+                                    request.description,
+                                    request.value,
+                                    updated_by,
+                                    updated_unix_ms)?
+  conn.execute("INSERT OR REPLACE INTO config_entries(project, environment, key, description, kind, string_value, bool_value, int_value, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               entry_upsert_params(project,
+                                   environment,
+                                   key,
+                                   request.description,
+                                   request.value,
+                                   revision_id,
+                                   updated_by,
+                                   updated_unix_ms))?
+  let entry = load_entry(conn, project, environment, key)?
+  return Ok(object2("kind", string_value("applied"), "entry", entry.as_json()))
+}
+
+fn put_outcome(conn: Connection,
+               project: String,
+               environment: String,
+               key: String,
+               request: ConfigPutRequest,
+               expected_revision_id: Int,
+               updated_by: String,
+               updated_unix_ms: Int) -> Result<Json, String> {
+  validate_mutation_identity(project, environment, key, updated_by)?
+  validate_config_put_request(request)?
+
+  let current_revision = current_revision_id(conn, project, environment, key)?
+  if current_revision >= 0 && expected_revision_id < 0 {
+    return Ok(precondition_required_outcome(current_revision))
+  }
+  if current_revision >= 0 && expected_revision_id != current_revision {
+    return Ok(conflict_outcome(expected_revision_id, current_revision))
+  }
+  return applied_put_outcome(conn, project, environment, key, request, updated_by, updated_unix_ms)
+}
+
+fn missing_outcome() -> Json {
+  return object1("kind", string_value("not_found"))
+}
+
+fn applied_delete_outcome(conn: Connection,
+                          project: String,
+                          environment: String,
+                          key: String,
+                          entry: ConfigEntry,
+                          updated_by: String,
+                          updated_unix_ms: Int) -> Result<Json, String> {
+  let deleted_revision_id = insert_revision(conn,
+                                            project,
+                                            environment,
+                                            key,
+                                            "delete",
+                                            entry.description,
+                                            entry.value,
+                                            updated_by,
+                                            updated_unix_ms)?
+  conn.execute("DELETE FROM config_entries WHERE project = ? AND environment = ? AND key = ?",
+               three_identity_params(project, environment, key))?
+  return Ok(object2("kind",
+                    string_value("deleted"),
+                    "deleted_revision_id",
+                    int_value(deleted_revision_id)))
+}
+
+fn delete_outcome(conn: Connection,
+                  project: String,
+                  environment: String,
+                  key: String,
+                  expected_revision_id: Int,
+                  updated_by: String,
+                  updated_unix_ms: Int) -> Result<Json, String> {
+  validate_mutation_identity(project, environment, key, updated_by)?
+
+  match load_entry(conn, project, environment, key) {
+    Ok(entry) => {
+      if expected_revision_id < 0 {
+        return Ok(precondition_required_outcome(entry.revision_id))
+      }
+      if expected_revision_id != entry.revision_id {
+        return Ok(conflict_outcome(expected_revision_id, entry.revision_id))
+      }
+      return applied_delete_outcome(conn, project, environment, key, entry, updated_by, updated_unix_ms)
+    }
+    Err(msg) => {
+      if msg == "config entry not found" {
+        return Ok(missing_outcome())
+      }
+      return Err(msg)
+    }
+  }
+}
+
+fn entry_etag(entry: ConfigEntry) -> String {
+  return stringify(string_value(int_text(entry.revision_id)))
+}
+
+fn config_entry_response(ctx: RequestContext, entry: ConfigEntry) -> Result<Response, String> {
+  let envelope = ConfigEntryEnvelope(entry, ctx.request_id_text, ctx.received_at_unix_ms)
+  validate_config_entry_envelope(envelope)?
+  return ok_json_with_etag(envelope.as_json(), entry_etag(entry))
+}
+
+fn config_list_response(ctx: RequestContext,
+                        project: String,
+                        environment: String,
+                        entries: Json) -> Result<Response, String> {
+  let envelope = ConfigListEnvelope(project, environment, entries, ctx.request_id_text, ctx.received_at_unix_ms)
+  validate_config_list_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn config_history_response(ctx: RequestContext,
+                           project: String,
+                           environment: String,
+                           key: String,
+                           revisions: Json) -> Result<Response, String> {
+  let envelope = ConfigHistoryEnvelope(project, environment, key, revisions, ctx.request_id_text, ctx.received_at_unix_ms)
+  validate_config_history_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn config_delete_response(ctx: RequestContext,
+                          project: String,
+                          environment: String,
+                          key: String,
+                          deleted_revision_id: Int) -> Result<Response, String> {
+  let envelope = ConfigDeleteEnvelope(project,
+                                      environment,
+                                      key,
+                                      true,
+                                      deleted_revision_id,
+                                      ctx.request_id_text,
+                                      ctx.received_at_unix_ms)
+  validate_config_delete_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn put_outcome_response(ctx: RequestContext,
+                        project: String,
+                        environment: String,
+                        key: String,
+                        outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  if kind == "applied" {
+    let entry = config_entry_from_json(get_value(outcome, "entry")?)?
+    return config_entry_response(ctx, entry)
+  }
+  if kind == "precondition_required" {
+    return Err("precondition required")
+  }
+  if kind == "conflict" {
+    return Err("revision conflict")
+  }
+  return Err("unexpected put outcome")
+}
+
+fn delete_outcome_response(ctx: RequestContext,
+                           project: String,
+                           environment: String,
+                           key: String,
+                           outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  if kind == "deleted" {
+    return config_delete_response(ctx, project, environment, key, get_int(outcome, "deleted_revision_id")?)
+  }
+  if kind == "not_found" {
+    return Err("config entry not found")
+  }
+  if kind == "precondition_required" {
+    return Err("precondition required")
+  }
+  if kind == "conflict" {
+    return Err("revision conflict")
+  }
+  return Err("unexpected delete outcome")
+}
+
+fn request_path(project: String, environment: String, key: String) -> String {
+  return text_concat3("/v1/configs/",
+                      project,
+                      text_concat3("/", environment, text_concat("/", key)))
+}
+
+fn history_path(project: String, environment: String, key: String) -> String {
+  return text_concat(request_path(project, environment, key), "/history")
+}
+
+fn list_path(project: String, environment: String) -> String {
+  return text_concat3("/v1/configs/", project, text_concat("/", environment))
+}
+
+fn get_method() -> Method {
+  return Get
+}
+
+fn put_method() -> Method {
+  return Put
+}
+
+fn delete_method() -> Method {
+  return Delete
+}
+
+fn config_request(body: Json, project: String, environment: String, key: String) -> Request {
+  return Request(put_method(), request_path(project, environment, key), from_string(stringify(body)))
+}
+
+fn config_get_request(project: String, environment: String, key: String) -> Request {
+  return Request(get_method(), request_path(project, environment, key), from_string(""))
+}
+
+fn config_list_request(project: String, environment: String) -> Request {
+  return Request(get_method(), list_path(project, environment), from_string(""))
+}
+
+fn config_history_request(project: String, environment: String, key: String) -> Request {
+  return Request(get_method(), history_path(project, environment, key), from_string(""))
+}
+
+fn config_delete_request(project: String, environment: String, key: String) -> Request {
+  return Request(delete_method(), request_path(project, environment, key), from_string(""))
+}
+
+fn handle_put(conn: Connection,
+              ctx: RequestContext,
+              request: Request,
+              expected_revision_id: Int,
+              updated_by: String,
+              updated_unix_ms: Int) -> Result<Response, String> {
+  let params = route_params3(config_item_pattern(), request)?
+  let put_request = config_put_request_from_json(parse_json_body(request.body)?)?
+  let outcome = put_outcome(conn,
+                            params.first,
+                            params.second,
+                            params.third,
+                            put_request,
+                            expected_revision_id,
+                            updated_by,
+                            updated_unix_ms)?
+  return put_outcome_response(ctx, params.first, params.second, params.third, outcome)
+}
+
+fn handle_get(conn: Connection, ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let params = route_params3(config_item_pattern(), request)?
+  let entry = load_entry(conn, params.first, params.second, params.third)?
+  return config_entry_response(ctx, entry)
+}
+
+fn handle_list(conn: Connection, ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let params = route_params2(config_list_pattern(), request)?
+  let entries = list_entries(conn, params.first, params.second)?
+  return config_list_response(ctx, params.first, params.second, entries)
+}
+
+fn handle_history(conn: Connection, ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let params = route_params3(config_history_pattern(), request)?
+  let revisions = list_history(conn, params.first, params.second, params.third)?
+  return config_history_response(ctx, params.first, params.second, params.third, revisions)
+}
+
+fn handle_delete(conn: Connection,
+                 ctx: RequestContext,
+                 request: Request,
+                 expected_revision_id: Int,
+                 updated_by: String,
+                 updated_unix_ms: Int) -> Result<Response, String> {
+  let params = route_params3(config_item_pattern(), request)?
+  let outcome = delete_outcome(conn,
+                               params.first,
+                               params.second,
+                               params.third,
+                               expected_revision_id,
+                               updated_by,
+                               updated_unix_ms)?
+  return delete_outcome_response(ctx, params.first, params.second, params.third, outcome)
+}
+
+fn parse_entry_response(response: Response) -> Result<ConfigEntryEnvelope, String> {
+  return config_entry_envelope_from_json(parse_json_body(response.body)?)
+}
+
+fn parse_list_response(response: Response) -> Result<ConfigListEnvelope, String> {
+  return config_list_envelope_from_json(parse_json_body(response.body)?)
+}
+
+fn parse_history_response(response: Response) -> Result<ConfigHistoryEnvelope, String> {
+  return config_history_envelope_from_json(parse_json_body(response.body)?)
+}
+
+fn parse_delete_response(response: Response) -> Result<ConfigDeleteEnvelope, String> {
+  return config_delete_envelope_from_json(parse_json_body(response.body)?)
+}
+
+fn require_int(actual: Int, expected: Int, label: String) -> Result<Bool, String> {
+  if actual == expected {
+    return Ok(true)
+  }
+  return Err(text_concat3(label, " mismatch: ", int_text(actual)))
+}
+
+fn require_text(actual: String, expected: String, label: String) -> Result<Bool, String> {
+  if actual == expected {
+    return Ok(true)
+  }
+  return Err(text_concat3(label, " mismatch: ", actual))
+}
+
+fn require_true(value: Bool, label: String) -> Result<Bool, String> {
+  if value {
+    return Ok(true)
+  }
+  return Err(text_concat(label, " must be true"))
+}
+
+fn create_step(conn: Connection,
+               ctx: RequestContext,
+               project: String,
+               environment: String,
+               key: String) -> Result<ConfigEntryEnvelope, String> {
+  let request = config_request(ConfigPutRequest("create flag", config_bool_value(true)).as_json(),
+                               project,
+                               environment,
+                               key)
+  let response = handle_put(conn, ctx, request, -1, "bench-admin", 1001)?
+  let envelope = parse_entry_response(response)?
+  require_int(envelope.entry.revision_id, 1, "created revision_id")?
+  require_true(envelope.entry.value.bool_value, "created bool value")?
+  return Ok(envelope)
+}
+
+fn update_step(conn: Connection,
+               ctx: RequestContext,
+               project: String,
+               environment: String,
+               key: String,
+               expected_revision_id: Int) -> Result<ConfigEntryEnvelope, String> {
+  let request = config_request(ConfigPutRequest("disable flag", config_bool_value(false)).as_json(),
+                               project,
+                               environment,
+                               key)
+  let response = handle_put(conn, ctx, request, expected_revision_id, "bench-admin", 1002)?
+  let envelope = parse_entry_response(response)?
+  require_int(envelope.entry.revision_id, 2, "updated revision_id")?
+  if envelope.entry.value.bool_value {
+    return Err("updated bool value must be false")
+  }
+  return Ok(envelope)
+}
+
+fn verify_get_step(conn: Connection,
+                   ctx: RequestContext,
+                   project: String,
+                   environment: String,
+                   key: String) -> Result<Bool, String> {
+  let response = handle_get(conn, ctx, config_get_request(project, environment, key))?
+  let envelope = parse_entry_response(response)?
+  return require_text(envelope.entry.description, "disable flag", "loaded description")
+}
+
+fn verify_list_step(conn: Connection,
+                    ctx: RequestContext,
+                    project: String,
+                    environment: String) -> Result<Bool, String> {
+  let response = handle_list(conn, ctx, config_list_request(project, environment))?
+  let envelope = parse_list_response(response)?
+  return require_int(array_len(envelope.entries)?, 1, "list entry count")
+}
+
+fn verify_history_step(conn: Connection,
+                       ctx: RequestContext,
+                       project: String,
+                       environment: String,
+                       key: String,
+                       expected_count: Int,
+                       label: String) -> Result<Bool, String> {
+  let response = handle_history(conn, ctx, config_history_request(project, environment, key))?
+  let envelope = parse_history_response(response)?
+  return require_int(array_len(envelope.revisions)?, expected_count, label)
+}
+
+fn delete_step(conn: Connection,
+               ctx: RequestContext,
+               project: String,
+               environment: String,
+               key: String,
+               expected_revision_id: Int) -> Result<ConfigDeleteEnvelope, String> {
+  let response = handle_delete(conn,
+                               ctx,
+                               config_delete_request(project, environment, key),
+                               expected_revision_id,
+                               "bench-admin",
+                               1003)?
+  let envelope = parse_delete_response(response)?
+  require_true(envelope.deleted, "deleted flag")?
+  require_int(envelope.deleted_revision_id, 3, "deleted revision_id")?
+  return Ok(envelope)
+}
+
+fn verify_catalog_before_delete(conn: Connection,
+                                ctx: RequestContext,
+                                project: String,
+                                environment: String,
+                                key: String) -> Result<ConfigEntryEnvelope, String> {
+  let created = create_step(conn, ctx, project, environment, key)?
+  let updated = update_step(conn, ctx, project, environment, key, created.entry.revision_id)?
+  verify_get_step(conn, ctx, project, environment, key)?
+  verify_list_step(conn, ctx, project, environment)?
+  verify_history_step(conn, ctx, project, environment, key, 2, "history revision count before delete")?
+  return Ok(updated)
+}
+
+fn run_catalog_lifecycle(conn: Connection,
+                         ctx: RequestContext,
+                         project: String,
+                         environment: String,
+                         key: String) -> Result<Bool, String> {
+  let updated = verify_catalog_before_delete(conn, ctx, project, environment, key)?
+  delete_step(conn, ctx, project, environment, key, updated.entry.revision_id)?
+  verify_history_step(conn, ctx, project, environment, key, 3, "history revision count after delete")?
+  return Ok(true)
+}
+
+fn run_service_json_db_crud() -> Result<Bool, String> {
+  let conn = open_catalog()?
+  let ctx = benchmark_context()
+  run_catalog_lifecycle(conn, ctx, "control-plane", "prod", "feature-flag")?
+  conn.close()?
+  cleanup_db_files()
+  return Ok(true)
+}
+
+@bench
+fn bench_service_json_db_crud() -> Void {
+  match run_service_json_db_crud() {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-service-json-db-crud")
+}

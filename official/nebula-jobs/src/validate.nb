@@ -1,0 +1,400 @@
+module validate
+import contracts
+import std::bytes
+import std::json
+import std::result
+
+fn text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn validate_non_empty(label: String, value: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(label, " must be non-empty"))
+  }
+  return Ok(true)
+}
+
+fn validate_stage_kind(kind: String) -> Result<Bool, String> {
+  if kind == "approval_gate" || kind == "leased_task" {
+    return Ok(true)
+  }
+  return Err("job stage kind must be approval_gate or leased_task")
+}
+
+fn validate_approval_gate_stage(stage: JobStageSpec) -> Result<Bool, String> {
+  if stage.task_kind != "" {
+    return Err("approval_gate stages must leave task_kind empty")
+  }
+  if stage.timeout_s != 0 || stage.max_attempts != 0 {
+    return Err("approval_gate stages must keep timeout_s/max_attempts at zero values")
+  }
+  return Ok(true)
+}
+
+fn validate_leased_task_stage(stage: JobStageSpec) -> Result<Bool, String> {
+  validate_non_empty("job stage task_kind", stage.task_kind)?
+  if stage.timeout_s <= 0 {
+    return Err("leased_task timeout_s must be positive")
+  }
+  if stage.max_attempts <= 0 {
+    return Err("leased_task max_attempts must be positive")
+  }
+  return Ok(true)
+}
+
+fn validate_stage_shape(stage: JobStageSpec) -> Result<Bool, String> {
+  validate_stage_kind(stage.kind)?
+  if stage.kind == "approval_gate" {
+    return validate_approval_gate_stage(stage)
+  }
+  return validate_leased_task_stage(stage)
+}
+
+fn validate_stage_spec(stage: JobStageSpec) -> Result<Bool, String> {
+  validate_non_empty("job stage name", stage.name)?
+  validate_stage_shape(stage)?
+  array_len(stage.depends_on)?
+  return Ok(true)
+}
+
+fn stage_at(stages: Json, index: Int) -> Result<JobStageSpec, String> {
+  return job_stage_spec_from_json(array_get(stages, index)?)
+}
+
+fn stage_name_at(stages: Json, index: Int) -> Result<String, String> {
+  return Ok(stage_at(stages, index)?.name)
+}
+
+fn stage_index_by_name(stages: Json, name: String) -> Result<Int, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    if stage_name_at(stages, index)? == name {
+      return Ok(index)
+    }
+    index += 1
+  }
+  return Ok(-1)
+}
+
+fn dependency_first_index(depends_on: Json, name: String) -> Result<Int, String> {
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    if as_string(array_get(depends_on, index)?)? == name {
+      return Ok(index)
+    }
+    index += 1
+  }
+  return Ok(-1)
+}
+
+fn validate_dependency_at(stages: Json, stage: JobStageSpec, index: Int) -> Result<Bool, String> {
+  let dependency = as_string(array_get(stage.depends_on, index)?)?
+  validate_non_empty("job stage dependency", dependency)?
+  validate_dependency_name(stages, stage, dependency)?
+  validate_dependency_unique(stage.depends_on, dependency, index)?
+  return Ok(true)
+}
+
+fn validate_dependency_name(stages: Json, stage: JobStageSpec, dependency: String) -> Result<Bool, String> {
+  if dependency == stage.name {
+    return Err("job stage must not depend on itself")
+  }
+  if stage_index_by_name(stages, dependency)? < 0 {
+    return Err(text_concat("job stage depends_on references unknown stage: ", dependency))
+  }
+  return Ok(true)
+}
+
+fn validate_dependency_unique(depends_on: Json, dependency: String, index: Int) -> Result<Bool, String> {
+  if dependency_first_index(depends_on, dependency)? != index {
+    return Err(text_concat("job stage dependency must be unique: ", dependency))
+  }
+  return Ok(true)
+}
+
+fn validate_stage_dependencies(stages: Json, stage: JobStageSpec) -> Result<Bool, String> {
+  let count = array_len(stage.depends_on)?
+  let index = 0
+  while index < count {
+    validate_dependency_at(stages, stage, index)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_unique_stage_name(stages: Json, index: Int) -> Result<Bool, String> {
+  let name = stage_name_at(stages, index)?
+  if stage_index_by_name(stages, name)? != index {
+    return Err(text_concat("job stage name must be unique: ", name))
+  }
+  return Ok(true)
+}
+
+fn dependency_reaches(stages: Json, current: String, target: String, remaining: Int) -> Result<Bool, String> {
+  if remaining <= 0 {
+    return Err("job stages must not contain dependency cycles")
+  }
+  return dependency_reaches_checked(stages, current, target, remaining)
+}
+
+fn dependency_reaches_checked(stages: Json, current: String, target: String, remaining: Int) -> Result<Bool, String> {
+  let current_index = stage_index_by_name(stages, current)?
+  if current_index < 0 {
+    return Err(text_concat("job stage depends_on references unknown stage: ", current))
+  }
+  let current_stage = stage_at(stages, current_index)?
+  return dependency_array_reaches(stages, current_stage.depends_on, target, remaining)
+}
+
+fn dependency_array_reaches(stages: Json, depends_on: Json, target: String, remaining: Int) -> Result<Bool, String> {
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    let dependency = as_string(array_get(depends_on, index)?)?
+    if dependency == target {
+      return Ok(true)
+    }
+    if dependency_reaches(stages, dependency, target, remaining - 1)? {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn validate_dependency_cycles(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    let name = stage_name_at(stages, index)?
+    if dependency_reaches(stages, name, name, count)? {
+      return Err("job stages must not contain dependency cycles")
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_stage_specs(stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  if count <= 0 {
+    return Err("job stages must contain at least one stage")
+  }
+  validate_each_stage_spec(stages, count)?
+  return validate_dependency_cycles(stages)
+}
+
+fn validate_each_stage_spec(stages: Json, count: Int) -> Result<Bool, String> {
+  let index = 0
+  while index < count {
+    let stage = stage_at(stages, index)?
+    validate_stage_spec(stage)?
+    validate_unique_stage_name(stages, index)?
+    validate_stage_dependencies(stages, stage)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_job_definition(definition: JobDefinition) -> Result<Bool, String> {
+  validate_non_empty("job definition name", definition.name)?
+  validate_non_empty("job definition trigger_kind", definition.trigger_kind)?
+  validate_non_empty("job definition event_kind", definition.event_kind)?
+  if definition.revision_id <= 0 {
+    return Err("job definition revision_id must be positive")
+  }
+  validate_non_empty("job definition updated_by", definition.updated_by)?
+  if definition.updated_unix_ms < 0 {
+    return Err("job definition updated_unix_ms must be non-negative")
+  }
+  return validate_stage_specs(definition.stages)
+}
+
+fn validate_worker_claim_request(request: WorkerClaimRequest) -> Result<Bool, String> {
+  validate_non_empty("worker_id", request.worker_id)?
+  if request.now_unix_ms < 0 {
+    return Err("worker claim now_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_worker_complete_request(request: WorkerCompleteRequest) -> Result<Bool, String> {
+  validate_non_empty("worker_id", request.worker_id)?
+  validate_non_empty("lease_id", request.lease_id)?
+  if request.status != "succeeded" && request.status != "failed" {
+    return Err("worker complete status must be succeeded or failed")
+  }
+  if request.now_unix_ms < 0 {
+    return Err("worker complete now_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_approval_gate_decision(decision: String) -> Result<Bool, String> {
+  if decision == "approved" || decision == "rejected" {
+    return Ok(true)
+  }
+  return Err("approval gate decision must be approved or rejected")
+}
+
+fn validate_approval_gate_stage_selector(request: ApprovalGateResolveRequest) -> Result<Bool, String> {
+  if request.stage_name != "" {
+    return Ok(true)
+  }
+  if request.stage_index >= 0 {
+    return Ok(true)
+  }
+  return Err("approval gate resolve requires stage_name or non-negative stage_index")
+}
+
+fn validate_approval_gate_resolve_request(request: ApprovalGateResolveRequest) -> Result<Bool, String> {
+  if request.run_id <= 0 {
+    return Err("approval gate resolve run_id must be positive")
+  }
+  validate_approval_gate_stage_selector(request)?
+  validate_approval_gate_decision(request.decision)?
+  validate_non_empty("approval gate actor", request.actor)?
+  if request.now_unix_ms < 0 {
+    return Err("approval gate resolve now_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_outbox_claim_request(request: OutboxClaimRequest) -> Result<Bool, String> {
+  validate_non_empty("worker_id", request.worker_id)?
+  if request.now_unix_ms < 0 {
+    return Err("outbox claim now_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_outbox_complete_request(request: OutboxCompleteRequest) -> Result<Bool, String> {
+  validate_non_empty("worker_id", request.worker_id)?
+  validate_non_empty("lease_id", request.lease_id)?
+  if request.status != "published" && request.status != "failed" {
+    return Err("outbox complete status must be published or failed")
+  }
+  if request.now_unix_ms < 0 || request.next_attempt_unix_ms < 0 {
+    return Err("outbox complete unix_ms fields must be non-negative")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_stage_validation_accepts_approval_gate() -> Void {
+  let stages = array_build(array_push(array_builder(), JobStageSpec("approval", "approval_gate", "", 0, 0, empty_json_array()).as_json()))
+  match validate_stage_specs(stages) {
+    Ok(_) => {}
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_stage_validation_rejects_bad_approval_gate_shape() -> Void {
+  let stages = array_build(array_push(array_builder(), JobStageSpec("approval", "approval_gate", "apply", 30, 1, empty_json_array()).as_json()))
+  match validate_stage_specs(stages) {
+    Ok(_) => { panic("expected bad approval gate rejection") }
+    Err(_) => {}
+  }
+}
+
+@test
+fn test_stage_kind_json_compatibility_contract() -> Void {
+  let legacy_stage = object5("name",
+                             string_value("build"),
+                             "task_kind",
+                             string_value("build"),
+                             "timeout_s",
+                             int_value(30),
+                             "max_attempts",
+                             int_value(2),
+                             "depends_on",
+                             empty_json_array())
+  match job_stage_spec_from_json(legacy_stage) {
+    Ok(stage) => {
+      assert(stage.kind == "leased_task", "missing stage kind should default to leased_task")
+    }
+    Err(msg) => { panic(msg) }
+  }
+  let bad_stage = object6("name",
+                          string_value("build"),
+                          "kind",
+                          int_value(7),
+                          "task_kind",
+                          string_value("build"),
+                          "timeout_s",
+                          int_value(30),
+                          "max_attempts",
+                          int_value(2),
+                          "depends_on",
+                          empty_json_array())
+  match job_stage_spec_from_json(bad_stage) {
+    Ok(_) => { panic("expected non-string stage kind to fail") }
+    Err(_) => {}
+  }
+}
+
+@test
+fn test_dag_validation_rejects_unknown_dependency() -> Void {
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("build", "leased_task", "build", 30, 2, empty_json_array()).as_json())
+  stages = array_push(stages, JobStageSpec("deploy", "leased_task", "deploy", 30, 2, array_build(array_push(array_builder(), string_value("missing")))).as_json())
+  match validate_stage_specs(array_build(stages)) {
+    Ok(_) => { panic("expected unknown dependency rejection") }
+    Err(_) => {}
+  }
+}
+
+@test
+fn test_dag_validation_rejects_self_dependency() -> Void {
+  let deps = array_build(array_push(array_builder(), string_value("build")))
+  let stages = array_build(array_push(array_builder(), JobStageSpec("build", "leased_task", "build", 30, 2, deps).as_json()))
+  match validate_stage_specs(stages) {
+    Ok(_) => { panic("expected self dependency rejection") }
+    Err(_) => {}
+  }
+}
+
+@test
+fn test_dag_validation_rejects_duplicate_dependency() -> Void {
+  let deps = array_builder()
+  deps = array_push(deps, string_value("root"))
+  deps = array_push(deps, string_value("root"))
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("root", "leased_task", "prepare", 30, 2, empty_json_array()).as_json())
+  stages = array_push(stages, JobStageSpec("deploy", "leased_task", "deploy", 30, 2, array_build(deps)).as_json())
+  match validate_stage_specs(array_build(stages)) {
+    Ok(_) => { panic("expected duplicate dependency rejection") }
+    Err(_) => {}
+  }
+}
+
+@test
+fn test_dag_validation_rejects_cycle() -> Void {
+  let build_deps = array_build(array_push(array_builder(), string_value("deploy")))
+  let deploy_deps = array_build(array_push(array_builder(), string_value("build")))
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("build", "leased_task", "build", 30, 2, build_deps).as_json())
+  stages = array_push(stages, JobStageSpec("deploy", "leased_task", "deploy", 30, 2, deploy_deps).as_json())
+  match validate_stage_specs(array_build(stages)) {
+    Ok(_) => { panic("expected dependency cycle rejection") }
+    Err(_) => {}
+  }
+}
+
+@test
+fn test_dag_validation_accepts_parallel_siblings() -> Void {
+  let root = JobStageSpec("root", "approval_gate", "", 0, 0, empty_json_array())
+  let deps = array_build(array_push(array_builder(), string_value("root")))
+  let stages = array_builder()
+  stages = array_push(stages, root.as_json())
+  stages = array_push(stages, JobStageSpec("a", "leased_task", "apply", 30, 2, deps).as_json())
+  stages = array_push(stages, JobStageSpec("b", "leased_task", "apply", 30, 2, deps).as_json())
+  match validate_stage_specs(array_build(stages)) {
+    Ok(_) => {}
+    Err(msg) => { panic(msg) }
+  }
+}

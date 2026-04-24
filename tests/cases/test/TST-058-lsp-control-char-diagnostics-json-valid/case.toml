@@ -1,0 +1,12 @@
+id = "TST-058-lsp-control-char-diagnostics-json-valid"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport json, os, subprocess, tempfile\nroot = Path(tempfile.mkdtemp(dir='work'))\nfile = root / 'control.nb'\ntext = 'fn main() -> Int {\\n  \\x01\\n  return 1\\n}\\n'\nfile.write_text(text, encoding='utf-8')\nproc = subprocess.Popen([os.environ['NEBULA_BINARY'], 'lsp'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n\ndef send(obj):\n    body = json.dumps(obj, separators=(',', ':')).encode('utf-8')\n    proc.stdin.write(f'Content-Length: {len(body)}\\r\\n\\r\\n'.encode('ascii') + body)\n    proc.stdin.flush()\n\ndef recv():\n    header = b''\n    while b'\\r\\n\\r\\n' not in header:\n        chunk = proc.stdout.read(1)\n        if not chunk:\n            raise RuntimeError('lsp closed while waiting for header')\n        header += chunk\n    head, _, rest = header.partition(b'\\r\\n\\r\\n')\n    length = 0\n    for line in head.decode('ascii').split('\\r\\n'):\n        if line.lower().startswith('content-length:'):\n            length = int(line.split(':', 1)[1].strip())\n    body = rest\n    while len(body) < length:\n        chunk = proc.stdout.read(length - len(body))\n        if not chunk:\n            raise RuntimeError('lsp closed while waiting for body')\n        body += chunk\n    decoded = body.decode('utf-8')\n    json.loads(decoded)\n    return decoded\n\nuri = file.resolve().as_uri()\nresponses = []\nfor msg in [\n    {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},\n    {'jsonrpc': '2.0', 'method': 'textDocument/didOpen', 'params': {'textDocument': {'uri': uri, 'languageId': 'nebula', 'version': 1, 'text': text}}},\n    {'jsonrpc': '2.0', 'id': 2, 'method': 'shutdown', 'params': {}},\n]:\n    send(msg)\n    responses.append(recv())\nsend({'jsonrpc': '2.0', 'method': 'exit', 'params': {}})\nproc.stdin.close()\nproc.wait(timeout=5)\nPath('work/lsp-control-char.out').write_text('\\n'.join(responses), encoding='utf-8')\nraise SystemExit(proc.returncode)\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'publishDiagnostics' work/lsp-control-char.out && grep -F 'unexpected character' work/lsp-control-char.out"
+expect_rc = 0

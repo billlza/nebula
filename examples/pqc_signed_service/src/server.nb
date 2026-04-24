@@ -1,0 +1,146 @@
+module server
+import crypto::hash
+import crypto::pqc.sign
+import pqc::signed
+import service::context
+import service::errors
+import service::health
+import service::middleware
+import service::routing
+import std::bytes
+import std::http
+import std::http_json
+import std::json
+import std::result
+
+fn service_name() -> String {
+  return "pqc-signed-service"
+}
+
+async fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await dispatch_ctx3_result(
+    ctx,
+    request,
+    Get,
+    "/healthz",
+    handle_health_route,
+    Post,
+    "/sign",
+    handle_sign_route,
+    Post,
+    "/verify",
+    handle_verify_route,
+    not_found_text("not found")
+  )
+}
+
+async fn handle_health_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(live_response_with_context(ctx))
+}
+
+async fn handle_sign_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ml_dsa_65_keypair() {
+    Ok(keypair) => {
+      match sign_body(keypair.secret_key(), request.body) {
+        Ok(signed_body_value) => {
+          return Ok(ok_json(object4(
+            "algorithm",
+            string_value("ml-dsa-65"),
+            "public_key_hex",
+            string_value(hex(keypair.public_key().to_bytes())),
+            "body_sha3_256",
+            string_value(signed_body_value.body_sha3_256_hex()),
+            "signature_hex",
+            string_value(signed_body_value.signature_hex())
+          )))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn handle_verify_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_result(ctx, request, verify_signed_request, handle_verify_success)
+}
+
+async fn handle_verify_success(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(ok_json(object2(
+    "verified",
+    bool_value(true),
+    "request_id_text",
+    string_value(ctx.request_id_text)
+  )))
+}
+
+async fn verify_signed_request(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  match parse_json_body(request.body) {
+    Ok(value) => {
+      match get_string(value, "body_text") {
+        Ok(body_text) => {
+          match get_string(value, "public_key_hex") {
+            Ok(public_key_hex) => {
+              match get_string(value, "body_sha3_256") {
+                Ok(body_sha3_256_hex) => {
+                  match get_string(value, "signature_hex") {
+                    Ok(signature_hex) => {
+                      match from_hex(public_key_hex) {
+                        Ok(public_key_bytes) => {
+                          match ml_dsa_65_public_key_from_bytes(public_key_bytes) {
+                            Ok(public_key) => {
+                              let envelope = signed_body(body_sha3_256_hex, signature_hex)
+                              match verify_signed_body(public_key, from_string(body_text), envelope) {
+                                Ok(valid) => {
+                                  if valid {
+                                    return Ok(allow())
+                                  }
+                                  return Ok(deny(for_request(401,
+                                                             ctx,
+                                                             "signature_invalid",
+                                                             "request signature verification failed")))
+                                }
+                                Err(msg) => {
+                                  return Ok(deny(for_request(400, ctx, "bad_signature", msg)))
+                                }
+                              }
+                            }
+                            Err(msg) => {
+                              return Ok(deny(for_request(400, ctx, "bad_public_key", msg)))
+                            }
+                          }
+                        }
+                        Err(msg) => {
+                          return Ok(deny(for_request(400, ctx, "bad_public_key", msg)))
+                        }
+                      }
+                    }
+                    Err(msg) => {
+                      return Ok(deny(for_request(400, ctx, "bad_request", msg)))
+                    }
+                  }
+                }
+                Err(msg) => {
+                  return Ok(deny(for_request(400, ctx, "bad_request", msg)))
+                }
+              }
+            }
+            Err(msg) => {
+              return Ok(deny(for_request(400, ctx, "bad_request", msg)))
+            }
+          }
+        }
+        Err(msg) => {
+          return Ok(deny(for_request(400, ctx, "bad_request", msg)))
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(deny(for_request(400, ctx, "bad_request", msg)))
+    }
+  }
+}

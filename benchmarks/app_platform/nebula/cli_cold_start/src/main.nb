@@ -1,0 +1,67 @@
+module main
+import ctlapp::args
+import ctlapp::render
+import core::validate
+import std::json
+import std::result
+
+fn benchmark_argv() -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value("ctl"))
+  builder = array_push(builder, string_value("--url"))
+  builder = array_push(builder, string_value("http://127.0.0.1:40480/control/"))
+  builder = array_push(builder, string_value("--json"))
+  builder = array_push(builder, string_value("control-plane-validate"))
+  return array_build(builder)
+}
+
+fn require_text(actual: String, expected: String, label: String) -> Result<Bool, String> {
+  if actual == expected {
+    return Ok(true)
+  }
+  return Err(text_concat3(label, " mismatch: ", actual))
+}
+
+fn require_flag(value: Bool, label: String) -> Result<Bool, String> {
+  if value {
+    return Ok(true)
+  }
+  return Err(text_concat(label, " must be true"))
+}
+
+fn verify_parsed_args(parsed: ParsedArgs) -> Result<Bool, String> {
+  require_text(parsed.command, "control-plane-validate", "command")?
+  require_text(parsed.url_override, "http://127.0.0.1:40480/control/", "url_override")?
+  return require_flag(parsed.json_mode, "json_mode")
+}
+
+fn render_validate_json(parsed: ParsedArgs) -> Result<Bool, String> {
+  let normalized = normalize_base_url(selected_base_url(parsed.url_override))?
+  require_text(normalized, "http://127.0.0.1:40480/control", "normalized base_url")?
+
+  let payload = control_plane_validate_payload(normalized)
+  let rendered = stringify(payload)
+  return require_text(rendered,
+                      "{\"base_url\":\"http://127.0.0.1:40480/control\"}",
+                      "rendered payload")
+}
+
+fn run_cli_cold_start() -> Result<Bool, String> {
+  let parsed = parse_argv_json(benchmark_argv())?
+  verify_parsed_args(parsed)?
+  return render_validate_json(parsed)
+}
+
+@bench
+fn bench_cli_cold_start() -> Void {
+  match run_cli_cold_start() {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-cli-cold-start")
+}

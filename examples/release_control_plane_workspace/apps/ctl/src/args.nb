@@ -1,0 +1,995 @@
+module args
+import core::app
+import core::validate
+import std::env
+import std::json
+import std::result
+
+struct ParsedArgs {
+  url_override: String
+  token_override: String
+  ca_file_override: String
+  json_mode: Bool
+  command: String
+  subcommand: String
+  command_argv: JsonArrayBuilder
+  app_name: String
+  channel: String
+  key: String
+  if_match_text: String
+  version_text: String
+  config_revision_text: String
+  description: String
+  decision_text: String
+  reason_text: String
+  value_kind: String
+  value_text: String
+}
+
+struct ParseProgress {
+  parsed: ParsedArgs
+  next_index: Int
+}
+
+fn usage() -> Void {
+  print("usage: ctl [--url http://host:port[/prefix]] [--token TOKEN] [--ca-file PATH] [--json] <status|info|control-plane-validate|release|config|workflow|worker|schedule|broker|webhook|shell|deploy|approval|audit|auth|runner|platform> ...")
+  print("release put/apply, approval decide, config put/delete support --if-match REVISION for optimistic concurrency")
+}
+
+fn empty_text() -> String {
+  return text_concat("", "")
+}
+
+fn empty_command_argv() -> JsonArrayBuilder {
+  return array_builder()
+}
+
+fn default_args() -> ParsedArgs {
+  return ParsedArgs(empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    false,
+                    empty_text(),
+                    empty_text(),
+                    empty_command_argv(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text(),
+                    empty_text())
+}
+
+fn rebuild_args(url_override: String,
+                token_override: String,
+                ca_file_override: String,
+                json_mode: Bool,
+                command: String,
+                subcommand: String,
+                command_argv: JsonArrayBuilder,
+                app_name: String,
+                channel: String,
+                key: String,
+                if_match_text: String,
+                version_text: String,
+                config_revision_text: String,
+                description: String,
+                decision_text: String,
+                reason_text: String,
+                value_kind: String,
+                value_text: String) -> ParsedArgs {
+  return ParsedArgs(url_override,
+                    token_override,
+                    ca_file_override,
+                    json_mode,
+                    command,
+                    subcommand,
+                    command_argv,
+                    app_name,
+                    channel,
+                    key,
+                    if_match_text,
+                    version_text,
+                    config_revision_text,
+                    description,
+                    decision_text,
+                    reason_text,
+                    value_kind,
+                    value_text)
+}
+
+fn with_url_override(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(value,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_token_override(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      value,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_ca_file_override(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      value,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_json_mode(parsed: ParsedArgs) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      true,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_command(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      value,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_subcommand(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      value,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_app_name(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      value,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_channel(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      value,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_key(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      value,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_if_match_text(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      value,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_version_text(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      value,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_config_revision_text(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      value,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_description(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      value,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_decision_text(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      value,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_reason_text(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      parsed.command_argv,
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      value,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn with_value(parsed: ParsedArgs, kind: String, value: String) -> Result<ParsedArgs, String> {
+  if parsed.value_kind != "" {
+    return Err("config put requires exactly one of --string/--bool/--int")
+  }
+  return Ok(rebuild_args(parsed.url_override,
+                         parsed.token_override,
+                         parsed.ca_file_override,
+                         parsed.json_mode,
+                         parsed.command,
+                         parsed.subcommand,
+                         parsed.command_argv,
+                         parsed.app_name,
+                         parsed.channel,
+                         parsed.key,
+                         parsed.if_match_text,
+                         parsed.version_text,
+                         parsed.config_revision_text,
+                         parsed.description,
+                         parsed.decision_text,
+                         parsed.reason_text,
+                         kind,
+                         value))
+}
+
+fn with_command_arg(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.url_override,
+                      parsed.token_override,
+                      parsed.ca_file_override,
+                      parsed.json_mode,
+                      parsed.command,
+                      parsed.subcommand,
+                      array_push(parsed.command_argv, string_value(value)),
+                      parsed.app_name,
+                      parsed.channel,
+                      parsed.key,
+                      parsed.if_match_text,
+                      parsed.version_text,
+                      parsed.config_revision_text,
+                      parsed.description,
+                      parsed.decision_text,
+                      parsed.reason_text,
+                      parsed.value_kind,
+                      parsed.value_text)
+}
+
+fn selected_base_url(url_override: String) -> String {
+  if url_override != "" {
+    return url_override
+  }
+  return get_or_default("APP_URL", default_base_url())
+}
+
+fn selected_token(token_override: String) -> String {
+  if token_override != "" {
+    return token_override
+  }
+  return get_or_default("APP_TOKEN", "")
+}
+
+fn selected_ca_file(ca_file_override: String) -> String {
+  if ca_file_override != "" {
+    return ca_file_override
+  }
+  return get_or_default("APP_CA_FILE", "")
+}
+
+fn argv_json_from_env() -> Json {
+  let builder = array_builder()
+  let index = 0
+  while index < argc() {
+    builder = array_push(builder, string_value(argv(index)))
+    index += 1
+  }
+  return array_build(builder)
+}
+
+fn argv_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn argv_text(argv_json: Json, index: Int) -> Result<String, String> {
+  let value = array_get(argv_json, index)?
+  return as_string(value)
+}
+
+fn next_arg_value_in(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  let count = argv_count(argv_json)?
+  if index + 1 >= count {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return argv_text(argv_json, index + 1)
+}
+
+fn parsed_progress(parsed: ParsedArgs, index: Int) -> ParseProgress {
+  return ParseProgress(parsed, index)
+}
+
+fn resource_flag_progress_in(argv_json: Json,
+                             parsed: ParsedArgs,
+                             index: Int,
+                             arg: String) -> Result<ParseProgress, String> {
+  let value = next_arg_value_in(argv_json, index, arg)?
+  if arg == "--app" {
+    return Ok(parsed_progress(with_app_name(parsed, value), index + 2))
+  }
+  if arg == "--channel" {
+    return Ok(parsed_progress(with_channel(parsed, value), index + 2))
+  }
+  if arg == "--key" {
+    return Ok(parsed_progress(with_key(parsed, value), index + 2))
+  }
+  if arg == "--if-match" {
+    return Ok(parsed_progress(with_if_match_text(parsed, value), index + 2))
+  }
+  if arg == "--version" {
+    return Ok(parsed_progress(with_version_text(parsed, value), index + 2))
+  }
+  if arg == "--config-revision" {
+    return Ok(parsed_progress(with_config_revision_text(parsed, value), index + 2))
+  }
+  if arg == "--description" {
+    return Ok(parsed_progress(with_description(parsed, value), index + 2))
+  }
+  if arg == "--decision" {
+    return Ok(parsed_progress(with_decision_text(parsed, value), index + 2))
+  }
+  if arg == "--reason" {
+    return Ok(parsed_progress(with_reason_text(parsed, value), index + 2))
+  }
+  return Err("unexpected argument")
+}
+
+fn config_typed_value_progress_in(argv_json: Json,
+                                  parsed: ParsedArgs,
+                                  index: Int,
+                                  arg: String,
+                                  kind: String) -> Result<ParseProgress, String> {
+  let value = next_arg_value_in(argv_json, index, arg)?
+  let next = with_value(parsed, kind, value)?
+  return Ok(parsed_progress(next, index + 2))
+}
+
+fn parse_config_value_option_in(argv_json: Json,
+                                parsed: ParsedArgs,
+                                index: Int,
+                                arg: String) -> Result<ParseProgress, String> {
+  if arg == "--string" {
+    return config_typed_value_progress_in(argv_json, parsed, index, arg, "string")
+  }
+  if arg == "--bool" {
+    return config_typed_value_progress_in(argv_json, parsed, index, arg, "bool")
+  }
+  if arg == "--int" {
+    return config_typed_value_progress_in(argv_json, parsed, index, arg, "int")
+  }
+  return Err("unexpected argument")
+}
+
+fn parse_config_option_in(argv_json: Json,
+                          parsed: ParsedArgs,
+                          index: Int,
+                          arg: String) -> Result<ParseProgress, String> {
+  if arg == "--app" || arg == "--channel" || arg == "--key" || arg == "--if-match" || arg == "--description" || arg == "--config-revision" {
+    return resource_flag_progress_in(argv_json, parsed, index, arg)
+  }
+  return parse_config_value_option_in(argv_json, parsed, index, arg)
+}
+
+fn parse_global_option_in(argv_json: Json,
+                          parsed: ParsedArgs,
+                          index: Int,
+                          arg: String) -> Result<ParseProgress, String> {
+  if arg == "--url" {
+    let value = next_arg_value_in(argv_json, index, "--url")?
+    return Ok(parsed_progress(with_url_override(parsed, value), index + 2))
+  }
+  if arg == "--token" {
+    let value = next_arg_value_in(argv_json, index, "--token")?
+    return Ok(parsed_progress(with_token_override(parsed, value), index + 2))
+  }
+  if arg == "--ca-file" {
+    let value = next_arg_value_in(argv_json, index, "--ca-file")?
+    return Ok(parsed_progress(with_ca_file_override(parsed, value), index + 2))
+  }
+  if arg == "--json" {
+    return Ok(parsed_progress(with_json_mode(parsed), index + 1))
+  }
+  return Err("not a global option")
+}
+
+fn parse_command_token(parsed: ParsedArgs, index: Int, arg: String) -> Result<ParseProgress, String> {
+  if parsed.command == "" {
+    return Ok(parsed_progress(with_command(parsed, arg), index + 1))
+  }
+  if (parsed.command == "release" || parsed.command == "config" || parsed.command == "approval" ||
+      parsed.command == "audit" || parsed.command == "auth" || parsed.command == "runner") &&
+      parsed.subcommand == "" {
+    return Ok(parsed_progress(with_subcommand(parsed, arg), index + 1))
+  }
+  return Err("not a command token")
+}
+
+fn advance_parse_in(argv_json: Json, parsed: ParsedArgs, index: Int, arg: String) -> Result<ParseProgress, String> {
+  match parse_global_option_in(argv_json, parsed, index, arg) {
+    Ok(progress) => {
+      return Ok(progress)
+    }
+    Err(_) => {}
+  }
+  match parse_command_token(parsed, index, arg) {
+    Ok(progress) => {
+      return Ok(progress)
+    }
+    Err(_) => {}
+  }
+  if parsed.command == "workflow" || parsed.command == "worker" || parsed.command == "schedule" || parsed.command == "broker" || parsed.command == "webhook" || parsed.command == "shell" || parsed.command == "deploy" || parsed.command == "platform" || (parsed.command == "auth" && parsed.subcommand == "jwt-verify") {
+    return Ok(parsed_progress(with_command_arg(parsed, arg), index + 1))
+  }
+  if parsed.command == "config" {
+    return parse_config_option_in(argv_json, parsed, index, arg)
+  }
+  if parsed.command == "release" || parsed.command == "approval" || parsed.command == "audit" {
+    return resource_flag_progress_in(argv_json, parsed, index, arg)
+  }
+  return Err("unexpected argument")
+}
+
+fn require_flag_value(value: String, label: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(label, " is required"))
+  }
+  return Ok(true)
+}
+
+fn reject_flag_value(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed for this subcommand"))
+  }
+  return Ok(true)
+}
+
+fn require_release_identity(parsed: ParsedArgs) -> Result<Bool, String> {
+  require_flag_value(parsed.app_name, "--app")?
+  require_flag_value(parsed.channel, "--channel")?
+  return Ok(true)
+}
+
+fn require_config_identity(parsed: ParsedArgs) -> Result<Bool, String> {
+  require_release_identity(parsed)?
+  require_flag_value(parsed.key, "--key")?
+  return Ok(true)
+}
+
+fn reject_config_key_flag(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.key, "--key")?
+  return Ok(true)
+}
+
+fn reject_config_value_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.value_kind, "one of --string/--bool/--int")?
+  reject_flag_value(parsed.value_text, "one of --string/--bool/--int")?
+  return Ok(true)
+}
+
+fn reject_release_write_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.version_text, "--version")?
+  reject_flag_value(parsed.config_revision_text, "--config-revision")?
+  reject_flag_value(parsed.description, "--description")?
+  return Ok(true)
+}
+
+fn reject_release_state_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.version_text, "--version")?
+  reject_flag_value(parsed.config_revision_text, "--config-revision")?
+  return Ok(true)
+}
+
+fn reject_approval_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.decision_text, "--decision")?
+  reject_flag_value(parsed.reason_text, "--reason")?
+  return Ok(true)
+}
+
+fn reject_release_resource_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.app_name, "--app")?
+  reject_flag_value(parsed.channel, "--channel")?
+  reject_flag_value(parsed.if_match_text, "--if-match")?
+  return Ok(true)
+}
+
+fn reject_all_config_specific_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_config_key_flag(parsed)?
+  reject_config_value_flags(parsed)?
+  return Ok(true)
+}
+
+fn reject_simple_command_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_release_resource_flags(parsed)?
+  reject_release_write_flags(parsed)?
+  reject_approval_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(true)
+}
+
+fn reject_release_read_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.if_match_text, "--if-match")?
+  reject_release_write_flags(parsed)?
+  reject_approval_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(true)
+}
+
+fn reject_config_read_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.if_match_text, "--if-match")?
+  reject_flag_value(parsed.description, "--description")?
+  reject_release_state_flags(parsed)?
+  reject_approval_flags(parsed)?
+  reject_config_value_flags(parsed)?
+  return Ok(true)
+}
+
+fn reject_config_write_common_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_release_state_flags(parsed)?
+  reject_approval_flags(parsed)?
+  return Ok(true)
+}
+
+fn finalize_release_list_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_flag_value(parsed.app_name, "--app")?
+  reject_flag_value(parsed.channel, "--channel")?
+  reject_release_read_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_release_put_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  require_flag_value(parsed.version_text, "--version")?
+  require_flag_value(parsed.config_revision_text, "--config-revision")?
+  reject_approval_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_release_read_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  reject_release_read_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_release_apply_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  require_flag_value(parsed.if_match_text, "--if-match")?
+  reject_release_write_flags(parsed)?
+  reject_approval_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_release_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand == "" {
+    return Err("missing release subcommand")
+  }
+  if parsed.subcommand == "list" {
+    return finalize_release_list_args(parsed)
+  }
+  if parsed.subcommand == "get" || parsed.subcommand == "snapshot" {
+    return finalize_release_read_args(parsed)
+  }
+  if parsed.subcommand == "put" {
+    return finalize_release_put_args(parsed)
+  }
+  if parsed.subcommand == "apply" {
+    return finalize_release_apply_args(parsed)
+  }
+  return Err("unknown release subcommand")
+}
+
+fn finalize_config_list_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  reject_config_key_flag(parsed)?
+  reject_config_read_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_config_get_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_config_identity(parsed)?
+  reject_config_read_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_config_put_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_config_identity(parsed)?
+  require_flag_value(parsed.value_kind, "one of --string/--bool/--int")?
+  reject_config_write_common_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_config_delete_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_config_identity(parsed)?
+  require_flag_value(parsed.if_match_text, "--if-match")?
+  reject_flag_value(parsed.description, "--description")?
+  reject_config_write_common_flags(parsed)?
+  reject_config_value_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn reject_config_snapshot_state_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_flag_value(parsed.if_match_text, "--if-match")?
+  reject_flag_value(parsed.description, "--description")?
+  reject_flag_value(parsed.version_text, "--version")?
+  return Ok(true)
+}
+
+fn reject_config_snapshot_domain_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_config_key_flag(parsed)?
+  reject_approval_flags(parsed)?
+  reject_config_value_flags(parsed)?
+  return Ok(true)
+}
+
+fn reject_config_snapshot_flags(parsed: ParsedArgs) -> Result<Bool, String> {
+  reject_config_snapshot_state_flags(parsed)?
+  reject_config_snapshot_domain_flags(parsed)?
+  return Ok(true)
+}
+
+fn finalize_config_snapshot_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  require_flag_value(parsed.config_revision_text, "--config-revision")?
+  reject_config_snapshot_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_config_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand == "" {
+    return Err("missing config subcommand")
+  }
+  if parsed.subcommand == "list" {
+    return finalize_config_list_args(parsed)
+  }
+  if parsed.subcommand == "get" || parsed.subcommand == "history" {
+    return finalize_config_get_args(parsed)
+  }
+  if parsed.subcommand == "put" {
+    return finalize_config_put_args(parsed)
+  }
+  if parsed.subcommand == "delete" {
+    return finalize_config_delete_args(parsed)
+  }
+  if parsed.subcommand == "snapshot" {
+    return finalize_config_snapshot_args(parsed)
+  }
+  return Err("unknown config subcommand")
+}
+
+fn finalize_approval_get_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  reject_flag_value(parsed.if_match_text, "--if-match")?
+  reject_release_write_flags(parsed)?
+  reject_approval_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_approval_decide_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_release_identity(parsed)?
+  require_flag_value(parsed.if_match_text, "--if-match")?
+  require_flag_value(parsed.decision_text, "--decision")?
+  reject_release_write_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_approval_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand == "" {
+    return Err("missing approval subcommand")
+  }
+  if parsed.subcommand == "get" {
+    return finalize_approval_get_args(parsed)
+  }
+  if parsed.subcommand == "decide" {
+    return finalize_approval_decide_args(parsed)
+  }
+  return Err("unknown approval subcommand")
+}
+
+fn finalize_audit_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand != "list" {
+    return Err("unknown audit subcommand")
+  }
+  require_release_identity(parsed)?
+  reject_flag_value(parsed.if_match_text, "--if-match")?
+  reject_release_write_flags(parsed)?
+  reject_approval_flags(parsed)?
+  reject_all_config_specific_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_auth_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand == "whoami" {
+    reject_simple_command_flags(parsed)?
+    return Ok(parsed)
+  }
+  if parsed.subcommand == "jwt-verify" {
+    return Ok(parsed)
+  }
+  return Err("unknown auth subcommand")
+}
+
+fn finalize_runner_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand != "apply-once" {
+    return Err("unknown runner subcommand")
+  }
+  reject_simple_command_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_simple_command_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.subcommand != "" {
+    return Err("unexpected subcommand")
+  }
+  reject_simple_command_flags(parsed)?
+  return Ok(parsed)
+}
+
+fn finalize_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.command == "" {
+    return Err("missing command")
+  }
+  if parsed.command == "workflow" || parsed.command == "worker" || parsed.command == "schedule" || parsed.command == "broker" || parsed.command == "webhook" || parsed.command == "platform" {
+    return Ok(parsed)
+  }
+  if parsed.command == "release" {
+    return finalize_release_args(parsed)
+  }
+  if parsed.command == "config" {
+    return finalize_config_args(parsed)
+  }
+  if parsed.command == "approval" {
+    return finalize_approval_args(parsed)
+  }
+  if parsed.command == "audit" {
+    return finalize_audit_args(parsed)
+  }
+  if parsed.command == "auth" {
+    return finalize_auth_args(parsed)
+  }
+  if parsed.command == "runner" {
+    return finalize_runner_args(parsed)
+  }
+  return finalize_simple_command_args(parsed)
+}
+
+fn parse_args() -> Result<ParsedArgs, String> {
+  return parse_argv_json(argv_json_from_env())
+}
+
+fn parse_argv_json(argv_json: Json) -> Result<ParsedArgs, String> {
+  let parsed = default_args()
+  let count = argv_count(argv_json)?
+  let index = 1
+  while index < count {
+    let arg = argv_text(argv_json, index)?
+    match advance_parse_in(argv_json, parsed, index, arg) {
+      Ok(progress) => {
+        parsed = progress.parsed
+        index = progress.next_index
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return finalize_args(parsed)
+}

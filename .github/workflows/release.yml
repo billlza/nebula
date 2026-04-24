@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   meta:
@@ -18,7 +18,7 @@ jobs:
       notes: ${{ steps.meta.outputs.notes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - id: meta
         name: Read Release Metadata
@@ -39,6 +39,10 @@ jobs:
 
   build-assets:
     needs: meta
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -70,17 +74,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Python
         if: matrix.shell_kind == 'unix'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
+      - name: Validate TLS Root Bundle Metadata
+        if: matrix.shell_kind == 'unix'
+        run: python3 scripts/sync_tls_root_bundle.py --check
+
       - name: Setup MSYS2
         if: matrix.shell_kind == 'msys2'
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2
         with:
           msystem: CLANG64
           update: true
@@ -90,6 +98,11 @@ jobs:
             mingw-w64-clang-x86_64-ninja
             mingw-w64-clang-x86_64-python
 
+      - name: Validate TLS Root Bundle Metadata (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: python3 scripts/sync_tls_root_bundle.py --check
+
       - name: Configure
         if: matrix.shell_kind == 'unix'
         run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
@@ -97,6 +110,10 @@ jobs:
       - name: Build
         if: matrix.shell_kind == 'unix'
         run: cmake --build build -j
+
+      - name: Validate Linux Binary ABI
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        run: file build/nebula | grep -E 'ELF 64-bit.*x86-64'
 
       - name: Run Contract Tests
         if: matrix.shell_kind == 'unix'
@@ -106,18 +123,67 @@ jobs:
         if: matrix.shell_kind == 'unix'
         run: python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist
 
+      - name: Package Backend SDK Release Asset (Linux)
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        run: python3 scripts/package_release.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output-dir dist --include-backend-sdk
+
       - name: Unix Release Smoke
         if: matrix.shell_kind == 'unix'
         run: |
           asset="$PWD/dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}"
           smoke_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nebula-release-smoke.XXXXXX")"
           install_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nebula-install-smoke.XXXXXX")"
+          command -v clang++ >/dev/null
+          unset CXX
           tar -xzf "$asset" -C "$smoke_root"
           bundle_root="$smoke_root/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}"
+          test ! -d "$bundle_root/official"
+          test ! -d "$bundle_root/share/nebula/official"
+          test -f "$bundle_root/share/nebula/std/fs.nb"
           archive_project="$smoke_root/archive-project"
           "$bundle_root/bin/nebula" --version
-          "$bundle_root/bin/nebula" new "$archive_project"
-          (cd "$smoke_root" && "$bundle_root/bin/nebula" run "$archive_project" --run-gate none)
+          "$bundle_root/bin/nebula" new "$archive_project" --template cli
+          printf 'archive-cli\n' > "$smoke_root/archive-input.txt"
+          (cd "$smoke_root" && "$bundle_root/bin/nebula" run "$archive_project" --run-gate none -- archive-input.txt archive-output.txt)
+          cmp "$smoke_root/archive-input.txt" "$smoke_root/archive-output.txt"
+          archive_dep="$smoke_root/archive-dep"
+          mkdir -p "$archive_dep/src"
+          cat > "$archive_dep/nebula.toml" <<'EOF'
+          schema_version = 1
+
+          [package]
+          name = "dep"
+          version = "0.1.0"
+          entry = "src/lib.nb"
+          src_dir = "src"
+          EOF
+          cat > "$archive_dep/src/lib.nb" <<'EOF'
+          module lib
+
+          fn lib_value() -> Int {
+            return 7
+          }
+          EOF
+          cat > "$archive_project/src/main.nb" <<'EOF'
+          module main
+          import dep::lib
+
+          fn main() -> Void {
+            if lib_value() == 7 {
+              print("git-ok")
+            } else {
+              print("git-bad")
+            }
+          }
+          EOF
+          git init "$archive_dep" >/dev/null 2>&1
+          git -C "$archive_dep" config user.email tests@example.com
+          git -C "$archive_dep" config user.name "Nebula Release"
+          git -C "$archive_dep" add .
+          git -C "$archive_dep" commit -m init >/dev/null 2>&1
+          "$bundle_root/bin/nebula" add "$archive_project" dep --git "$archive_dep" --rev HEAD
+          "$bundle_root/bin/nebula" fetch "$archive_project"
+          (cd "$smoke_root" && "$bundle_root/bin/nebula" run "$archive_project" --run-gate none | grep -F "git-ok")
           python3 - <<'PY'
           import hashlib
           from pathlib import Path
@@ -130,10 +196,75 @@ jobs:
           PY
           bash scripts/install.sh --version ${{ needs.meta.outputs.version }} --prefix "$install_root/prefix" --base-url "$PWD/dist"
           installed_bin="$install_root/prefix/bin/nebula"
+          test ! -d "$install_root/prefix/official"
+          test ! -d "$install_root/prefix/share/nebula/official"
+          test -f "$install_root/prefix/share/nebula/std/fs.nb"
           install_project="$install_root/install-project"
           "$installed_bin" --version
-          "$installed_bin" new "$install_project"
-          (cd "$install_root" && "$installed_bin" run "$install_project" --run-gate none)
+          "$installed_bin" new "$install_project" --template cli
+          printf 'install-cli\n' > "$install_root/install-input.txt"
+          (cd "$install_root" && "$installed_bin" run "$install_project" --run-gate none -- install-input.txt install-output.txt)
+          cmp "$install_root/install-input.txt" "$install_root/install-output.txt"
+          install_dep="$install_root/install-dep"
+          mkdir -p "$install_dep/src"
+          cat > "$install_dep/nebula.toml" <<'EOF'
+          schema_version = 1
+
+          [package]
+          name = "dep"
+          version = "0.1.0"
+          entry = "src/lib.nb"
+          src_dir = "src"
+          EOF
+          cat > "$install_dep/src/lib.nb" <<'EOF'
+          module lib
+
+          fn lib_value() -> Int {
+            return 7
+          }
+          EOF
+          cat > "$install_project/src/main.nb" <<'EOF'
+          module main
+          import dep::lib
+
+          fn main() -> Void {
+            if lib_value() == 7 {
+              print("git-ok")
+            } else {
+              print("git-bad")
+            }
+          }
+          EOF
+          git init "$install_dep" >/dev/null 2>&1
+          git -C "$install_dep" config user.email tests@example.com
+          git -C "$install_dep" config user.name "Nebula Release"
+          git -C "$install_dep" add .
+          git -C "$install_dep" commit -m init >/dev/null 2>&1
+          "$installed_bin" add "$install_project" dep --git "$install_dep" --rev HEAD
+          "$installed_bin" fetch "$install_project"
+          (cd "$install_root" && "$installed_bin" run "$install_project" --run-gate none | grep -F "git-ok")
+
+      - name: Verify Linux Backend GA Hardening
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        run: bash scripts/verify_linux_backend_ga_hardening.sh --binary ${{ matrix.binary }} --dist-dir dist --version ${{ needs.meta.outputs.version }}
+
+      - name: Generate Release SBOM (Unix)
+        if: matrix.shell_kind == 'unix'
+        run: |
+          python3 scripts/generate_release_sbom.py \
+            --staged-root "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}" \
+            --artifact "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}" \
+            --output "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.spdx.json" \
+            --base-url "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}"
+
+      - name: Generate Backend SDK SBOM (Linux)
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        run: |
+          python3 scripts/generate_release_sbom.py \
+            --staged-root "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64" \
+            --artifact "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz" \
+            --output "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json" \
+            --base-url "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}"
 
       - name: Configure (MSYS2)
         if: matrix.shell_kind == 'msys2'
@@ -173,51 +304,235 @@ jobs:
           New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
           Expand-Archive -Path $asset -DestinationPath $smokeRoot -Force
           $bundleRoot = Join-Path $smokeRoot "nebula-v${version}-windows-x86_64"
+          if (Test-Path (Join-Path $bundleRoot "official")) { throw "archive unexpectedly contains official preview packages" }
+          if (Test-Path (Join-Path $bundleRoot "share/nebula/official")) { throw "archive unexpectedly contains official preview packages" }
+          if (-not (Test-Path (Join-Path $bundleRoot "share/nebula/std/fs.nb"))) { throw "archive missing std/fs.nb" }
           $bundleBin = Join-Path $bundleRoot "bin"
           $binary = Join-Path $bundleBin "nebula.exe"
           $env:PATH = (($systemPaths + $bundleBin) | Where-Object { $_ }) -join ';'
           & $binary --version
           $archiveProject = Join-Path $smokeRoot "archive-project"
-          & $binary new $archiveProject
-          $env:CXX = $clang
+          & $binary new $archiveProject --template cli
+          Remove-Item Env:CXX -ErrorAction SilentlyContinue
           $env:PATH = (($systemPaths + $bundleBin + $clangDir) | Where-Object { $_ }) -join ';'
+          Set-Content -Path (Join-Path $smokeRoot "archive-input.txt") -Value 'archive-cli'
           Push-Location $smokeRoot
-          & $binary run $archiveProject --run-gate none
+          & $binary run $archiveProject --run-gate none -- archive-input.txt archive-output.txt
           Pop-Location
+          if ((Get-Content -Path (Join-Path $smokeRoot "archive-output.txt") -Raw) -ne ((Get-Content -Path (Join-Path $smokeRoot "archive-input.txt") -Raw))) {
+            throw "archive cli smoke output mismatch"
+          }
+          $archiveDep = Join-Path $smokeRoot "archive-dep"
+          New-Item -ItemType Directory -Path (Join-Path $archiveDep "src") -Force | Out-Null
+          Set-Content -Path (Join-Path $archiveDep "nebula.toml") -Value @'
+          schema_version = 1
+
+          [package]
+          name = "dep"
+          version = "0.1.0"
+          entry = "src/lib.nb"
+          src_dir = "src"
+          '@
+          Set-Content -Path (Join-Path $archiveDep "src/lib.nb") -Value @'
+          module lib
+
+          fn lib_value() -> Int {
+            return 7
+          }
+          '@
+          Set-Content -Path (Join-Path $archiveProject "src/main.nb") -Value @'
+          module main
+          import dep::lib
+
+          fn main() -> Void {
+            if lib_value() == 7 {
+              print("git-ok")
+            } else {
+              print("git-bad")
+            }
+          }
+          '@
+          git init $archiveDep | Out-Null
+          git -C $archiveDep config user.email tests@example.com
+          git -C $archiveDep config user.name "Nebula Release"
+          git -C $archiveDep add .
+          git -C $archiveDep commit -m init | Out-Null
+          & $binary add $archiveProject dep --git $archiveDep --rev HEAD
+          & $binary fetch $archiveProject
+          Push-Location $smokeRoot
+          $archiveGitRun = & $binary run $archiveProject --run-gate none
+          Pop-Location
+          if ($archiveGitRun -notmatch 'git-ok') { throw "archive git dependency smoke failed" }
           $sha = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Path (Join-Path $PWD "dist/SHA256SUMS.txt") -Value "$sha  nebula-v${version}-windows-x86_64.zip"
           ./scripts/install.ps1 -Version $version -InstallPrefix (Join-Path $installRoot "prefix") -BaseUrl (Join-Path $PWD "dist")
           $installedBin = Join-Path $installRoot "prefix/bin/nebula.exe"
+          if (Test-Path (Join-Path $installRoot "prefix/official")) { throw "installed tree unexpectedly contains official preview packages" }
+          if (Test-Path (Join-Path $installRoot "prefix/share/nebula/official")) { throw "installed tree unexpectedly contains official preview packages" }
+          if (-not (Test-Path (Join-Path $installRoot "prefix/share/nebula/std/fs.nb"))) { throw "installed tree missing std/fs.nb" }
           $env:PATH = (($systemPaths + (Join-Path $installRoot "prefix/bin")) | Where-Object { $_ }) -join ';'
           & $installedBin --version
           $installProject = Join-Path $installRoot "install-project"
-          & $installedBin new $installProject
-          $env:CXX = $clang
+          & $installedBin new $installProject --template cli
+          Remove-Item Env:CXX -ErrorAction SilentlyContinue
           $env:PATH = (($systemPaths + (Join-Path $installRoot "prefix/bin") + $clangDir) | Where-Object { $_ }) -join ';'
+          Set-Content -Path (Join-Path $installRoot "install-input.txt") -Value 'install-cli'
           Push-Location $installRoot
-          & $installedBin run $installProject --run-gate none
+          & $installedBin run $installProject --run-gate none -- install-input.txt install-output.txt
           Pop-Location
+          if ((Get-Content -Path (Join-Path $installRoot "install-output.txt") -Raw) -ne ((Get-Content -Path (Join-Path $installRoot "install-input.txt") -Raw))) {
+            throw "installed cli smoke output mismatch"
+          }
+          $installDep = Join-Path $installRoot "install-dep"
+          New-Item -ItemType Directory -Path (Join-Path $installDep "src") -Force | Out-Null
+          Set-Content -Path (Join-Path $installDep "nebula.toml") -Value @'
+          schema_version = 1
+
+          [package]
+          name = "dep"
+          version = "0.1.0"
+          entry = "src/lib.nb"
+          src_dir = "src"
+          '@
+          Set-Content -Path (Join-Path $installDep "src/lib.nb") -Value @'
+          module lib
+
+          fn lib_value() -> Int {
+            return 7
+          }
+          '@
+          Set-Content -Path (Join-Path $installProject "src/main.nb") -Value @'
+          module main
+          import dep::lib
+
+          fn main() -> Void {
+            if lib_value() == 7 {
+              print("git-ok")
+            } else {
+              print("git-bad")
+            }
+          }
+          '@
+          git init $installDep | Out-Null
+          git -C $installDep config user.email tests@example.com
+          git -C $installDep config user.name "Nebula Release"
+          git -C $installDep add .
+          git -C $installDep commit -m init | Out-Null
+          & $installedBin add $installProject dep --git $installDep --rev HEAD
+          & $installedBin fetch $installProject
+          Push-Location $installRoot
+          $installGitRun = & $installedBin run $installProject --run-gate none
+          Pop-Location
+          if ($installGitRun -notmatch 'git-ok') { throw "installed git dependency smoke failed" }
+
+      - name: Generate Release SBOM (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: msys2 {0}
+        run: |
+          python3 scripts/generate_release_sbom.py \
+            --staged-root "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}" \
+            --artifact "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}" \
+            --output "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.spdx.json" \
+            --base-url "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}"
+
+      - name: Attest Release Archive
+        id: attest-archive
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}
+
+      - name: Save Archive Attestation (Unix)
+        if: matrix.shell_kind == 'unix'
+        run: |
+          cp "${{ steps.attest-archive.outputs.bundle-path }}" \
+            "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.provenance.intoto.jsonl"
+
+      - name: Save Archive Attestation (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: pwsh
+        run: |
+          Copy-Item -Path "${{ steps.attest-archive.outputs.bundle-path }}" `
+            -Destination "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.provenance.intoto.jsonl"
+
+      - name: Attest Release SBOM
+        id: attest-sbom
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}
+          sbom-path: dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.spdx.json
+
+      - name: Save SBOM Attestation (Unix)
+        if: matrix.shell_kind == 'unix'
+        run: |
+          cp "${{ steps.attest-sbom.outputs.bundle-path }}" \
+            "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.sbom.intoto.jsonl"
+
+      - name: Attest Backend SDK Archive (Linux)
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        id: attest-backend-sdk-archive
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz
+
+      - name: Save Backend SDK Archive Attestation (Linux)
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        run: |
+          cp "${{ steps.attest-backend-sdk-archive.outputs.bundle-path }}" \
+            "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.provenance.intoto.jsonl"
+
+      - name: Attest Backend SDK SBOM (Linux)
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        id: attest-backend-sdk-sbom
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz
+          sbom-path: dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json
+
+      - name: Save Backend SDK SBOM Attestation (Linux)
+        if: matrix.shell_kind == 'unix' && matrix.target == 'linux-x86_64'
+        run: |
+          cp "${{ steps.attest-backend-sdk-sbom.outputs.bundle-path }}" \
+            "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.sbom.intoto.jsonl"
+
+      - name: Save SBOM Attestation (MSYS2)
+        if: matrix.shell_kind == 'msys2'
+        shell: pwsh
+        run: |
+          Copy-Item -Path "${{ steps.attest-sbom.outputs.bundle-path }}" `
+            -Destination "dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.sbom.intoto.jsonl"
 
       - name: Upload Release Asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-asset-${{ matrix.target }}
-          path: dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}
+          path: |
+            dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.asset_suffix }}
+            dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.spdx.json
+            dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.provenance.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-${{ matrix.stage_suffix }}.sbom.intoto.jsonl
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.provenance.intoto.jsonl
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.sbom.intoto.jsonl
 
   assemble-release:
     needs: [meta, build-assets]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
       - name: Download Platform Assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-asset-*
           merge-multiple: true
@@ -242,19 +557,110 @@ jobs:
             --base-url "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}" \
             --require-all on
 
+      - name: Attest Release Checksums
+        id: attest-checksums
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/SHA256SUMS.txt
+
+      - name: Save Release Checksums Attestation
+        run: |
+          cp "${{ steps.attest-checksums.outputs.bundle-path }}" \
+            "dist/SHA256SUMS.txt.intoto.jsonl"
+
+      - name: Refresh Release Manifest With Integrity Artifacts
+        run: |
+          python3 scripts/generate_release_manifest.py \
+            --artifact-dir dist \
+            --checksums-out dist/SHA256SUMS.txt \
+            --manifest-out dist/release-manifest.json \
+            --base-url "https://github.com/${{ needs.meta.outputs.repository }}/releases/download/v${{ needs.meta.outputs.version }}" \
+            --require-all on
+
+      - name: Verify Attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh --version
+          repo="${{ needs.meta.outputs.repository }}"
+          signer="${{ needs.meta.outputs.repository }}/.github/workflows/release.yml"
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.tar.gz" --repo "$repo" --signer-workflow "$signer"
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.tar.gz" --repo "$repo" --signer-workflow "$signer" --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.tar.gz" --repo "$repo" --signer-workflow "$signer"
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.tar.gz" --repo "$repo" --signer-workflow "$signer" --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz" --repo "$repo" --signer-workflow "$signer"
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz" --repo "$repo" --signer-workflow "$signer" --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.zip" --repo "$repo" --signer-workflow "$signer"
+          gh attestation verify "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.zip" --repo "$repo" --signer-workflow "$signer" --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz" --repo "$repo" --signer-workflow "$signer"
+          gh attestation verify "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz" --repo "$repo" --signer-workflow "$signer" --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify dist/SHA256SUMS.txt --repo "$repo" --signer-workflow "$signer"
+
+      - name: Installer Strong Verification Smoke
+        run: |
+          command -v clang++ >/dev/null
+          install_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nebula-install-verify.XXXXXX")"
+          unset CXX
+          bash scripts/install.sh \
+            --verify-attestations \
+            --version "${{ needs.meta.outputs.version }}" \
+            --prefix "$install_root/prefix" \
+            --base-url "$PWD/dist"
+          installed_bin="$install_root/prefix/bin/nebula"
+          test -f "$install_root/prefix/share/nebula/std/fs.nb"
+          "$installed_bin" --version
+          "$installed_bin" new "$install_root/smoke-app" --template cli
+          printf 'verify-cli\n' > "$install_root/verify-input.txt"
+          (cd "$install_root" && "$installed_bin" run smoke-app --run-gate none -- verify-input.txt verify-output.txt)
+          cmp "$install_root/verify-input.txt" "$install_root/verify-output.txt"
+
+      - name: Backend SDK Installer Strong Verification Smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/verify_linux_backend_ga_hardening.sh \
+            --dist-dir dist \
+            --version "${{ needs.meta.outputs.version }}" \
+            --verify-attestations
+
+      - name: Prune Staged Trees From Final Bundle
+        run: |
+          rm -rf \
+            "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64" \
+            "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64" \
+            "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64" \
+            "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64"
+
       - name: Validate Required Release Files
         run: |
           test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.tar.gz"
           test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.tar.gz"
           test -f "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz"
           test -f "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.zip"
+          test -f "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.spdx.json"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.spdx.json"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.spdx.json"
+          test -f "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json"
           test -f dist/SHA256SUMS.txt
+          test -f dist/SHA256SUMS.txt.intoto.jsonl
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.provenance.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.sbom.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.provenance.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.sbom.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.provenance.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.sbom.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.provenance.intoto.jsonl"
+          test -f "dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.sbom.intoto.jsonl"
+          test -f "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.provenance.intoto.jsonl"
+          test -f "dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.sbom.intoto.jsonl"
           test -f dist/release-manifest.json
           test -f dist/nebula.rb
           test -f "dist/${{ needs.meta.outputs.notes }}"
 
       - name: Upload Release Bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-bundle
           path: dist
@@ -268,15 +674,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
       - name: Download Release Bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-bundle
           path: release-bundle
@@ -307,15 +713,17 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [meta, assemble-release, homebrew-smoke]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download Release Bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-bundle
           path: dist
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.meta.outputs.version }}
           name: Nebula v${{ needs.meta.outputs.version }}
@@ -325,6 +733,23 @@ jobs:
             dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.tar.gz
             dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz
             dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.zip
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.tar.gz
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.spdx.json
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.spdx.json
+            dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json
+            dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.spdx.json
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.spdx.json
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.provenance.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-x86_64.sbom.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.provenance.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-darwin-arm64.sbom.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.provenance.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-linux-x86_64.sbom.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.provenance.intoto.jsonl
+            dist/nebula-v${{ needs.meta.outputs.version }}-windows-x86_64.sbom.intoto.jsonl
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.provenance.intoto.jsonl
+            dist/nebula-backend-sdk-v${{ needs.meta.outputs.version }}-linux-x86_64.sbom.intoto.jsonl
             dist/SHA256SUMS.txt
+            dist/SHA256SUMS.txt.intoto.jsonl
             dist/release-manifest.json
             dist/nebula.rb

@@ -1,0 +1,13 @@
+id = "TST-163-official-service-config-env-overrides"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport os\nfrom pathlib import Path\nimport subprocess\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nroot = Path('work/official_service_config_env')\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('''schema_version = 1\\n\\n[package]\\nname = \"official-service-config-env\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nservice = { path = \"''' + str(repo_root / 'official' / 'nebula-service') + '''\" }\\n''', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('''module main\\nimport service::config\\nimport std::result\\n\\nfn main() -> Void {\\n  match config_from_env(\"svc-config-env\", 40499) {\\n    Ok(cfg) => {\\n      if cfg.bind_host == \"0.0.0.0\" &&\\n         cfg.port == 0 &&\\n         cfg.max_header_bytes == 16384 &&\\n         cfg.max_body_bytes == 2048 &&\\n         cfg.request_timeout_ms == 4500 &&\\n         cfg.handler_timeout_ms == 2300 &&\\n         cfg.write_timeout_ms == 1200 &&\\n         cfg.header_policy.request_id_header_name == \"X-Correlation-Id\" &&\\n         cfg.header_policy.trust_request_id_header == false &&\\n         cfg.header_policy.max_request_id_bytes == 32 {\\n        print(\"service-config-env-ok\")\\n      } else {\\n        print(\"service-config-env-bad\")\\n      }\\n    }\\n    Err(msg) => { print(msg) }\\n  }\\n}\\n''', encoding='utf-8')\nupdate = subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], capture_output=True, text=True, env=os.environ.copy())\nprint(update.stdout, end='')\nprint(update.stderr, end='')\nraise SystemExit(update.returncode)\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "NEBULA_BIND_HOST=0.0.0.0 NEBULA_PORT=0 NEBULA_MAX_HEADER_BYTES=16384 NEBULA_MAX_BODY_BYTES=2048 NEBULA_REQUEST_TIMEOUT_MS=4500 NEBULA_HANDLER_TIMEOUT_MS=2300 NEBULA_WRITE_TIMEOUT_MS=1200 NEBULA_REQUEST_ID_HEADER=X-Correlation-Id NEBULA_TRUST_REQUEST_ID_HEADER=false NEBULA_REQUEST_ID_MAX_BYTES=32 \"$NEBULA_BINARY\" run work/official_service_config_env --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["service-config-env-ok"]

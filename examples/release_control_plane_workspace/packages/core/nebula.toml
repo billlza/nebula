@@ -1,0 +1,11 @@
+schema_version = 1
+
+[package]
+name = "release-control-plane-core"
+version = "0.1.0"
+entry = "src/lib.nb"
+src_dir = "src"
+host_cxx = ["host.cpp"]
+
+[dependencies]
+jobs_pkg = { path = "../../../../official/nebula-jobs" }

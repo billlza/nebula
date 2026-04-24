@@ -1,0 +1,89 @@
+id = "TST-223-new-control-plane-workspace-template-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/control_plane_workspace_template')
+shutil.rmtree(root, ignore_errors=True)
+subprocess.run([binary, 'new', str(root), '--template', 'control-plane-workspace'], check=True)
+service_manifest = (root / 'apps' / 'service' / 'nebula.toml').read_text(encoding='utf-8')
+ctl_manifest = (root / 'apps' / 'ctl' / 'nebula.toml').read_text(encoding='utf-8')
+readme = (root / 'README.md').read_text(encoding='utf-8')
+if 'installed = "nebula-db-sqlite"' not in service_manifest:
+    raise SystemExit('control-plane-workspace service manifest did not switch db_sqlite to installed-preview')
+if '../../../../official/nebula-tls' in ctl_manifest:
+    raise SystemExit('control-plane-workspace ctl manifest still contains the repo-relative preview tls path')
+if '../../../../official/nebula-crypto' in service_manifest or '../../../../official/nebula-crypto' in ctl_manifest:
+    raise SystemExit('control-plane-workspace manifests still contain the repo-relative preview crypto path')
+if '../../../../official/nebula-db-postgres' in service_manifest:
+    raise SystemExit('control-plane-workspace service manifest still contains the repo-relative preview postgres path')
+if 'release-control-plane.db' not in readme:
+    raise SystemExit('control-plane-workspace README did not scaffold the expected release-state contract')
+if 'preview installed `nebula-db-sqlite` package' not in readme:
+    raise SystemExit('control-plane-workspace README did not render the installed-preview db wording')
+for fragment in [
+    'APP_READ_TOKEN_FILE',
+    'deploy/systemd/release-control-plane.service',
+    'deploy/systemd/release-control-plane.tmpfiles.conf',
+    'deploy/logrotate/release-control-plane.observe',
+    'deploy/nginx/release-control-plane.conf',
+    'deploy/container/Dockerfile.runtime',
+    'deploy/k8s/README.md',
+    'single-replica SQLite +',
+    'mounted-secret contract',
+]:
+    if fragment not in readme:
+        raise SystemExit(f'control-plane-workspace README missing fragment: {fragment!r}')
+expected_assets = [
+    root / 'deploy' / 'README.md',
+    root / 'deploy' / 'operations' / 'README.md',
+    root / 'deploy' / 'systemd' / 'release-control-plane.service',
+    root / 'deploy' / 'systemd' / 'release-control-plane.env.example',
+    root / 'deploy' / 'systemd' / 'release-control-plane.tmpfiles.conf',
+    root / 'deploy' / 'logrotate' / 'release-control-plane.observe',
+    root / 'deploy' / 'caddy' / 'Caddyfile',
+    root / 'deploy' / 'nginx' / 'release-control-plane.conf',
+    root / 'deploy' / 'container' / 'README.md',
+    root / 'deploy' / 'container' / 'Dockerfile.runtime',
+    root / 'deploy' / 'k8s' / 'README.md',
+    root / 'deploy' / 'k8s' / 'namespace.yaml',
+    root / 'deploy' / 'k8s' / 'configmap.yaml',
+    root / 'deploy' / 'k8s' / 'secret.example.yaml',
+    root / 'deploy' / 'k8s' / 'persistentvolumeclaim.yaml',
+    root / 'deploy' / 'k8s' / 'statefulset.yaml',
+    root / 'deploy' / 'k8s' / 'service.yaml',
+    root / 'deploy' / 'k8s' / 'ingress-nginx.yaml',
+    root / 'deploy' / 'secrets' / 'README.md',
+    root / 'deploy' / 'secrets' / '.gitignore',
+]
+missing_assets = [str(path) for path in expected_assets if not path.exists()]
+if missing_assets:
+    raise SystemExit(f'control-plane-workspace template missing deploy assets: {missing_assets!r}')
+subprocess.run([binary, 'fetch', str(root)], check=True)
+lock_text = (root / 'nebula.lock').read_text(encoding='utf-8')
+if 'name = "nebula-db-sqlite"' not in lock_text or 'name = "nebula-tls"' not in lock_text:
+    raise SystemExit('control-plane-workspace lockfile did not record db/tls dependencies')
+blocks = [block for block in lock_text.split("\n[[package]]\n") if block.strip()]
+if not any('name = "nebula-db-sqlite"' in block and 'source_kind = "installed"' in block for block in blocks):
+    raise SystemExit('control-plane-workspace lockfile did not record installed-preview nebula-db-sqlite')
+if not any('name = "nebula-tls"' in block and 'source_kind = "path"' in block for block in blocks):
+    raise SystemExit('control-plane-workspace lockfile did not keep nebula-tls on repo-preview path wiring')
+subprocess.run([binary, 'check', str(root)], check=True)
+run = subprocess.run([binary, 'run', str(root), '--run-gate', 'none', '--', 'control-plane-validate'], capture_output=True, text=True)
+if run.returncode != 0 or 'base_url=http://127.0.0.1:40480' not in run.stdout:
+    print(run.stdout, end='')
+    print(run.stderr, end='')
+    raise SystemExit('control-plane-workspace root run did not hit the CLI validation path')
+print('control-plane-workspace-template-ok')
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["control-plane-workspace-template-ok"]

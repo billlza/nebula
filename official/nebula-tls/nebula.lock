@@ -1,0 +1,25 @@
+schema_version = 2
+root_package = "nebula-tls"
+root_manifest_hash = "d591c03097380a62"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "nebula-tls"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "d591c03097380a62"
+source_fingerprint = "e664fb8fbfd6cd1d"
+integrity_fingerprint = "b4290d5714da5c34"
+is_root = 1
+native_c_sources = ["native/vendor/mbedtls/library/aes.c", "native/vendor/mbedtls/library/asn1parse.c", "native/vendor/mbedtls/library/asn1write.c", "native/vendor/mbedtls/library/base64.c", "native/vendor/mbedtls/library/bignum.c", "native/vendor/mbedtls/library/bignum_core.c", "native/vendor/mbedtls/library/bignum_mod.c", "native/vendor/mbedtls/library/bignum_mod_raw.c", "native/vendor/mbedtls/library/cipher.c", "native/vendor/mbedtls/library/cipher_wrap.c", "native/vendor/mbedtls/library/constant_time.c", "native/vendor/mbedtls/library/ctr_drbg.c", "native/vendor/mbedtls/library/ecdh.c", "native/vendor/mbedtls/library/ecdsa.c", "native/vendor/mbedtls/library/ecp.c", "native/vendor/mbedtls/library/ecp_curves.c", "native/vendor/mbedtls/library/ecp_curves_new.c", "native/vendor/mbedtls/library/entropy.c", "native/vendor/mbedtls/library/entropy_poll.c", "native/vendor/mbedtls/library/error.c", "native/vendor/mbedtls/library/gcm.c", "native/vendor/mbedtls/library/md.c", "native/vendor/mbedtls/library/oid.c", "native/vendor/mbedtls/library/pem.c", "native/vendor/mbedtls/library/pk.c", "native/vendor/mbedtls/library/pk_ecc.c", "native/vendor/mbedtls/library/pk_wrap.c", "native/vendor/mbedtls/library/pkparse.c", "native/vendor/mbedtls/library/platform.c", "native/vendor/mbedtls/library/platform_util.c", "native/vendor/mbedtls/library/psa_util.c", "native/vendor/mbedtls/library/rsa.c", "native/vendor/mbedtls/library/rsa_alt_helpers.c", "native/vendor/mbedtls/library/sha1.c", "native/vendor/mbedtls/library/sha256.c", "native/vendor/mbedtls/library/sha512.c", "native/vendor/mbedtls/library/ssl_cache.c", "native/vendor/mbedtls/library/ssl_ciphersuites.c", "native/vendor/mbedtls/library/ssl_client.c", "native/vendor/mbedtls/library/ssl_debug_helpers_generated.c", "native/vendor/mbedtls/library/ssl_msg.c", "native/vendor/mbedtls/library/ssl_ticket.c", "native/vendor/mbedtls/library/ssl_tls.c", "native/vendor/mbedtls/library/ssl_tls12_client.c", "native/vendor/mbedtls/library/ssl_tls12_server.c", "native/vendor/mbedtls/library/ssl_tls13_client.c", "native/vendor/mbedtls/library/ssl_tls13_generic.c", "native/vendor/mbedtls/library/ssl_tls13_keys.c", "native/vendor/mbedtls/library/ssl_tls13_server.c", "native/vendor/mbedtls/library/x509.c", "native/vendor/mbedtls/library/x509_crt.c"]
+native_cxx_sources = ["native/bridge.cpp"]
+native_include_dirs = ["native/include", "native/vendor/mbedtls/include", "native/vendor/mbedtls/library"]
+native_defines = ["MBEDTLS_SSL_ALPN"]
+dependencies = []

@@ -1,0 +1,21 @@
+module workflow_payload_store
+import db
+import std::json
+import std::result
+import store
+
+fn workflow_payload_store_path() -> String {
+  return release_store_path()
+}
+
+fn workflow_payload_migrations() -> Json {
+  let builder = array_builder()
+  let create_payloads_sql = "CREATE TABLE IF NOT EXISTS workflow_stage_result_payloads (run_id INTEGER NOT NULL, stage_index INTEGER NOT NULL, result_payload TEXT NOT NULL, PRIMARY KEY (run_id, stage_index))"
+  return array_build(array_push(builder, migration(14, "create_workflow_stage_result_payloads", create_payloads_sql)))
+}
+
+fn initialize_workflow_payload_store() -> Result<Bool, String> {
+  let conn = open(workflow_payload_store_path())?
+  conn.run_migrations(workflow_payload_migrations())?
+  return Ok(true)
+}

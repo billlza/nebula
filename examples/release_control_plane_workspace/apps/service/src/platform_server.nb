@@ -1,0 +1,43 @@
+module platform_server
+import auth
+import core::policy
+import core::platform_contracts
+import service::context
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+
+fn platform_capabilities_path() -> String {
+  return "/v1/platform/capabilities"
+}
+
+fn is_platform_route(request: Request) -> Bool {
+  return path_matches(platform_capabilities_path(), request)
+}
+
+fn platform_method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn platform_capabilities_response(ctx: RequestContext) -> Result<Response, String> {
+  let envelope = PlatformCapabilityEnvelope(platform_capabilities_json(), ctx.request_id_text, unix_millis())
+  validate_platform_capability_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+async fn handle_platform_capabilities_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, platform_read_permission(), handle_platform_capabilities_route_inner)
+}
+
+async fn handle_platform_capabilities_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return platform_capabilities_response(ctx)
+}
+
+async fn handle_platform_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if method_matches(Get, request.method) {
+    return await handle_platform_capabilities_route(ctx, request)
+  }
+  return platform_method_not_allowed()
+}

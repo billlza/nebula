@@ -1,0 +1,138 @@
+module kem
+import crypto::hash
+import crypto::pqc.kem
+import std::json
+import std::result
+
+struct MlKem768CiphertextEnvelope {
+  format_version: Int
+  kem_algorithm: String
+  ciphertext_hex: String
+}
+
+struct MlKem768WireEncapsulation {
+  envelope: MlKem768CiphertextEnvelope
+  shared_secret: MlKem768SharedSecret
+}
+
+fn ml_kem_768_envelope_format_version() -> Int {
+  return 1
+}
+
+fn ml_kem_768_envelope_algorithm() -> String {
+  return "ml-kem-768"
+}
+
+fn ml_kem_768_ciphertext_envelope(ciphertext: MlKem768Ciphertext) -> MlKem768CiphertextEnvelope {
+  return MlKem768CiphertextEnvelope(
+    ml_kem_768_envelope_format_version(),
+    ml_kem_768_envelope_algorithm(),
+    hex(ciphertext.to_bytes())
+  )
+}
+
+fn encapsulate_wire(public_key: MlKem768PublicKey) -> Result<MlKem768WireEncapsulation, String> {
+  match encapsulate(public_key) {
+    Ok(encapsulation) => {
+      return Ok(MlKem768WireEncapsulation(
+        ml_kem_768_ciphertext_envelope(encapsulation.ciphertext()),
+        encapsulation.shared_secret()
+      ))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn MlKem768CiphertextEnvelope_format_version(self: MlKem768CiphertextEnvelope) -> Int {
+  return self.format_version
+}
+
+fn MlKem768CiphertextEnvelope_kem_algorithm(self: MlKem768CiphertextEnvelope) -> String {
+  return self.kem_algorithm
+}
+
+fn MlKem768CiphertextEnvelope_ciphertext_hex(self: MlKem768CiphertextEnvelope) -> String {
+  return self.ciphertext_hex
+}
+
+fn MlKem768CiphertextEnvelope_as_json(self: MlKem768CiphertextEnvelope) -> Json {
+  return object3(
+    "format_version",
+    int_value(self.format_version),
+    "kem_algorithm",
+    string_value(self.kem_algorithm),
+    "ciphertext_hex",
+    string_value(self.ciphertext_hex)
+  )
+}
+
+fn ml_kem_768_ciphertext_envelope_from_json(value: Json) -> Result<MlKem768CiphertextEnvelope, String> {
+  match get_int(value, "format_version") {
+    Ok(format_version) => {
+      match get_string(value, "kem_algorithm") {
+        Ok(kem_algorithm) => {
+          match get_string(value, "ciphertext_hex") {
+            Ok(ciphertext_hex) => {
+              return Ok(MlKem768CiphertextEnvelope(format_version, kem_algorithm, ciphertext_hex))
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn ml_kem_768_ciphertext_envelope_from_json_text(text: String) -> Result<MlKem768CiphertextEnvelope, String> {
+  match parse(text) {
+    Ok(value) => {
+      return ml_kem_768_ciphertext_envelope_from_json(value)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn MlKem768WireEncapsulation_envelope(self: MlKem768WireEncapsulation) -> MlKem768CiphertextEnvelope {
+  return self.envelope
+}
+
+fn MlKem768WireEncapsulation_shared_secret(self: MlKem768WireEncapsulation) -> MlKem768SharedSecret {
+  return self.shared_secret
+}
+
+fn decapsulate_wire(secret_key: MlKem768SecretKey,
+                    envelope: MlKem768CiphertextEnvelope) -> Result<MlKem768SharedSecret, String> {
+  if envelope.format_version != ml_kem_768_envelope_format_version() {
+    return Err("unsupported ml_kem_768 envelope format_version")
+  }
+  if envelope.kem_algorithm != ml_kem_768_envelope_algorithm() {
+    return Err("unsupported ml_kem_768 envelope kem_algorithm")
+  }
+  match from_hex(envelope.ciphertext_hex) {
+    Ok(ciphertext_bytes) => {
+      match ml_kem_768_ciphertext_from_bytes(ciphertext_bytes) {
+        Ok(ciphertext) => {
+          return decapsulate(secret_key, ciphertext)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}

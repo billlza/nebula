@@ -1,0 +1,96 @@
+id = "TST-213-example-cli-service-workspace-config-persistence-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_config_persistence')
+state_dir = root / 'state'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+
+proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+base_url = f'http://127.0.0.1:{port}'
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    first_put = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'alpha', '--string', 'one', '--description', 'alpha entry', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(first_put, 'first config put')
+    first_payload = json.loads(first_put.stdout)
+    first_updated = first_payload['entry']['meta']['updated_unix_ms']
+    first_revision = first_payload['entry']['revision_id']
+
+    time.sleep(0.01)
+    second_put = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'alpha', '--string', 'two', '--description', 'alpha updated', '--if-match', str(first_revision), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(second_put, 'second config put')
+    second_payload = json.loads(second_put.stdout)
+    second_updated = second_payload['entry']['meta']['updated_unix_ms']
+    second_revision = second_payload['entry']['revision_id']
+    if second_updated < first_updated:
+        raise SystemExit(f'expected upsert timestamp to stay monotonic: {first_updated} -> {second_updated}')
+    if second_revision <= first_revision:
+        raise SystemExit(f'expected revision_id to advance: {first_revision} -> {second_revision}')
+
+    beta_put = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'beta', '--int', '7', '--description', 'beta entry', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(beta_put, 'beta config put')
+    beta_payload = json.loads(beta_put.stdout)
+    beta_revision = beta_payload['entry']['revision_id']
+finally:
+    terminate_process(proc)
+
+proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+base_url = f'http://127.0.0.1:{port}'
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+
+    alpha_get = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--key', 'alpha', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(alpha_get, 'config get after restart')
+    alpha_payload = json.loads(alpha_get.stdout)
+    alpha_entry = alpha_payload['entry']
+    if alpha_entry.get('description') != 'alpha updated' or alpha_entry.get('value', {}).get('kind') != 'string' or alpha_entry.get('value', {}).get('string_value') != 'two' or alpha_entry.get('revision_id') != second_revision:
+        print_completed(alpha_get)
+        raise SystemExit(f'config get after restart returned stale payload: {alpha_payload!r}')
+
+    list_result = run_ctl(binary, root, 'config', 'list', '--project', 'proj', '--env', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(list_result, 'config list after restart')
+    list_payload = json.loads(list_result.stdout)
+    entries = list_payload.get('entries', [])
+    keys = [entry.get('key') for entry in entries]
+    if keys != ['alpha', 'beta']:
+        print_completed(list_result)
+        raise SystemExit(f'config list order mismatch after restart: {keys!r}')
+    if entries[0].get('value', {}).get('string_value') != 'two' or entries[0].get('revision_id') != second_revision or entries[1].get('value', {}).get('int_value') != 7 or entries[1].get('revision_id') != beta_revision:
+        print_completed(list_result)
+        raise SystemExit(f'config list payload mismatch after restart: {list_payload!r}')
+
+    print('example-cli-service-workspace-config-persistence-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-config-persistence-ok"]

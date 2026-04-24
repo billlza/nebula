@@ -1,0 +1,19 @@
+module mac
+import std::bytes
+import std::result
+
+extern fn __nebula_crypto_hmac_sha256_hex(key: String, data: Bytes) -> Result<String, String>
+extern fn __nebula_crypto_constant_time_equal_text(lhs: String, rhs: String) -> Bool
+
+fn hmac_sha256_hex(key: String, data: Bytes) -> Result<String, String> {
+  return __nebula_crypto_hmac_sha256_hex(key, data)
+}
+
+fn constant_time_equal_text(lhs: String, rhs: String) -> Bool {
+  return __nebula_crypto_constant_time_equal_text(lhs, rhs)
+}
+
+fn verify_hmac_sha256_hex(key: String, data: Bytes, expected_hex: String) -> Result<Bool, String> {
+  let actual = hmac_sha256_hex(key, data)?
+  return Ok(constant_time_equal_text(actual, expected_hex))
+}

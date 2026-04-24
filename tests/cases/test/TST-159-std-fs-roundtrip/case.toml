@@ -1,0 +1,25 @@
+id = "TST-159-std-fs-roundtrip"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/fs_roundtrip/src"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cat > work/fs_roundtrip/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"fs-roundtrip\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\nEOF\ncat > work/fs_roundtrip/src/main.nb <<'EOF'\nmodule main\nimport std::bytes\nimport std::fs\n\nfn main() -> Int {\n  let root = \"work/fs_roundtrip/runtime\"\n  let nested = \"work/fs_roundtrip/runtime/nested\"\n  let text_path = \"work/fs_roundtrip/runtime/nested/hello.txt\"\n  let bytes_path = \"work/fs_roundtrip/runtime/nested/data.bin\"\n  let copy_path = \"work/fs_roundtrip/runtime/nested/data-copy.bin\"\n  match create_dir_all(nested) {\n    Ok(_) => {}\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match is_dir(root) {\n    Ok(value) => {\n      if value == false {\n        print(\"root-not-dir\")\n        return 1\n      }\n    }\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match write_string(text_path, \"nebula-fs\") {\n    Ok(_) => {}\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match write_bytes(bytes_path, from_string(\"bytes-123\")) {\n    Ok(_) => {}\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match exists(text_path) {\n    Ok(value) => {\n      if value == false {\n        print(\"text-missing\")\n        return 1\n      }\n    }\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match is_file(text_path) {\n    Ok(value) => {\n      if value == false {\n        print(\"text-not-file\")\n        return 1\n      }\n    }\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match read_string(text_path) {\n    Ok(text) => {\n      if text != \"nebula-fs\" {\n        print(\"text-bad\")\n        return 1\n      }\n    }\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match read_bytes(bytes_path) {\n    Ok(data) => {\n      if to_string(data) != \"bytes-123\" {\n        print(\"bytes-bad\")\n        return 1\n      }\n      match write_bytes(copy_path, data) {\n        Ok(_) => {}\n        Err(msg) => {\n          print(msg)\n          return 1\n        }\n      }\n    }\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  match exists(\"work/fs_roundtrip/runtime/missing.txt\") {\n    Ok(value) => {\n      if value {\n        print(\"missing-exists-bad\")\n        return 1\n      }\n    }\n    Err(msg) => {\n      print(msg)\n      return 1\n    }\n  }\n  print(\"fs-roundtrip-ok\")\n  return 0\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/fs_roundtrip"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["fs-roundtrip-ok"]
+
+[[steps]]
+kind = "shell"
+run = "cmp work/fs_roundtrip/runtime/nested/data.bin work/fs_roundtrip/runtime/nested/data-copy.bin"
+expect_rc = 0

@@ -1,0 +1,855 @@
+module server
+import auth
+import broker_outbox_server
+import config_server
+import core::app
+import core::contracts
+import core::policy
+import core::validate
+import service::context
+import service::errors
+import service::health
+import service::middleware
+import platform_server
+import schedule_server
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+import store
+import webhook_server
+import workflow_server
+import workflow_store
+
+fn app_profile() -> String {
+  return "linux-backend-ga"
+}
+
+fn route_info_path() -> String {
+  return "/v1/info"
+}
+
+fn route_whoami_path() -> String {
+  return "/v1/auth/whoami"
+}
+
+fn release_list_pattern() -> String {
+  return "/v1/releases/:app"
+}
+
+fn release_item_pattern() -> String {
+  return "/v1/releases/:app/:channel"
+}
+
+fn approval_pattern() -> String {
+  return "/v1/releases/:app/:channel/approval"
+}
+
+fn audit_pattern() -> String {
+  return "/v1/releases/:app/:channel/audit"
+}
+
+fn apply_pattern() -> String {
+  return "/v1/releases/:app/:channel/apply"
+}
+
+fn runner_apply_once_path() -> String {
+  return "/v1/runner/apply-once"
+}
+
+fn method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn is_builtin_route(request: Request) -> Bool {
+  return path_matches("/healthz", request) ||
+         path_matches("/readyz", request) ||
+         path_matches(route_info_path(), request) ||
+         path_matches(route_whoami_path(), request)
+}
+
+fn is_release_route(request: Request) -> Bool {
+  return path_matches(release_item_pattern(), request) ||
+         path_matches(release_list_pattern(), request) ||
+         path_matches(approval_pattern(), request) ||
+         path_matches(audit_pattern(), request) ||
+         path_matches(apply_pattern(), request)
+}
+
+fn is_runner_route(request: Request) -> Bool {
+  return path_matches(runner_apply_once_path(), request)
+}
+
+fn ensure_release_permission_scope(ctx: RequestContext,
+                                   permission: String,
+                                   app_name: String,
+                                   channel: String) -> Result<Bool, Response> {
+  return require_permission_scope(ctx, permission, app_name, channel)
+}
+
+async fn handle_builtin_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches("/healthz", request) {
+    if method_matches(Get, request.method) {
+      return await handle_health_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches("/readyz", request) {
+    if method_matches(Get, request.method) {
+      return await handle_ready_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches(route_info_path(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_info_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_whoami_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_approval_route_dispatch(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if method_matches(Get, request.method) {
+    return await handle_approval_get_route(ctx, request)
+  }
+  if method_matches(Put, request.method) {
+    return await handle_approval_put_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_audit_route_dispatch(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if method_matches(Get, request.method) {
+    return await handle_audit_list_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_release_apply_route_dispatch(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if method_matches(Post, request.method) {
+    return await handle_release_apply_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_release_state_route_dispatch(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(release_item_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_release_get_route(ctx, request)
+    }
+    if method_matches(Put, request.method) {
+      return await handle_release_put_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_release_list_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_release_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(approval_pattern(), request) {
+    return await handle_approval_route_dispatch(ctx, request)
+  }
+  if path_matches(audit_pattern(), request) {
+    return await handle_audit_route_dispatch(ctx, request)
+  }
+  if path_matches(apply_pattern(), request) {
+    return await handle_release_apply_route_dispatch(ctx, request)
+  }
+  return await handle_release_state_route_dispatch(ctx, request)
+}
+
+async fn handle_runner_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if method_matches(Post, request.method) {
+    return await handle_runner_apply_once_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if is_builtin_route(request) {
+    return await handle_builtin_route(ctx, request)
+  }
+  if is_config_route(request) {
+    return await handle_config_route(ctx, request)
+  }
+  if is_workflow_route(request) {
+    return await handle_workflow_route(ctx, request)
+  }
+  if is_schedule_route(request) {
+    return await handle_schedule_route(ctx, request)
+  }
+  if is_broker_outbox_route(request) {
+    return await handle_broker_outbox_route(ctx, request)
+  }
+  if is_webhook_route(request) {
+    return await handle_webhook_route(ctx, request)
+  }
+  if is_platform_route(request) {
+    return await handle_platform_route(ctx, request)
+  }
+  if is_worker_route(request) {
+    return await handle_worker_route(ctx, request)
+  }
+  if is_release_route(request) {
+    return await handle_release_route(ctx, request)
+  }
+  if is_runner_route(request) {
+    return await handle_runner_route(ctx, request)
+  }
+  return Ok(not_found_text("not found"))
+}
+
+async fn handle_health_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(live_response_with_context(ctx))
+}
+
+async fn handle_ready_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if ctx.is_draining() {
+    return Ok(draining_response_with_context(ctx))
+  }
+  return Ok(ready_response_with_context(ctx))
+}
+
+async fn handle_info_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let info = ServiceInfo(
+    service_name(),
+    service_version(),
+    app_profile(),
+    ctx.request_id_text,
+    unix_millis()
+  )
+  return Ok(ok_json(info.as_json()))
+}
+
+fn invalid_release_request(ctx: RequestContext, code: String, message: String) -> Result<Response, String> {
+  return Ok(for_request(400, ctx, code, message))
+}
+
+fn missing_release_entry(ctx: RequestContext, app_name: String, channel: String) -> Result<Response, String> {
+  let target = text_concat3(app_name, "/", channel)
+  return Ok(for_request(404, ctx, "release_not_found", text_concat("release state not found: ", target)))
+}
+
+fn if_match_header_missing_text() -> String {
+  return "HTTP header not found: If-Match"
+}
+
+fn require_revision_id(revision_id: Int) -> Result<Int, String> {
+  if revision_id < 0 {
+    return Err("If-Match must be a non-negative revision id")
+  }
+  return Ok(revision_id)
+}
+
+fn parse_if_match_value(raw: String) -> Result<Int, String> {
+  let parsed = parse(raw)?
+  match as_int(parsed) {
+    Ok(revision_id) => {
+      return require_revision_id(revision_id)
+    }
+    Err(_) => {
+      match as_string(parsed) {
+        Ok(inner_text) => {
+          let inner = parse(inner_text)?
+          let revision_id = as_int(inner)?
+          return require_revision_id(revision_id)
+        }
+        Err(_) => {
+          return Err("If-Match must be a revision id integer")
+        }
+      }
+    }
+  }
+}
+
+fn if_match_revision(request: Request) -> Result<Int, String> {
+  match header_value_unique(request, "If-Match") {
+    Ok(value) => {
+      return parse_if_match_value(value)
+    }
+    Err(msg) => {
+      if msg == if_match_header_missing_text() {
+        return Ok(-1)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+fn precondition_required(ctx: RequestContext, current_revision_id: Int) -> Result<Response, String> {
+  let message = text_concat("If-Match required; current revision_id=", int_text(current_revision_id))
+  return Ok(for_request(428, ctx, "release_precondition_required", message))
+}
+
+fn revision_conflict(ctx: RequestContext,
+                     expected_revision_id: Int,
+                     current_revision_id: Int) -> Result<Response, String> {
+  let message = text_concat3("If-Match mismatch: expected revision_id=",
+                             int_text(expected_revision_id),
+                             text_concat(" current revision_id=", int_text(current_revision_id)))
+  return Ok(for_request(412, ctx, "release_revision_mismatch", message))
+}
+
+fn release_not_approved(ctx: RequestContext, decision: ApprovalDecision) -> Result<Response, String> {
+  let message = text_concat("release approval state: ", decision.decision)
+  return Ok(for_request(409, ctx, "release_not_approved", message))
+}
+
+fn apply_run_conflict(ctx: RequestContext, code: String, run: ApplyRun) -> Result<Response, String> {
+  let message = text_concat("run_id=", int_text(run.run_id))
+  return Ok(for_request(409, ctx, code, message))
+}
+
+fn entry_etag(entry: ReleaseEntry) -> String {
+  return stringify(string_value(int_text(entry.revision_id)))
+}
+
+fn release_entry_response(ctx: RequestContext, entry: ReleaseEntry) -> Result<Response, String> {
+  validate_release_entry(entry)?
+  let envelope = ReleaseEntryEnvelope(entry, ctx.request_id_text, unix_millis())
+  validate_release_entry_envelope(envelope)?
+  return ok_json_with_etag(envelope.as_json(), entry_etag(entry))
+}
+
+fn release_list_response(ctx: RequestContext, app_name: String, releases: Json) -> Result<Response, String> {
+  let envelope = ReleaseListEnvelope(app_name, releases, ctx.request_id_text, unix_millis())
+  validate_release_list_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn approval_decision_response(ctx: RequestContext, decision: ApprovalDecision) -> Result<Response, String> {
+  validate_approval_decision(decision)?
+  let envelope = ApprovalDecisionEnvelope(decision, ctx.request_id_text, unix_millis())
+  validate_approval_decision_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn apply_run_response(ctx: RequestContext, run: ApplyRun) -> Result<Response, String> {
+  validate_apply_run(run)?
+  let envelope = ApplyRunEnvelope(run, ctx.request_id_text, unix_millis())
+  validate_apply_run_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn apply_runner_once_response(ctx: RequestContext, outcome: String, run: ApplyRun) -> Result<Response, String> {
+  validate_apply_run(run)?
+  let envelope = ApplyRunnerOnceEnvelope(outcome, run, ctx.request_id_text, unix_millis())
+  validate_apply_runner_once_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn audit_list_response(ctx: RequestContext, app_name: String, channel: String, events: Json) -> Result<Response, String> {
+  let envelope = AuditListEnvelope(app_name, channel, events, ctx.request_id_text, unix_millis())
+  validate_audit_list_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn release_put_request_from_http(ctx: RequestContext, request: Request) -> Result<ReleasePutRequest, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match release_put_request_from_json(payload) {
+        Ok(put_request) => {
+          match validate_release_put_request(put_request) {
+            Ok(_) => {
+              return Ok(put_request)
+            }
+            Err(msg) => {
+              return Err(for_request(400, ctx, "invalid_release_request", msg))
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_release_request", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn approval_decision_request_from_http(ctx: RequestContext, request: Request) -> Result<ApprovalDecisionRequest, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match approval_decision_request_from_json(payload) {
+        Ok(value) => {
+          match validate_approval_decision_request(value) {
+            Ok(_) => {
+              return Ok(value)
+            }
+            Err(msg) => {
+              return Err(for_request(400, ctx, "invalid_approval_request", msg))
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_approval_request", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn applied_release_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let entry_json = get_value(outcome, "entry")?
+  let entry = release_entry_from_json(entry_json)?
+  return release_entry_response(ctx, entry)
+}
+
+fn precondition_release_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let current_revision_id = get_int(outcome, "current_revision_id")?
+  return precondition_required(ctx, current_revision_id)
+}
+
+fn conflict_release_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let expected_revision_id = get_int(outcome, "expected_revision_id")?
+  let current_revision_id = get_int(outcome, "current_revision_id")?
+  return revision_conflict(ctx, expected_revision_id, current_revision_id)
+}
+
+fn config_snapshot_release_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let requested_config_revision = get_int(outcome, "requested_config_revision")?
+  let current_config_snapshot_revision = get_int(outcome, "current_config_snapshot_revision")?
+  let message = text_concat3("release config_revision must reference an existing config snapshot revision for this app/channel: requested=",
+                             int_text(requested_config_revision),
+                             text_concat(" current_snapshot=", int_text(current_config_snapshot_revision)))
+  return Ok(for_request(409, ctx, "release_config_snapshot_invalid", message))
+}
+
+fn release_put_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  if kind == "applied" {
+    return applied_release_outcome_response(ctx, outcome)
+  }
+  if kind == "precondition_required" {
+    return precondition_release_outcome_response(ctx, outcome)
+  }
+  if kind == "conflict" {
+    return conflict_release_outcome_response(ctx, outcome)
+  }
+  if kind == "config_snapshot_mismatch" {
+    return config_snapshot_release_outcome_response(ctx, outcome)
+  }
+  return Err("unexpected release put outcome")
+}
+
+fn approval_put_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  if kind == "applied" {
+    let decision_json = get_value(outcome, "decision")?
+    let decision = approval_decision_from_json(decision_json)?
+    return approval_decision_response(ctx, decision)
+  }
+  if kind == "precondition_required" {
+    return precondition_release_outcome_response(ctx, outcome)
+  }
+  if kind == "conflict" {
+    return conflict_release_outcome_response(ctx, outcome)
+  }
+  return Err("unexpected approval put outcome")
+}
+
+fn queued_apply_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let run_json = get_value(outcome, "run")?
+  let run = apply_run_from_json(run_json)?
+  return apply_run_response(ctx, run)
+}
+
+fn not_approved_apply_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let decision_json = get_value(outcome, "decision")?
+  let decision = approval_decision_from_json(decision_json)?
+  return release_not_approved(ctx, decision)
+}
+
+fn inflight_apply_outcome_response(ctx: RequestContext, outcome: Json, code: String) -> Result<Response, String> {
+  let run_json = get_value(outcome, "run")?
+  let run = apply_run_from_json(run_json)?
+  return apply_run_conflict(ctx, code, run)
+}
+
+fn release_apply_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  if kind == "queued" {
+    return queued_apply_outcome_response(ctx, outcome)
+  }
+  if kind == "precondition_required" {
+    return precondition_release_outcome_response(ctx, outcome)
+  }
+  if kind == "conflict" {
+    return conflict_release_outcome_response(ctx, outcome)
+  }
+  if kind == "not_approved" {
+    return not_approved_apply_outcome_response(ctx, outcome)
+  }
+  if kind == "already_inflight" || kind == "already_applied" {
+    return inflight_apply_outcome_response(ctx, outcome, text_concat("release_apply_", kind))
+  }
+  return Err("unexpected release apply outcome")
+}
+
+fn runner_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  let run_json = get_value(outcome, "run")?
+  let run = apply_run_from_json(run_json)?
+  if kind == "idle" {
+    return apply_runner_once_response(ctx, "idle", run)
+  }
+  if kind == "processed" {
+    return apply_runner_once_response(ctx, "processed", run)
+  }
+  return Err("unexpected runner outcome")
+}
+
+fn invalid_release_identity_response(ctx: RequestContext, message: String) -> Result<ReleaseIdentityFields, Response> {
+  return Err(for_request(400, ctx, "invalid_release_identity", message))
+}
+
+fn validated_release_identity(ctx: RequestContext, app_name: String, channel: String) -> Result<ReleaseIdentityFields, Response> {
+  match validate_app_segment(app_name) {
+    Ok(_) => {}
+    Err(msg) => {
+      return invalid_release_identity_response(ctx, msg)
+    }
+  }
+  match validate_channel_segment(channel) {
+    Ok(_) => {
+      return Ok(ReleaseIdentityFields(app_name, channel))
+    }
+    Err(msg) => {
+      return invalid_release_identity_response(ctx, msg)
+    }
+  }
+}
+
+fn release_identity_from_pattern(ctx: RequestContext,
+                                 request: Request,
+                                 pattern: String) -> Result<ReleaseIdentityFields, Response> {
+  match route_params2(pattern, request) {
+    Ok(params) => {
+      return validated_release_identity(ctx, params.first, params.second)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_release_route", msg))
+    }
+  }
+}
+
+fn release_identity_from_request(ctx: RequestContext, request: Request) -> Result<ReleaseIdentityFields, Response> {
+  return release_identity_from_pattern(ctx, request, release_item_pattern())
+}
+
+fn release_expected_revision_from_request(ctx: RequestContext, request: Request) -> Result<Int, Response> {
+  match if_match_revision(request) {
+    Ok(revision_id) => {
+      return Ok(revision_id)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_if_match", msg))
+    }
+  }
+}
+
+struct ReleaseMutationInput {
+  identity: ReleaseIdentityFields
+  expected_revision_id: Int
+}
+
+struct ReleasePutRouteInput {
+  mutation: ReleaseMutationInput
+  put_request: ReleasePutRequest
+}
+
+struct ApprovalPutRouteInput {
+  mutation: ReleaseMutationInput
+  approval_request: ApprovalDecisionRequest
+}
+
+fn release_mutation_input_from_pattern(ctx: RequestContext,
+                                       request: Request,
+                                       pattern: String) -> Result<ReleaseMutationInput, Response> {
+  let identity = release_identity_from_pattern(ctx, request, pattern)?
+  let expected_revision_id = release_expected_revision_from_request(ctx, request)?
+  return Ok(ReleaseMutationInput(identity, expected_revision_id))
+}
+
+fn release_mutation_input_from_request(ctx: RequestContext,
+                                       request: Request) -> Result<ReleaseMutationInput, Response> {
+  return release_mutation_input_from_pattern(ctx, request, release_item_pattern())
+}
+
+fn release_put_route_input_from_request(ctx: RequestContext, request: Request) -> Result<ReleasePutRouteInput, Response> {
+  let mutation = release_mutation_input_from_request(ctx, request)?
+  let put_request = release_put_request_from_http(ctx, request)?
+  return Ok(ReleasePutRouteInput(mutation, put_request))
+}
+
+fn approval_put_route_input_from_request(ctx: RequestContext, request: Request) -> Result<ApprovalPutRouteInput, Response> {
+  let mutation = release_mutation_input_from_pattern(ctx, request, approval_pattern())?
+  let approval_request = approval_decision_request_from_http(ctx, request)?
+  return Ok(ApprovalPutRouteInput(mutation, approval_request))
+}
+
+fn post_release_put_outcome(mutation: ReleaseMutationInput, updated_by: String, outcome: Json) -> Result<Bool, String> {
+  if get_string(outcome, "kind")? == "applied" {
+    ensure_default_workflow_definition(mutation.identity.app, mutation.identity.channel, updated_by)?
+  }
+  return Ok(true)
+}
+
+fn post_approval_put_outcome(outcome: Json) -> Result<Bool, String> {
+  if get_string(outcome, "kind")? == "applied" {
+    let decision = approval_decision_from_json(get_value(outcome, "decision")?)?
+    reconcile_workflow_runs_for_release(decision.app, decision.channel, decision.release_revision_id)?
+  }
+  return Ok(true)
+}
+
+async fn handle_whoami_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, identity_read_permission(), handle_whoami_route_inner)
+}
+
+async fn handle_whoami_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return whoami_response(ctx)
+}
+
+async fn handle_release_list_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_release_list_route_authorized)
+}
+
+async fn handle_release_list_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, release_read_permission(), handle_release_list_route_inner)
+}
+
+async fn handle_release_list_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match route_param1(release_list_pattern(), request) {
+    Ok(app_name) => {
+      match validate_app_segment(app_name) {
+        Ok(_) => {
+          match ensure_release_permission_scope(ctx, release_read_permission(), app_name, "") {
+            Ok(_) => {}
+            Err(response) => { return Ok(response) }
+          }
+          let releases = load_release_entries(app_name)?
+          return release_list_response(ctx, app_name, releases)
+        }
+        Err(msg) => {
+          return invalid_release_request(ctx, "invalid_release_app", msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return invalid_release_request(ctx, "invalid_release_route", msg)
+    }
+  }
+}
+
+async fn handle_release_get_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_release_get_route_authorized)
+}
+
+async fn handle_release_get_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, release_read_permission(), handle_release_get_route_inner)
+}
+
+async fn handle_release_get_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match release_identity_from_request(ctx, request) {
+    Ok(identity) => {
+      match ensure_release_permission_scope(ctx, release_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_release_entry(identity.app, identity.channel) {
+        Ok(entry) => {
+          return release_entry_response(ctx, entry)
+        }
+        Err(msg) => {
+          if msg == "release state not found" {
+            return missing_release_entry(ctx, identity.app, identity.channel)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_release_put_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_release_put_route_authorized)
+}
+
+async fn handle_release_put_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, release_write_permission(), handle_release_put_route_inner)
+}
+
+async fn handle_release_put_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let updated_by = updated_by_actor(ctx)?
+  match release_put_route_input_from_request(ctx, request) {
+    Ok(input) => {
+      match ensure_release_permission_scope(ctx,
+                                            release_write_permission(),
+                                            input.mutation.identity.app,
+                                            input.mutation.identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      let outcome = write_release_entry(input.mutation.identity.app,
+                                        input.mutation.identity.channel,
+                                        input.put_request,
+                                        input.mutation.expected_revision_id,
+                                        updated_by)?
+      post_release_put_outcome(input.mutation, updated_by, outcome)?
+      return release_put_outcome_response(ctx, outcome)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_approval_get_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_approval_get_route_authorized)
+}
+
+async fn handle_approval_get_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, approval_read_permission(), handle_approval_get_route_inner)
+}
+
+async fn handle_approval_get_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match release_identity_from_pattern(ctx, request, approval_pattern()) {
+    Ok(identity) => {
+      match ensure_release_permission_scope(ctx, approval_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_approval_decision(identity.app, identity.channel) {
+        Ok(decision) => {
+          return approval_decision_response(ctx, decision)
+        }
+        Err(msg) => {
+          if msg == "release state not found" {
+            return missing_release_entry(ctx, identity.app, identity.channel)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_approval_put_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_approval_put_route_authorized)
+}
+
+async fn handle_approval_put_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, approval_decide_permission(), handle_approval_put_route_inner)
+}
+
+async fn handle_approval_put_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let decided_by = updated_by_actor(ctx)?
+  match approval_put_route_input_from_request(ctx, request) {
+    Ok(input) => {
+      match ensure_release_permission_scope(ctx,
+                                            approval_decide_permission(),
+                                            input.mutation.identity.app,
+                                            input.mutation.identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      let outcome = write_approval_decision(input.mutation.identity.app,
+                                            input.mutation.identity.channel,
+                                            input.approval_request,
+                                            input.mutation.expected_revision_id,
+                                            decided_by)?
+      post_approval_put_outcome(outcome)?
+      return approval_put_outcome_response(ctx, outcome)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_audit_list_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_audit_list_route_authorized)
+}
+
+async fn handle_audit_list_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, audit_read_permission(), handle_audit_list_route_inner)
+}
+
+async fn handle_audit_list_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match release_identity_from_pattern(ctx, request, audit_pattern()) {
+    Ok(identity) => {
+      match ensure_release_permission_scope(ctx, audit_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      let events = load_audit_events(identity.app, identity.channel)?
+      return audit_list_response(ctx, identity.app, identity.channel, events)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_release_apply_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_release_apply_route_authorized)
+}
+
+async fn handle_release_apply_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, release_apply_permission(), handle_release_apply_route_inner)
+}
+
+async fn handle_release_apply_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let requested_by = updated_by_actor(ctx)?
+  let mutation = ReleaseMutationInput(ReleaseIdentityFields("", ""), -1)
+  match release_mutation_input_from_pattern(ctx, request, apply_pattern()) {
+    Ok(value) => {
+      mutation = value
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match ensure_release_permission_scope(ctx, release_apply_permission(), mutation.identity.app, mutation.identity.channel) {
+    Ok(_) => {}
+    Err(response) => { return Ok(response) }
+  }
+  let outcome = request_release_apply_workflow(mutation.identity.app,
+                                               mutation.identity.channel,
+                                               mutation.expected_revision_id,
+                                               requested_by)?
+  return release_apply_outcome_response(ctx, outcome)
+}
+
+async fn handle_runner_apply_once_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_runner_apply_once_route_authorized)
+}
+
+async fn handle_runner_apply_once_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, ops_run_apply_once_permission(), handle_runner_apply_once_route_inner)
+}
+
+async fn handle_runner_apply_once_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let outcome = run_apply_once_via_workflow()?
+  return apply_runner_once_response(ctx, outcome.outcome, outcome.run)
+}

@@ -1,0 +1,590 @@
+module config_server
+import auth
+import config_store
+import core::config_contracts
+import core::config_validate
+import core::policy
+import core::validate
+import service::context
+import service::errors
+import service::middleware
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+
+struct ConfigMutationInput {
+  identity: ConfigIdentityFields
+  expected_revision_id: Int
+}
+
+struct ConfigPutInput {
+  mutation: ConfigMutationInput
+  put_request: ConfigPutRequest
+}
+
+fn config_list_pattern() -> String {
+  return "/v1/configs/:app/:channel"
+}
+
+fn config_item_pattern() -> String {
+  return "/v1/configs/:app/:channel/:key"
+}
+
+fn config_history_pattern() -> String {
+  return "/v1/configs/:app/:channel/:key/history"
+}
+
+fn config_snapshot_pattern() -> String {
+  return "/v1/configs/:app/:channel/snapshots/:config_revision"
+}
+
+fn is_config_route(request: Request) -> Bool {
+  return path_matches(config_item_pattern(), request) ||
+         path_matches(config_list_pattern(), request) ||
+         path_matches(config_snapshot_pattern(), request) ||
+         path_matches(config_history_pattern(), request)
+}
+
+fn config_method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn validate_config_scope(app_name: String, channel: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  return Ok(true)
+}
+
+fn validate_config_identity(app_name: String, channel: String, key: String) -> Result<Bool, String> {
+  validate_config_scope(app_name, channel)?
+  validate_config_key_segment(key)?
+  return Ok(true)
+}
+
+fn ensure_config_permission_scope(ctx: RequestContext,
+                                  permission: String,
+                                  app_name: String,
+                                  channel: String) -> Result<Bool, Response> {
+  return require_permission_scope(ctx, permission, app_name, channel)
+}
+
+fn invalid_config_request(ctx: RequestContext, code: String, message: String) -> Result<Response, String> {
+  return Ok(for_request(400, ctx, code, message))
+}
+
+fn missing_config_entry(ctx: RequestContext, app_name: String, channel: String, key: String) -> Result<Response, String> {
+  let target = text_concat3(app_name, "/", text_concat(channel, text_concat("/", key)))
+  return Ok(for_request(404, ctx, "config_not_found", text_concat("config entry not found: ", target)))
+}
+
+fn missing_config_snapshot(ctx: RequestContext,
+                           app_name: String,
+                           channel: String,
+                           snapshot_revision_id: Int) -> Result<Response, String> {
+  let target = text_concat3(app_name,
+                            "/",
+                            text_concat(channel, text_concat("@", int_text(snapshot_revision_id))))
+  return Ok(for_request(404, ctx, "config_snapshot_not_found", text_concat("config snapshot not found: ", target)))
+}
+
+fn config_if_match_header_missing_text() -> String {
+  return "HTTP header not found: If-Match"
+}
+
+fn config_require_revision_id(revision_id: Int) -> Result<Int, String> {
+  if revision_id < 0 {
+    return Err("If-Match must be a non-negative revision id")
+  }
+  return Ok(revision_id)
+}
+
+fn config_parse_if_match_value(raw: String) -> Result<Int, String> {
+  let parsed = parse(raw)?
+  match as_int(parsed) {
+    Ok(revision_id) => {
+      return config_require_revision_id(revision_id)
+    }
+    Err(_) => {
+      match as_string(parsed) {
+        Ok(inner_text) => {
+          let inner = parse(inner_text)?
+          let revision_id = as_int(inner)?
+          return config_require_revision_id(revision_id)
+        }
+        Err(_) => {
+          return Err("If-Match must be a revision id integer")
+        }
+      }
+    }
+  }
+}
+
+fn config_expected_revision_from_request(ctx: RequestContext, request: Request) -> Result<Int, Response> {
+  match header_value_unique(request, "If-Match") {
+    Ok(value) => {
+      match config_parse_if_match_value(value) {
+        Ok(expected_revision_id) => {
+          return Ok(expected_revision_id)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_if_match", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      if msg == config_if_match_header_missing_text() {
+        return Ok(-1)
+      }
+      return Err(for_request(400, ctx, "invalid_if_match", msg))
+    }
+  }
+}
+
+fn config_precondition_required(ctx: RequestContext, current_revision_id: Int) -> Result<Response, String> {
+  let message = text_concat("If-Match required; current revision_id=", int_text(current_revision_id))
+  return Ok(for_request(428, ctx, "config_precondition_required", message))
+}
+
+fn config_revision_conflict(ctx: RequestContext,
+                            expected_revision_id: Int,
+                            current_revision_id: Int) -> Result<Response, String> {
+  let message = text_concat3("If-Match mismatch: expected revision_id=",
+                             int_text(expected_revision_id),
+                             text_concat(" current revision_id=", int_text(current_revision_id)))
+  return Ok(for_request(412, ctx, "config_revision_mismatch", message))
+}
+
+fn outcome_kind(outcome: Json) -> Result<String, String> {
+  return get_string(outcome, "kind")
+}
+
+fn config_entry_etag(entry: ConfigEntry) -> String {
+  return stringify(string_value(int_text(entry.revision_id)))
+}
+
+fn config_entry_response(ctx: RequestContext, entry: ConfigEntry) -> Result<Response, String> {
+  validate_config_entry(entry)?
+  let envelope = ConfigEntryEnvelope(entry, ctx.request_id_text, unix_millis())
+  validate_config_entry_envelope(envelope)?
+  return ok_json_with_etag(envelope.as_json(), config_entry_etag(entry))
+}
+
+fn config_delete_response(ctx: RequestContext,
+                          app_name: String,
+                          channel: String,
+                          key: String,
+                          deleted_revision_id: Int) -> Result<Response, String> {
+  let envelope = ConfigDeleteEnvelope(app_name,
+                                      channel,
+                                      key,
+                                      true,
+                                      deleted_revision_id,
+                                      ctx.request_id_text,
+                                      unix_millis())
+  validate_config_delete_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn config_list_response(ctx: RequestContext,
+                        app_name: String,
+                        channel: String,
+                        snapshot_revision_id: Int,
+                        entries: Json) -> Result<Response, String> {
+  let envelope = ConfigListEnvelope(app_name,
+                                    channel,
+                                    snapshot_revision_id,
+                                    entries,
+                                    ctx.request_id_text,
+                                    unix_millis())
+  validate_config_list_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn config_history_response(ctx: RequestContext,
+                           app_name: String,
+                           channel: String,
+                           key: String,
+                           revisions: Json) -> Result<Response, String> {
+  let envelope = ConfigHistoryEnvelope(app_name, channel, key, revisions, ctx.request_id_text, unix_millis())
+  validate_config_history_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn config_precondition_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let current_revision_id = get_int(outcome, "current_revision_id")?
+  return config_precondition_required(ctx, current_revision_id)
+}
+
+fn config_conflict_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let expected_revision_id = get_int(outcome, "expected_revision_id")?
+  let current_revision_id = get_int(outcome, "current_revision_id")?
+  return config_revision_conflict(ctx, expected_revision_id, current_revision_id)
+}
+
+fn config_put_applied_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let entry_json = get_value(outcome, "entry")?
+  let entry = config_entry_from_json(entry_json)?
+  return config_entry_response(ctx, entry)
+}
+
+fn config_put_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = outcome_kind(outcome)?
+  if kind == "applied" {
+    return config_put_applied_response(ctx, outcome)
+  }
+  if kind == "precondition_required" {
+    return config_precondition_outcome_response(ctx, outcome)
+  }
+  if kind == "conflict" {
+    return config_conflict_outcome_response(ctx, outcome)
+  }
+  return Err("unexpected config put outcome")
+}
+
+fn config_deleted_outcome_response(ctx: RequestContext,
+                                   app_name: String,
+                                   channel: String,
+                                   key: String,
+                                   outcome: Json) -> Result<Response, String> {
+  let deleted_revision_id = get_int(outcome, "deleted_revision_id")?
+  return config_delete_response(ctx, app_name, channel, key, deleted_revision_id)
+}
+
+fn config_delete_outcome_response(ctx: RequestContext,
+                                  app_name: String,
+                                  channel: String,
+                                  key: String,
+                                  outcome: Json) -> Result<Response, String> {
+  let kind = outcome_kind(outcome)?
+  if kind == "not_found" {
+    return missing_config_entry(ctx, app_name, channel, key)
+  }
+  if kind == "precondition_required" {
+    return config_precondition_outcome_response(ctx, outcome)
+  }
+  if kind == "conflict" {
+    return config_conflict_outcome_response(ctx, outcome)
+  }
+  if kind == "deleted" {
+    return config_deleted_outcome_response(ctx, app_name, channel, key, outcome)
+  }
+  return Err("unexpected config delete outcome")
+}
+
+fn config_item_identity_from_request(ctx: RequestContext,
+                                     request: Request,
+                                     pattern: String) -> Result<ConfigIdentityFields, Response> {
+  match route_params3(pattern, request) {
+    Ok(params) => {
+      match validate_config_identity(params.first, params.second, params.third) {
+        Ok(_) => {
+          return Ok(ConfigIdentityFields(params.first, params.second, params.third))
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_config_identity", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_config_route", msg))
+    }
+  }
+}
+
+fn config_put_request_from_http(ctx: RequestContext, request: Request) -> Result<ConfigPutRequest, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match config_put_request_from_json(payload) {
+        Ok(put_request) => {
+          match validate_config_put_request(put_request) {
+            Ok(_) => {
+              return Ok(put_request)
+            }
+            Err(msg) => {
+              return Err(for_request(400, ctx, "invalid_config_value", msg))
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_config_request", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn config_mutation_input_from_request(ctx: RequestContext,
+                                      request: Request,
+                                      pattern: String) -> Result<ConfigMutationInput, Response> {
+  let identity = config_item_identity_from_request(ctx, request, pattern)?
+  let expected_revision_id = config_expected_revision_from_request(ctx, request)?
+  return Ok(ConfigMutationInput(identity, expected_revision_id))
+}
+
+fn config_snapshot_revision_from_text(text: String) -> Result<Int, String> {
+  let parsed = parse(text)?
+  let snapshot_revision_id = as_int(parsed)?
+  if snapshot_revision_id < 0 {
+    return Err("config snapshot revision must be a non-negative integer")
+  }
+  return Ok(snapshot_revision_id)
+}
+
+struct ConfigSnapshotInput {
+  app: String
+  channel: String
+  snapshot_revision_id: Int
+}
+
+fn config_snapshot_input_from_request(ctx: RequestContext, request: Request) -> Result<ConfigSnapshotInput, Response> {
+  match route_params3(config_snapshot_pattern(), request) {
+    Ok(params) => {
+      match validate_config_scope(params.first, params.second) {
+        Ok(_) => {
+          match config_snapshot_revision_from_text(params.third) {
+            Ok(snapshot_revision_id) => {
+              return Ok(ConfigSnapshotInput(params.first, params.second, snapshot_revision_id))
+            }
+            Err(msg) => {
+              return Err(for_request(400, ctx, "invalid_config_snapshot_revision", msg))
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_config_scope", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_config_route", msg))
+    }
+  }
+}
+
+fn config_put_input_from_request(ctx: RequestContext, request: Request) -> Result<ConfigPutInput, Response> {
+  let mutation = config_mutation_input_from_request(ctx, request, config_item_pattern())?
+  match ensure_config_permission_scope(ctx, config_write_permission(), mutation.identity.app, mutation.identity.channel) {
+    Ok(_) => {}
+    Err(response) => { return Err(response) }
+  }
+  let put_request = config_put_request_from_http(ctx, request)?
+  return Ok(ConfigPutInput(mutation, put_request))
+}
+
+async fn handle_config_list_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_config_list_route_authorized)
+}
+
+async fn handle_config_list_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, config_read_permission(), handle_config_list_route_inner)
+}
+
+async fn handle_config_list_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match route_params2(config_list_pattern(), request) {
+    Ok(params) => {
+      match validate_config_scope(params.first, params.second) {
+        Ok(_) => {
+          match ensure_config_permission_scope(ctx, config_read_permission(), params.first, params.second) {
+            Ok(_) => {}
+            Err(response) => { return Ok(response) }
+          }
+          let state = load_config_list_state(params.first, params.second)?
+          return config_list_response(ctx, params.first, params.second, state.snapshot_revision_id, state.entries)
+        }
+        Err(msg) => {
+          return invalid_config_request(ctx, "invalid_config_scope", msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return invalid_config_request(ctx, "invalid_config_route", msg)
+    }
+  }
+}
+
+async fn handle_config_get_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_config_get_route_authorized)
+}
+
+async fn handle_config_get_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, config_read_permission(), handle_config_get_route_inner)
+}
+
+async fn handle_config_get_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match config_item_identity_from_request(ctx, request, config_item_pattern()) {
+    Ok(identity) => {
+      match ensure_config_permission_scope(ctx, config_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_config_entry(identity.app, identity.channel, identity.key) {
+        Ok(entry) => {
+          return config_entry_response(ctx, entry)
+        }
+        Err(msg) => {
+          if msg == "config entry not found" {
+            return missing_config_entry(ctx, identity.app, identity.channel, identity.key)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_config_history_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_config_history_route_authorized)
+}
+
+async fn handle_config_history_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, config_read_permission(), handle_config_history_route_inner)
+}
+
+async fn handle_config_history_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match config_item_identity_from_request(ctx, request, config_history_pattern()) {
+    Ok(identity) => {
+      match ensure_config_permission_scope(ctx, config_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      let revisions = load_config_history(identity.app, identity.channel, identity.key)?
+      return config_history_response(ctx, identity.app, identity.channel, identity.key, revisions)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_config_snapshot_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_config_snapshot_route_authorized)
+}
+
+async fn handle_config_snapshot_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, config_read_permission(), handle_config_snapshot_route_inner)
+}
+
+async fn handle_config_snapshot_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match config_snapshot_input_from_request(ctx, request) {
+    Ok(input) => {
+      match ensure_config_permission_scope(ctx, config_read_permission(), input.app, input.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_config_snapshot_state(input.app, input.channel, input.snapshot_revision_id) {
+        Ok(state) => {
+          return config_list_response(ctx, input.app, input.channel, state.snapshot_revision_id, state.entries)
+        }
+        Err(msg) => {
+          if msg == "config snapshot not found" {
+            return missing_config_snapshot(ctx, input.app, input.channel, input.snapshot_revision_id)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_config_put_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_config_put_route_authorized)
+}
+
+async fn handle_config_put_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, config_write_permission(), handle_config_put_route_inner)
+}
+
+async fn handle_config_put_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let updated_by = updated_by_actor(ctx)?
+  match config_put_input_from_request(ctx, request) {
+    Ok(input) => {
+      let outcome = write_config_entry(input.mutation.identity.app,
+                                       input.mutation.identity.channel,
+                                       input.mutation.identity.key,
+                                       input.put_request,
+                                       input.mutation.expected_revision_id,
+                                       updated_by)?
+      return config_put_outcome_response(ctx, outcome)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_config_delete_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_config_delete_route_authorized)
+}
+
+async fn handle_config_delete_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, config_delete_permission(), handle_config_delete_route_inner)
+}
+
+async fn handle_config_delete_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let updated_by = updated_by_actor(ctx)?
+  let mutation = ConfigMutationInput(ConfigIdentityFields("", "", ""), -1)
+  match config_mutation_input_from_request(ctx, request, config_item_pattern()) {
+    Ok(value) => {
+      mutation = value
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match ensure_config_permission_scope(ctx, config_delete_permission(), mutation.identity.app, mutation.identity.channel) {
+    Ok(_) => {}
+    Err(response) => { return Ok(response) }
+  }
+  let outcome = delete_config_entry(mutation.identity.app,
+                                    mutation.identity.channel,
+                                    mutation.identity.key,
+                                    mutation.expected_revision_id,
+                                    updated_by)?
+  return config_delete_outcome_response(ctx,
+                                        mutation.identity.app,
+                                        mutation.identity.channel,
+                                        mutation.identity.key,
+                                        outcome)
+}
+
+async fn handle_config_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(config_snapshot_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_config_snapshot_route(ctx, request)
+    }
+    return config_method_not_allowed()
+  }
+  if path_matches(config_history_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_config_history_route(ctx, request)
+    }
+    return config_method_not_allowed()
+  }
+  if path_matches(config_item_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_config_get_route(ctx, request)
+    }
+    if method_matches(Put, request.method) {
+      return await handle_config_put_route(ctx, request)
+    }
+    if method_matches(Delete, request.method) {
+      return await handle_config_delete_route(ctx, request)
+    }
+    return config_method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_config_list_route(ctx, request)
+  }
+  return config_method_not_allowed()
+}

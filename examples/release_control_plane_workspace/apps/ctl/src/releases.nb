@@ -1,0 +1,376 @@
+module releases
+import args
+import client
+import config
+import core::contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn release_list_path(app_name: String) -> String {
+  return text_concat("/v1/releases/", app_name)
+}
+
+fn release_item_path(app_name: String, channel: String) -> String {
+  return text_concat3(release_list_path(app_name), "/", channel)
+}
+
+fn release_apply_path(app_name: String, channel: String) -> String {
+  return text_concat(release_item_path(app_name, channel), "/apply")
+}
+
+fn release_target(app_name: String, channel: String) -> String {
+  return text_concat3(app_name, "/", channel)
+}
+
+fn release_revision_etag(revision_id: Int) -> String {
+  return stringify(string_value(int_text(revision_id)))
+}
+
+fn validate_release_entry_etag(etag: String, entry: ReleaseEntry) -> Result<Bool, String> {
+  let expected = release_revision_etag(entry.revision_id)
+  if etag == "" {
+    return Err("missing ETag on release entry response")
+  }
+  if etag != expected {
+    let detail = text_concat("ETag/body revision mismatch: expected ", expected)
+    return Err(text_concat(detail, text_concat(" got ", etag)))
+  }
+  return Ok(true)
+}
+
+fn print_release_entry_details(entry: ReleaseEntry) -> Void {
+  print(text_concat("app=", entry.app))
+  print(text_concat("channel=", entry.channel))
+  print(text_concat("version=", entry.version))
+  print(text_concat("config_revision=", int_text(entry.config_revision)))
+  print(text_concat("description=", entry.description))
+  print(text_concat("revision_id=", int_text(entry.revision_id)))
+  print(text_concat("updated_by=", entry.updated_by))
+  print(text_concat("updated_unix_ms=", int_text(entry.updated_unix_ms)))
+}
+
+fn print_release_list_entry(entry_json: Json) -> Result<Bool, String> {
+  let entry = release_entry_from_json(entry_json)?
+  validate_release_entry(entry)?
+  let line = text_concat("channel=", entry.channel)
+  line = text_concat(line, text_concat(" version=", entry.version))
+  line = text_concat(line, text_concat(" config_revision=", int_text(entry.config_revision)))
+  line = text_concat(line, text_concat(" revision_id=", int_text(entry.revision_id)))
+  line = text_concat(line, text_concat(" updated_by=", entry.updated_by))
+  line = text_concat(line, text_concat(" updated_unix_ms=", int_text(entry.updated_unix_ms)))
+  print(line)
+  return Ok(true)
+}
+
+fn print_release_list_text(envelope: ReleaseListEnvelope) -> Result<Bool, String> {
+  let count = array_len(envelope.releases)?
+  if count == 0 {
+    print("releases=0")
+    return Ok(true)
+  }
+  let index = 0
+  while index < count {
+    let entry_json = array_get(envelope.releases, index)?
+    print_release_list_entry(entry_json)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn print_apply_run_identity(run: ApplyRun) -> Void {
+  print(text_concat("run_id=", int_text(run.run_id)))
+  print(text_concat("app=", run.app))
+  print(text_concat("channel=", run.channel))
+  print(text_concat("release_revision_id=", int_text(run.release_revision_id)))
+  print(text_concat("status=", run.status))
+}
+
+fn print_apply_run_timing(run: ApplyRun) -> Void {
+  print(text_concat("requested_by=", run.requested_by))
+  print(text_concat("requested_unix_ms=", int_text(run.requested_unix_ms)))
+  print(text_concat("started_unix_ms=", int_text(run.started_unix_ms)))
+  print(text_concat("finished_unix_ms=", int_text(run.finished_unix_ms)))
+  print(text_concat("runner_id=", run.runner_id))
+  print(text_concat("result_message=", run.result_message))
+}
+
+fn print_apply_run_text(run: ApplyRun) -> Void {
+  print_apply_run_identity(run)
+  print_apply_run_timing(run)
+}
+
+fn emit_release_entry_get(envelope: ReleaseEntryEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_release_entry_details(envelope.entry)
+  return 0
+}
+
+fn emit_release_entry_put(envelope: ReleaseEntryEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  let line = text_concat("upserted=", release_target(envelope.entry.app, envelope.entry.channel))
+  print(text_concat(line, text_concat(" revision_id=", int_text(envelope.entry.revision_id))))
+  return 0
+}
+
+fn emit_release_list(envelope: ReleaseListEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match print_release_list_text(envelope) {
+    Ok(_) => {
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn emit_apply_run(envelope: ApplyRunEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_apply_run_text(envelope.run)
+  return 0
+}
+
+fn validate_release_app(parsed: ParsedArgs) -> Result<Bool, String> {
+  validate_app_segment(parsed.app_name)?
+  return Ok(true)
+}
+
+fn validate_release_identity(parsed: ParsedArgs) -> Result<Bool, String> {
+  validate_release_app(parsed)?
+  validate_channel_segment(parsed.channel)?
+  return Ok(true)
+}
+
+fn parse_release_entry_envelope_reply(reply: JsonResponse) -> Result<ReleaseEntryEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = release_entry_envelope_from_json(reply.payload)?
+  validate_release_entry_envelope(envelope)?
+  validate_release_entry_etag(reply.etag, envelope.entry)?
+  return Ok(envelope)
+}
+
+fn parse_release_list_envelope_reply(reply: JsonResponse) -> Result<ReleaseListEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = release_list_envelope_from_json(reply.payload)?
+  validate_release_list_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_apply_run_envelope_reply(reply: JsonResponse) -> Result<ApplyRunEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = apply_run_envelope_from_json(reply.payload)?
+  validate_apply_run_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn print_release_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn build_release_put_request(parsed: ParsedArgs) -> Result<ReleasePutRequest, String> {
+  validate_release_identity(parsed)?
+  let config_revision_value = parse(parsed.config_revision_text)?
+  let config_revision = as_int(config_revision_value)?
+  let request = ReleasePutRequest(parsed.version_text, config_revision, parsed.description)
+  validate_release_put_request(request)?
+  return Ok(request)
+}
+
+fn release_if_match_header_value(parsed: ParsedArgs) -> Result<String, String> {
+  if parsed.if_match_text == "" {
+    return Ok("")
+  }
+  let parsed_revision = parse(parsed.if_match_text)?
+  let revision_id = as_int(parsed_revision)?
+  if revision_id < 0 {
+    return Err("--if-match must be a non-negative integer")
+  }
+  return Ok(release_revision_etag(revision_id))
+}
+
+fn empty_object() -> Result<Json, String> {
+  return parse("{}")
+}
+
+async fn fetch_release_list(base_url: String,
+                            options: ClientOptions,
+                            parsed: ParsedArgs) -> Result<ReleaseListEnvelope, String> {
+  validate_release_app(parsed)?
+  match await get_json(base_url, release_list_path(parsed.app_name), options) {
+    Ok(reply) => {
+      return parse_release_list_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_release_entry(base_url: String,
+                             options: ClientOptions,
+                             parsed: ParsedArgs) -> Result<ReleaseEntryEnvelope, String> {
+  validate_release_identity(parsed)?
+  match await get_json(base_url, release_item_path(parsed.app_name, parsed.channel), options) {
+    Ok(reply) => {
+      return parse_release_entry_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn put_release_entry(base_url: String,
+                           options: ClientOptions,
+                           parsed: ParsedArgs) -> Result<ReleaseEntryEnvelope, String> {
+  let request = build_release_put_request(parsed)?
+  let if_match_value = release_if_match_header_value(parsed)?
+  match await put_json(base_url,
+                       release_item_path(parsed.app_name, parsed.channel),
+                       request.as_json(),
+                       options,
+                       if_match_value) {
+    Ok(reply) => {
+      return parse_release_entry_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn apply_release_entry(base_url: String,
+                             options: ClientOptions,
+                             parsed: ParsedArgs) -> Result<ApplyRunEnvelope, String> {
+  validate_release_identity(parsed)?
+  let if_match_value = release_if_match_header_value(parsed)?
+  let payload = empty_object()?
+  let header_name = "If-Match"
+  match await post_json_with_header(base_url,
+                                    release_apply_path(parsed.app_name, parsed.channel),
+                                    payload,
+                                    options,
+                                    header_name,
+                                    if_match_value) {
+    Ok(reply) => {
+      return parse_apply_run_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn run_release_list_command(base_url: String,
+                                  options: ClientOptions,
+                                  parsed: ParsedArgs) -> Int {
+  match await fetch_release_list(base_url, options, parsed) {
+    Ok(envelope) => {
+      return emit_release_list(envelope, parsed.json_mode)
+    }
+    Err(msg) => {
+      return print_release_error_exit(msg)
+    }
+  }
+}
+
+async fn run_release_get_command(base_url: String,
+                                 options: ClientOptions,
+                                 parsed: ParsedArgs) -> Int {
+  match await fetch_release_entry(base_url, options, parsed) {
+    Ok(envelope) => {
+      return emit_release_entry_get(envelope, parsed.json_mode)
+    }
+    Err(msg) => {
+      return print_release_error_exit(msg)
+    }
+  }
+}
+
+fn release_snapshot_parsed(parsed: ParsedArgs, entry: ReleaseEntry) -> ParsedArgs {
+  let snapshot = with_subcommand(parsed, "snapshot")
+  return with_config_revision_text(snapshot, int_text(entry.config_revision))
+}
+
+async fn run_release_snapshot_command(base_url: String,
+                                      options: ClientOptions,
+                                      parsed: ParsedArgs) -> Int {
+  match await fetch_release_entry(base_url, options, parsed) {
+    Ok(envelope) => {
+      let snapshot_parsed = release_snapshot_parsed(parsed, envelope.entry)
+      return emit_config_list_result(await fetch_config_snapshot(base_url, options, snapshot_parsed),
+                                     parsed.json_mode)
+    }
+    Err(msg) => {
+      return print_release_error_exit(msg)
+    }
+  }
+}
+
+async fn run_release_put_command(base_url: String,
+                                 options: ClientOptions,
+                                 parsed: ParsedArgs) -> Int {
+  match await put_release_entry(base_url, options, parsed) {
+    Ok(envelope) => {
+      return emit_release_entry_put(envelope, parsed.json_mode)
+    }
+    Err(msg) => {
+      return print_release_error_exit(msg)
+    }
+  }
+}
+
+async fn run_release_apply_subcommand(base_url: String,
+                                      options: ClientOptions,
+                                      parsed: ParsedArgs) -> Int {
+  match await apply_release_entry(base_url, options, parsed) {
+    Ok(envelope) => {
+      return emit_apply_run(envelope, parsed.json_mode)
+    }
+    Err(msg) => {
+      return print_release_error_exit(msg)
+    }
+  }
+}
+
+async fn run_release_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand == "list" {
+    return await run_release_list_command(base_url, options, parsed)
+  }
+  if parsed.subcommand == "get" {
+    return await run_release_get_command(base_url, options, parsed)
+  }
+  if parsed.subcommand == "snapshot" {
+    return await run_release_snapshot_command(base_url, options, parsed)
+  }
+  if parsed.subcommand == "put" {
+    return await run_release_put_command(base_url, options, parsed)
+  }
+  if parsed.subcommand == "apply" {
+    return await run_release_apply_subcommand(base_url, options, parsed)
+  }
+  print("unknown release subcommand")
+  return 2
+}

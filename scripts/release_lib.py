@@ -103,6 +103,14 @@ def archive_name(version: str, target: ReleaseTarget) -> str:
     return staging_dir_name(version, target) + target.archive_extension
 
 
+def backend_sdk_stage_name(version: str) -> str:
+    return f"nebula-backend-sdk-v{version}-linux-x86_64"
+
+
+def backend_sdk_archive_name(version: str) -> str:
+    return backend_sdk_stage_name(version) + ".tar.gz"
+
+
 def ensure_supported_target(target_name: str) -> ReleaseTarget:
     if target_name not in SUPPORTED_TARGETS:
         raise SystemExit(f"unsupported release target: {target_name}")

@@ -1,0 +1,13 @@
+id = "TST-170-official-service-limits-preserve-policy"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport os\nfrom pathlib import Path\nimport subprocess\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nroot = Path('work/official_service_limits_preserve_policy')\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('''schema_version = 1\\n\\n[package]\\nname = \"official-service-limits-preserve-policy\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nservice = { path = \"''' + str(repo_root / 'official' / 'nebula-service') + '''\" }\\n''', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('''module main\\nimport service::config\\nimport service::headers\\n\\nfn main() -> Void {\\n  let base = default_config(\"svc-limits-preserve-policy\", 8080)\\n  let policy = with_request_id_max_bytes(local_request_id_only(), 32)\\n  let tuned = with_request_header_policy(base, policy)\\n  let timed = with_timeouts(tuned, 9000, 2300, 1200)\\n  let cfg = with_limits(timed, 16384, 2048, 4500)\\n  if cfg.max_header_bytes == 16384 &&\\n     cfg.max_body_bytes == 2048 &&\\n     cfg.request_timeout_ms == 4500 &&\\n     cfg.handler_timeout_ms == 2300 &&\\n     cfg.write_timeout_ms == 1200 &&\\n     cfg.header_policy.request_id_header_name == \"X-Request-Id\" &&\\n     cfg.header_policy.trust_request_id_header == false &&\\n     cfg.header_policy.max_request_id_bytes == 32 {\\n    print(\"service-limits-preserve-policy-ok\")\\n  } else {\\n    print(\"service-limits-preserve-policy-bad\")\\n  }\\n}\\n''', encoding='utf-8')\nupdate = subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], capture_output=True, text=True, env=os.environ.copy())\nprint(update.stdout, end='')\nprint(update.stderr, end='')\nraise SystemExit(update.returncode)\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" run work/official_service_limits_preserve_policy --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["service-limits-preserve-policy-ok"]

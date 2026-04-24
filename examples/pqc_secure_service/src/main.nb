@@ -1,0 +1,31 @@
+module main
+import server
+import service::config
+import service::server
+
+fn app_service_name() -> String {
+  return "pqc-secure-service"
+}
+
+async fn main() -> Void {
+  match config_from_env(app_service_name(), 40492) {
+    Ok(cfg) => {
+      match await bind_listener(cfg) {
+        Ok(listener) => {
+          match await serve_requests(listener, cfg, handle_request) {
+            Ok(_) => {}
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

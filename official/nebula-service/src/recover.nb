@@ -1,0 +1,7 @@
+module recover
+import std::http
+import std::result
+import std::task
+
+extern fn __nebula_service_catch_response_panic(self: Future<Response>) -> Future<Result<Response, String>>
+extern fn __nebula_service_catch_result_response_panic(self: Future<Result<Response, String>>) -> Future<Result<Result<Response, String>, String>>

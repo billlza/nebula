@@ -1,0 +1,126 @@
+id = "TST-208-example-cli-service-workspace-integration-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import (
+    copy_example,
+    fetch_workspace,
+    http_request,
+    json_request,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+    wait_until_ready_status,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_integration')
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_ready_status(proc, stderr_lines, port, 200, 'ready')
+
+    health_status, health_payload = json_request('127.0.0.1', port, 'GET', '/healthz')
+    ready_status, ready_payload = json_request('127.0.0.1', port, 'GET', '/readyz')
+    info_status, info_payload = json_request('127.0.0.1', port, 'GET', '/v1/info')
+    echo_status, echo_payload = json_request('127.0.0.1', port, 'POST', '/v1/echo', {'message': 'hello'})
+    bad_status, bad_body, _ = http_request('127.0.0.1', port, 'POST', '/v1/echo', b'{bad-json', {'Content-Type': 'application/json; charset=utf-8'})
+    bad_payload = json.loads(bad_body)
+
+    if health_status != 200 or health_payload.get('status') != 'ok':
+        raise SystemExit(f'unexpected /healthz response: {(health_status, health_payload)!r}')
+    if ready_status != 200 or ready_payload.get('status') != 'ready':
+        raise SystemExit(f'unexpected /readyz response: {(ready_status, ready_payload)!r}')
+    if info_status != 200:
+        raise SystemExit(f'unexpected /v1/info status: {(info_status, info_payload)!r}')
+    if info_payload.get('service') != 'cli-service-skeleton' or info_payload.get('version') != '0.1.0' or info_payload.get('profile') != 'linux-backend-ga':
+        raise SystemExit(f'unexpected /v1/info payload: {info_payload!r}')
+    if not isinstance(info_payload.get('request_id'), str) or info_payload['request_id'] == '':
+        raise SystemExit(f'/v1/info request_id contract failed: {info_payload!r}')
+    if not isinstance(info_payload.get('unix_ms'), int) or info_payload['unix_ms'] < 0:
+        raise SystemExit(f'/v1/info unix_ms contract failed: {info_payload!r}')
+    if echo_status != 200 or echo_payload.get('message') != 'hello' or echo_payload.get('service') != 'cli-service-skeleton':
+        raise SystemExit(f'unexpected /v1/echo payload: {(echo_status, echo_payload)!r}')
+    if not isinstance(echo_payload.get('request_id'), str) or echo_payload['request_id'] == '':
+        raise SystemExit(f'/v1/echo request_id contract failed: {echo_payload!r}')
+    if bad_status != 400 or bad_payload.get('error') != 'invalid_json':
+        raise SystemExit(f'unexpected invalid-json response: {(bad_status, bad_payload)!r}')
+
+    base_url = f'http://127.0.0.1:{port}'
+
+    prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    status_result = run_ctl(binary, root, 'status', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(status_result, 'ctl status --json')
+    status_payload = json.loads(status_result.stdout)
+    if status_payload.get('base_url') != base_url or status_payload.get('ok') is not True:
+        print_completed(status_result)
+        raise SystemExit(f'unexpected ctl status payload: {status_payload!r}')
+    if status_payload.get('health_status') != 200 or status_payload.get('ready_status') != 200:
+        raise SystemExit(f'ctl status did not report healthy service: {status_payload!r}')
+
+    info_result = run_ctl(binary, root, 'info', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(info_result, 'ctl info')
+    for fragment in ['service=cli-service-skeleton', 'version=0.1.0', 'profile=linux-backend-ga']:
+        if fragment not in info_result.stdout:
+            print_completed(info_result)
+            raise SystemExit(f'ctl info output missing fragment: {fragment!r}')
+
+    ping_result = run_ctl(binary, root, 'ping', 'hello', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(ping_result, 'ctl ping --json')
+    ping_payload = json.loads(ping_result.stdout)
+    if ping_payload.get('message') != 'hello' or ping_payload.get('service') != 'cli-service-skeleton':
+        print_completed(ping_result)
+        raise SystemExit(f'unexpected ctl ping payload: {ping_payload!r}')
+
+    env_result = run_ctl(binary, root, 'config-validate', env={'APP_URL': base_url + '/'}, out_dir=ctl_out_dir, no_build=True)
+    require_success(env_result, 'ctl config-validate via APP_URL')
+    if 'base_url=' + base_url not in env_result.stdout:
+        print_completed(env_result)
+        raise SystemExit('ctl config-validate did not normalize APP_URL')
+
+    override_result = run_ctl(binary, root, 'config-validate', '--url', base_url, env={'APP_URL': 'http://127.0.0.1:1/'}, out_dir=ctl_out_dir, no_build=True)
+    require_success(override_result, 'ctl config-validate --url precedence')
+    if 'base_url=' + base_url not in override_result.stdout:
+        print_completed(override_result)
+        raise SystemExit('ctl --url did not win over APP_URL')
+
+    no_command = run_ctl(binary, root, out_dir=ctl_out_dir, no_build=True)
+    if no_command.returncode != 2:
+        print_completed(no_command)
+        raise SystemExit(f'ctl without a command should exit 2, got {no_command.returncode}')
+
+    missing_ping = run_ctl(binary, root, 'ping', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_ping.returncode != 2:
+        print_completed(missing_ping)
+        raise SystemExit(f'ctl ping without a message should exit 2, got {missing_ping.returncode}')
+
+    unknown = run_ctl(binary, root, '--unknown', out_dir=ctl_out_dir, no_build=True)
+    if unknown.returncode != 2:
+        print_completed(unknown)
+        raise SystemExit(f'ctl with an unknown argument should exit 2, got {unknown.returncode}')
+
+    print('example-cli-service-workspace-integration-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-integration-ok"]

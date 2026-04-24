@@ -1,0 +1,6 @@
+module main
+import ctl
+
+async fn main() -> Int {
+  return await run()
+}

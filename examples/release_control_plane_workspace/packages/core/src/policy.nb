@@ -1,0 +1,629 @@
+module policy
+import validate
+import std::json
+import std::result
+
+fn identity_read_permission() -> String {
+  return "identity.read"
+}
+
+fn platform_read_permission() -> String {
+  return "platform.read"
+}
+
+fn release_read_permission() -> String {
+  return "release.read"
+}
+
+fn release_write_permission() -> String {
+  return "release.write"
+}
+
+fn approval_read_permission() -> String {
+  return "approval.read"
+}
+
+fn approval_decide_permission() -> String {
+  return "approval.decide"
+}
+
+fn audit_read_permission() -> String {
+  return "audit.read"
+}
+
+fn release_apply_permission() -> String {
+  return "release.apply"
+}
+
+fn ops_run_apply_once_permission() -> String {
+  return "ops.run_apply_once"
+}
+
+fn config_read_permission() -> String {
+  return "config.read"
+}
+
+fn config_write_permission() -> String {
+  return "config.write"
+}
+
+fn config_delete_permission() -> String {
+  return "config.delete"
+}
+
+fn jobs_definition_read_permission() -> String {
+  return "jobs.definition.read"
+}
+
+fn jobs_definition_write_permission() -> String {
+  return "jobs.definition.write"
+}
+
+fn jobs_run_read_permission() -> String {
+  return "jobs.run.read"
+}
+
+fn jobs_run_trigger_permission() -> String {
+  return "jobs.run.trigger"
+}
+
+fn jobs_worker_execute_permission() -> String {
+  return "jobs.worker.execute"
+}
+
+fn jobs_outbox_read_permission() -> String {
+  return "jobs.outbox.read"
+}
+
+fn jobs_outbox_relay_permission() -> String {
+  return "jobs.outbox.relay"
+}
+
+fn schedule_read_permission() -> String {
+  return "schedule.read"
+}
+
+fn schedule_write_permission() -> String {
+  return "schedule.write"
+}
+
+fn schedule_tick_permission() -> String {
+  return "schedule.tick"
+}
+
+fn wildcard_scope() -> Json {
+  return null_value()
+}
+
+fn permission_array_with(permission: String) -> Json {
+  let builder = array_builder()
+  return array_build(array_push(builder, string_value(permission)))
+}
+
+fn builder_with_permission(builder: JsonArrayBuilder, permission: String) -> JsonArrayBuilder {
+  return array_push(builder, string_value(permission))
+}
+
+fn builder_with_read_permissions_head(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  let value = builder
+  value = builder_with_permission(value, identity_read_permission())
+  value = builder_with_permission(value, platform_read_permission())
+  value = builder_with_permission(value, release_read_permission())
+  value = builder_with_permission(value, approval_read_permission())
+  value = builder_with_permission(value, audit_read_permission())
+  return value
+}
+
+fn builder_with_read_permissions_tail(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  let value = builder
+  value = builder_with_permission(value, config_read_permission())
+  value = builder_with_permission(value, jobs_definition_read_permission())
+  value = builder_with_permission(value, jobs_run_read_permission())
+  value = builder_with_permission(value, jobs_outbox_read_permission())
+  value = builder_with_permission(value, schedule_read_permission())
+  return value
+}
+
+fn builder_with_read_permissions(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  return builder_with_read_permissions_tail(builder_with_read_permissions_head(builder))
+}
+
+fn builder_with_writer_permissions(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  let value = builder_with_read_permissions(builder)
+  value = builder_with_permission(value, release_write_permission())
+  value = builder_with_permission(value, release_apply_permission())
+  value = builder_with_permission(value, config_write_permission())
+  value = builder_with_permission(value, jobs_run_trigger_permission())
+  return value
+}
+
+fn builder_with_admin_permissions(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  let value = builder_with_writer_permissions(builder)
+  value = builder_with_permission(value, approval_decide_permission())
+  value = builder_with_permission(value, config_delete_permission())
+  value = builder_with_permission(value, jobs_definition_write_permission())
+  value = builder_with_permission(value, schedule_write_permission())
+  value = builder_with_permission(value, schedule_tick_permission())
+  value = builder_with_permission(value, ops_run_apply_once_permission())
+  return value
+}
+
+fn reader_permissions() -> Result<Json, String> {
+  let builder = array_builder()
+  builder = builder_with_read_permissions(builder)
+  let permissions = array_build(builder)
+  validate_permission_array(permissions)?
+  return Ok(permissions)
+}
+
+fn writer_permissions() -> Result<Json, String> {
+  let builder = array_builder()
+  builder = builder_with_writer_permissions(builder)
+  let permissions = array_build(builder)
+  validate_permission_array(permissions)?
+  return Ok(permissions)
+}
+
+fn admin_permissions() -> Result<Json, String> {
+  let builder = array_builder()
+  builder = builder_with_admin_permissions(builder)
+  let permissions = array_build(builder)
+  validate_permission_array(permissions)?
+  return Ok(permissions)
+}
+
+fn worker_permissions() -> Result<Json, String> {
+  let builder = array_builder()
+  builder = builder_with_permission(builder, jobs_worker_execute_permission())
+  builder = builder_with_permission(builder, jobs_outbox_relay_permission())
+  let permissions = array_build(builder)
+  validate_permission_array(permissions)?
+  return Ok(permissions)
+}
+
+fn permissions_for_role(role: String) -> Result<Json, String> {
+  validate_role(role)?
+  if role == "reader" {
+    return reader_permissions()
+  }
+  if role == "writer" {
+    return writer_permissions()
+  }
+  if role == "admin" {
+    return admin_permissions()
+  }
+  return worker_permissions()
+}
+
+fn permission_is_read_scope(permission: String) -> Bool {
+  return permission == identity_read_permission() || permission == platform_read_permission() ||
+         permission == release_read_permission() || permission == approval_read_permission() ||
+         permission == audit_read_permission() || permission == config_read_permission() ||
+         permission == jobs_definition_read_permission() || permission == jobs_run_read_permission() ||
+         permission == jobs_outbox_read_permission() || permission == schedule_read_permission()
+}
+
+fn permission_is_writer_scope(permission: String) -> Bool {
+  return permission == release_write_permission() || permission == release_apply_permission() ||
+         permission == config_write_permission() || permission == jobs_run_trigger_permission()
+}
+
+fn permission_is_admin_scope(permission: String) -> Bool {
+  return permission == approval_decide_permission() || permission == config_delete_permission() ||
+         permission == jobs_definition_write_permission() || permission == schedule_write_permission() ||
+         permission == schedule_tick_permission() || permission == ops_run_apply_once_permission()
+}
+
+fn permission_is_worker_scope(permission: String) -> Bool {
+  return permission == jobs_worker_execute_permission() || permission == jobs_outbox_relay_permission()
+}
+
+fn validate_permission(permission: String) -> Result<Bool, String> {
+  if permission_is_read_scope(permission) || permission_is_writer_scope(permission) ||
+     permission_is_admin_scope(permission) || permission_is_worker_scope(permission) {
+    return Ok(true)
+  }
+  return Err(text_concat("unsupported permission: ", permission))
+}
+
+fn validate_permission_array_item(permissions: Json, index: Int) -> Result<Bool, String> {
+  let permission = as_string(array_get(permissions, index)?)?
+  return validate_permission(permission)
+}
+
+fn validate_permission_array(permissions: Json) -> Result<Bool, String> {
+  let count = array_len(permissions)?
+  let index = 0
+  while index < count {
+    validate_permission_array_item(permissions, index)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn permission_at(permissions: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(permissions, index)?)
+}
+
+fn permission_in_array(permissions: Json, permission: String) -> Result<Bool, String> {
+  validate_permission(permission)?
+  validate_permission_array(permissions)?
+  let count = array_len(permissions)?
+  let index = 0
+  while index < count {
+    if permission_at(permissions, index)? == permission {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn permission_required_role(permission: String) -> Result<String, String> {
+  validate_permission(permission)?
+  if permission == jobs_worker_execute_permission() || permission == jobs_outbox_relay_permission() {
+    return Ok("worker")
+  }
+  if permission == release_write_permission() || permission == release_apply_permission() ||
+     permission == config_write_permission() || permission == jobs_run_trigger_permission() {
+    return Ok("writer")
+  }
+  if permission == approval_decide_permission() || permission == config_delete_permission() ||
+     permission == jobs_definition_write_permission() || permission == schedule_write_permission() ||
+     permission == schedule_tick_permission() || permission == ops_run_apply_once_permission() {
+    return Ok("admin")
+  }
+  return Ok("reader")
+}
+
+fn permission_capability(permission: String) -> Result<String, String> {
+  validate_permission(permission)?
+  if permission == schedule_read_permission() || permission == schedule_write_permission() ||
+     permission == schedule_tick_permission() {
+    return Ok("cron_schedule")
+  }
+  if permission == jobs_outbox_read_permission() || permission == jobs_outbox_relay_permission() {
+    return Ok("external_broker")
+  }
+  return Ok("")
+}
+
+fn scope_item_array(value: String) -> Json {
+  let builder = array_builder()
+  return array_build(array_push(builder, string_value(value)))
+}
+
+fn validate_scope_item(scope_kind: String, value: String) -> Result<Bool, String> {
+  if scope_kind == "app" {
+    return validate_app_segment(value)
+  }
+  if scope_kind == "channel" {
+    return validate_channel_segment(value)
+  }
+  return Err(text_concat("unsupported scope kind: ", scope_kind))
+}
+
+fn normalized_scope_array_item(scope_kind: String, raw: Json) -> Result<Json, String> {
+  let value = as_string(raw)?
+  validate_scope_item(scope_kind, value)?
+  return Ok(string_value(value))
+}
+
+fn normalized_scope_array(scope_kind: String, raw: Json) -> Result<Json, String> {
+  let count = array_len(raw)?
+  let builder = array_builder()
+  let index = 0
+  while index < count {
+    builder = array_push(builder, normalized_scope_array_item(scope_kind, array_get(raw, index)?)?)
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn normalize_scope_json(scope_kind: String, raw: Json) -> Result<Json, String> {
+  if stringify(raw) == "null" {
+    return Ok(wildcard_scope())
+  }
+  match as_string(raw) {
+    Ok(value) => {
+      if value == "" || value == "*" {
+        return Ok(wildcard_scope())
+      }
+      validate_scope_item(scope_kind, value)?
+      return Ok(scope_item_array(value))
+    }
+    Err(_) => {}
+  }
+  return normalized_scope_array(scope_kind, raw)
+}
+
+fn validate_app_scope(scope: Json) -> Result<Bool, String> {
+  normalize_scope_json("app", scope)?
+  return Ok(true)
+}
+
+fn validate_channel_scope(scope: Json) -> Result<Bool, String> {
+  normalize_scope_json("channel", scope)?
+  return Ok(true)
+}
+
+fn normalized_scope_contains(scope_kind: String, scope: Json, expected: String) -> Result<Bool, String> {
+  let normalized = normalize_scope_json(scope_kind, scope)?
+  if stringify(normalized) == "null" {
+    return Ok(true)
+  }
+  let count = array_len(normalized)?
+  let index = 0
+  while index < count {
+    if as_string(array_get(normalized, index)?)? == expected {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn scope_allows_app(scope: Json, app_name: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  return normalized_scope_contains("app", scope, app_name)
+}
+
+fn scope_allows_channel(scope: Json, channel: String) -> Result<Bool, String> {
+  validate_channel_segment(channel)?
+  return normalized_scope_contains("channel", scope, channel)
+}
+
+struct ResourceScopeBinding {
+  subject: String
+  app_scope: Json
+  channel_scope: Json
+}
+
+struct ResourceScopePolicy {
+  bindings: Json
+}
+
+fn resource_scope_binding(subject: String, app_scope: Json, channel_scope: Json) -> ResourceScopeBinding {
+  return ResourceScopeBinding(subject, app_scope, channel_scope)
+}
+
+fn ResourceScopeBinding_as_json(self: ResourceScopeBinding) -> Json {
+  return object3("subject",
+                 string_value(self.subject),
+                 "app_scope",
+                 self.app_scope,
+                 "channel_scope",
+                 self.channel_scope)
+}
+
+fn ResourceScopePolicy_as_json(self: ResourceScopePolicy) -> Json {
+  return object1("bindings", self.bindings)
+}
+
+fn resource_scope_binding_from_json(value: Json) -> Result<ResourceScopeBinding, String> {
+  let app_scope = null_value()
+  let channel_scope = null_value()
+  match get_value(value, "app_scope") {
+    Ok(scope) => { app_scope = scope }
+    Err(_) => {}
+  }
+  match get_value(value, "channel_scope") {
+    Ok(scope) => { channel_scope = scope }
+    Err(_) => {}
+  }
+  return Ok(ResourceScopeBinding(get_string(value, "subject")?,
+                                 normalize_scope_json("app", app_scope)?,
+                                 normalize_scope_json("channel", channel_scope)?))
+}
+
+fn resource_scope_policy_from_json(value: Json) -> Result<ResourceScopePolicy, String> {
+  let bindings = get_value(value, "bindings")?
+  array_len(bindings)?
+  return Ok(ResourceScopePolicy(bindings))
+}
+
+fn validate_resource_scope_binding(binding: ResourceScopeBinding) -> Result<Bool, String> {
+  validate_actor_segment(binding.subject)?
+  validate_app_scope(binding.app_scope)?
+  validate_channel_scope(binding.channel_scope)?
+  return Ok(true)
+}
+
+fn validate_resource_scope_policy(policy: ResourceScopePolicy) -> Result<Bool, String> {
+  let count = array_len(policy.bindings)?
+  let index = 0
+  while index < count {
+    validate_resource_scope_binding(resource_scope_binding_from_json(array_get(policy.bindings, index)?)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn empty_resource_scope_binding(subject: String) -> ResourceScopeBinding {
+  return ResourceScopeBinding(subject, array_build(array_builder()), array_build(array_builder()))
+}
+
+fn resource_scope_binding_for_subject(policy: ResourceScopePolicy, subject: String) -> Result<ResourceScopeBinding, String> {
+  validate_actor_segment(subject)?
+  let bindings = validated_resource_scope_bindings(policy)?
+  return resource_scope_binding_from_bindings(bindings, subject)
+}
+
+fn validated_resource_scope_bindings(policy: ResourceScopePolicy) -> Result<Json, String> {
+  validate_resource_scope_policy(policy)?
+  return Ok(policy.bindings)
+}
+
+fn resource_scope_binding_from_bindings(bindings: Json, subject: String) -> Result<ResourceScopeBinding, String> {
+  let count = array_len(bindings)?
+  let index = 0
+  while index < count {
+    let binding = resource_scope_binding_from_json(array_get(bindings, index)?)?
+    if binding.subject == subject {
+      return Ok(binding)
+    }
+    index += 1
+  }
+  return Ok(empty_resource_scope_binding(subject))
+}
+
+fn permission_supports_resource_scope(permission: String) -> Result<Bool, String> {
+  validate_permission(permission)?
+  if permission == release_read_permission() || permission == release_write_permission() ||
+     permission == approval_read_permission() || permission == approval_decide_permission() ||
+     permission == audit_read_permission() || permission == release_apply_permission() ||
+     permission == config_read_permission() || permission == config_write_permission() ||
+     permission == config_delete_permission() || permission == jobs_definition_read_permission() ||
+     permission == jobs_definition_write_permission() || permission == jobs_run_read_permission() ||
+     permission == jobs_run_trigger_permission() || permission == jobs_worker_execute_permission() ||
+     permission == jobs_outbox_read_permission() || permission == jobs_outbox_relay_permission() ||
+     permission == schedule_read_permission() || permission == schedule_write_permission() {
+    return Ok(true)
+  }
+  return Ok(false)
+}
+
+@test
+fn test_permission_required_role_contract() -> Void {
+  match permission_required_role(config_write_permission()) {
+    Ok(value) => { assert(value == "writer", "config.write role drifted") }
+    Err(msg) => { panic(msg) }
+  }
+  match permission_required_role(schedule_tick_permission()) {
+    Ok(value) => { assert(value == "admin", "schedule.tick role drifted") }
+    Err(msg) => { panic(msg) }
+  }
+  match permission_required_role(jobs_outbox_relay_permission()) {
+    Ok(value) => { assert(value == "worker", "jobs.outbox.relay role drifted") }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_permission_capability_contract() -> Void {
+  match permission_capability(schedule_read_permission()) {
+    Ok(value) => { assert(value == "cron_schedule", "schedule capability drifted") }
+    Err(msg) => { panic(msg) }
+  }
+  match permission_capability(jobs_outbox_read_permission()) {
+    Ok(value) => { assert(value == "external_broker", "broker capability drifted") }
+    Err(msg) => { panic(msg) }
+  }
+  match permission_capability(platform_read_permission()) {
+    Ok(value) => { assert(value == "", "platform capability should remain empty") }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_permissions_for_role_contract() -> Void {
+  match permissions_for_role("writer") {
+    Ok(value) => {
+      match permission_in_array(value, config_write_permission()) {
+        Ok(found) => { assert(found, "writer permissions missing config.write") }
+        Err(msg) => { panic(msg) }
+      }
+      match permission_in_array(value, jobs_run_trigger_permission()) {
+        Ok(found) => { assert(found, "writer permissions missing jobs.run.trigger") }
+        Err(msg) => { panic(msg) }
+      }
+      match permission_in_array(value, approval_decide_permission()) {
+        Ok(found) => { assert(!found, "writer permissions should not include approval.decide") }
+        Err(msg) => { panic(msg) }
+      }
+    }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_scope_normalization_single_value_contract() -> Void {
+  let app_scope = wildcard_scope()
+  match normalize_scope_json("app", string_value("control-plane")) {
+    Ok(value) => { app_scope = value }
+    Err(msg) => { panic(msg) }
+  }
+  match scope_allows_app(app_scope, "control-plane") {
+    Ok(found) => { assert(found, "single app scope did not match") }
+    Err(msg) => { panic(msg) }
+  }
+  match scope_allows_app(app_scope, "other-app") {
+    Ok(found) => { assert(!found, "single app scope matched wrong app") }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_scope_normalization_wildcard_contract() -> Void {
+  let any_channel = wildcard_scope()
+  match normalize_scope_json("channel", string_value("*")) {
+    Ok(value) => { any_channel = value }
+    Err(msg) => { panic(msg) }
+  }
+  match scope_allows_channel(any_channel, "prod") {
+    Ok(found) => { assert(found, "wildcard channel scope did not match") }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_scope_normalization_array_contract() -> Void {
+  let channels = array_builder()
+  channels = array_push(channels, string_value("prod"))
+  channels = array_push(channels, string_value("staging"))
+  let channel_scope = wildcard_scope()
+  match normalize_scope_json("channel", array_build(channels)) {
+    Ok(value) => { channel_scope = value }
+    Err(msg) => { panic(msg) }
+  }
+  match scope_allows_channel(channel_scope, "staging") {
+    Ok(found) => { assert(found, "channel scope array did not match") }
+    Err(msg) => { panic(msg) }
+  }
+  match scope_allows_channel(channel_scope, "dev") {
+    Ok(found) => { assert(!found, "channel scope array matched wrong channel") }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_resource_scope_policy_binding_found_contract() -> Void {
+  let bindings = array_builder()
+  bindings = array_push(bindings,
+                        ResourceScopeBinding("writer",
+                                             scope_item_array("control-plane"),
+                                             scope_item_array("prod")).as_json())
+  let policy = ResourceScopePolicy(array_build(bindings))
+  match resource_scope_binding_for_subject(policy, "writer") {
+    Ok(binding) => {
+      match scope_allows_app(binding.app_scope, "control-plane") {
+        Ok(found) => { assert(found, "policy binding app scope drifted") }
+        Err(msg) => { panic(msg) }
+      }
+      match scope_allows_channel(binding.channel_scope, "prod") {
+        Ok(found) => { assert(found, "policy binding channel scope drifted") }
+        Err(msg) => { panic(msg) }
+      }
+    }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_resource_scope_policy_binding_missing_contract() -> Void {
+  let bindings = array_builder()
+  bindings = array_push(bindings,
+                        ResourceScopeBinding("writer",
+                                             scope_item_array("control-plane"),
+                                             scope_item_array("prod")).as_json())
+  let policy = ResourceScopePolicy(array_build(bindings))
+  match resource_scope_binding_for_subject(policy, "reader") {
+    Ok(binding) => {
+      match scope_allows_app(binding.app_scope, "control-plane") {
+        Ok(found) => { assert(!found, "missing subject binding should fail closed") }
+        Err(msg) => { panic(msg) }
+      }
+    }
+    Err(msg) => { panic(msg) }
+  }
+}

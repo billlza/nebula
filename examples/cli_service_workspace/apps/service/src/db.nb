@@ -1,0 +1,100 @@
+module db
+import std::result
+
+extern fn __cli_service_db_get_entry_json(db_path: String,
+                                          project: String,
+                                          environment: String,
+                                          key: String) -> Result<String, String>
+extern fn __cli_service_db_list_entries_json(db_path: String,
+                                             project: String,
+                                             environment: String) -> Result<String, String>
+extern fn __cli_service_db_put_entry_outcome_json(db_path: String,
+                                                  project: String,
+                                                  environment: String,
+                                                  key: String,
+                                                  description: String,
+                                                  kind: String,
+                                                  string_value: String,
+                                                  bool_value: Bool,
+                                                  int_value: Int,
+                                                  expected_revision: Int,
+                                                  updated_by: String,
+                                                  updated_unix_ms: Int) -> Result<String, String>
+extern fn __cli_service_db_delete_entry_outcome_json(db_path: String,
+                                                     project: String,
+                                                     environment: String,
+                                                     key: String,
+                                                     expected_revision: Int,
+                                                     updated_by: String,
+                                                     updated_unix_ms: Int) -> Result<String, String>
+extern fn __cli_service_db_list_history_json(db_path: String,
+                                             project: String,
+                                             environment: String,
+                                             key: String) -> Result<String, String>
+extern fn __cli_service_db_initialize(db_path: String) -> Result<Bool, String>
+
+fn get_entry_json(db_path: String,
+                  project: String,
+                  environment: String,
+                  key: String) -> Result<String, String> {
+  return __cli_service_db_get_entry_json(db_path, project, environment, key)
+}
+
+fn list_entries_json(db_path: String,
+                     project: String,
+                     environment: String) -> Result<String, String> {
+  return __cli_service_db_list_entries_json(db_path, project, environment)
+}
+
+fn put_entry_outcome_json(db_path: String,
+                          project: String,
+                          environment: String,
+                          key: String,
+                          description: String,
+                          kind: String,
+                          string_value: String,
+                          bool_value: Bool,
+                          int_value: Int,
+                          expected_revision: Int,
+                          updated_by: String,
+                          updated_unix_ms: Int) -> Result<String, String> {
+  return __cli_service_db_put_entry_outcome_json(db_path,
+                                                 project,
+                                                 environment,
+                                                 key,
+                                                 description,
+                                                 kind,
+                                                 string_value,
+                                                 bool_value,
+                                                 int_value,
+                                                 expected_revision,
+                                                 updated_by,
+                                                 updated_unix_ms)
+}
+
+fn delete_entry_outcome_json(db_path: String,
+                             project: String,
+                             environment: String,
+                             key: String,
+                             expected_revision: Int,
+                             updated_by: String,
+                             updated_unix_ms: Int) -> Result<String, String> {
+  return __cli_service_db_delete_entry_outcome_json(db_path,
+                                                    project,
+                                                    environment,
+                                                    key,
+                                                    expected_revision,
+                                                    updated_by,
+                                                    updated_unix_ms)
+}
+
+fn list_history_json(db_path: String,
+                     project: String,
+                     environment: String,
+                     key: String) -> Result<String, String> {
+  return __cli_service_db_list_history_json(db_path, project, environment, key)
+}
+
+fn initialize_catalog_store(db_path: String) -> Result<Bool, String> {
+  return __cli_service_db_initialize(db_path)
+}

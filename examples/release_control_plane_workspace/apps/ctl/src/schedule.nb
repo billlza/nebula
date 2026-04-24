@@ -1,0 +1,618 @@
+module schedule
+import args
+import client
+import core::schedule_contracts
+import core::validate
+import errors
+import std::fs
+import std::json
+import std::result
+
+struct ScheduleCliArgs {
+  subcommand: String
+  app_name: String
+  channel: String
+  schedule_id: String
+  event_kind_text: String
+  release_revision_text: String
+  interval_ms_text: String
+  next_due_unix_ms_text: String
+  now_unix_ms_text: String
+  payload_file: String
+}
+
+struct ScheduleParseProgress {
+  parsed: ScheduleCliArgs
+  next_index: Int
+}
+
+fn default_schedule_args() -> ScheduleCliArgs {
+  return ScheduleCliArgs("", "", "", "", "", "", "", "", "", "")
+}
+
+fn rebuild_schedule_args(subcommand: String,
+                         app_name: String,
+                         channel: String,
+                         schedule_id: String,
+                         event_kind_text: String,
+                         release_revision_text: String,
+                         interval_ms_text: String,
+                         next_due_unix_ms_text: String,
+                         now_unix_ms_text: String,
+                         payload_file: String) -> ScheduleCliArgs {
+  return ScheduleCliArgs(subcommand,
+                         app_name,
+                         channel,
+                         schedule_id,
+                         event_kind_text,
+                         release_revision_text,
+                         interval_ms_text,
+                         next_due_unix_ms_text,
+                         now_unix_ms_text,
+                         payload_file)
+}
+
+fn schedule_with_subcommand(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(value,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_app(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               value,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_channel(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               value,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_schedule_id(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               value,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_event_kind(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               value,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_release_revision(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               value,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_interval_ms(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               value,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_next_due_unix_ms(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               value,
+                               parsed.now_unix_ms_text,
+                               parsed.payload_file)
+}
+
+fn schedule_with_now_unix_ms(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               value,
+                               parsed.payload_file)
+}
+
+fn schedule_with_payload_file(parsed: ScheduleCliArgs, value: String) -> ScheduleCliArgs {
+  return rebuild_schedule_args(parsed.subcommand,
+                               parsed.app_name,
+                               parsed.channel,
+                               parsed.schedule_id,
+                               parsed.event_kind_text,
+                               parsed.release_revision_text,
+                               parsed.interval_ms_text,
+                               parsed.next_due_unix_ms_text,
+                               parsed.now_unix_ms_text,
+                               value)
+}
+
+fn schedule_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn schedule_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn schedule_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn schedule_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= schedule_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return schedule_arg_text(argv_json, index + 1)
+}
+
+fn schedule_progress(parsed: ScheduleCliArgs, next_index: Int) -> ScheduleParseProgress {
+  return ScheduleParseProgress(parsed, next_index)
+}
+
+fn parse_schedule_flag(argv_json: Json,
+                       parsed: ScheduleCliArgs,
+                       index: Int,
+                       arg: String) -> Result<ScheduleParseProgress, String> {
+  let value = schedule_next_value(argv_json, index, arg)?
+  if arg == "--app" {
+    return Ok(schedule_progress(schedule_with_app(parsed, value), index + 2))
+  }
+  if arg == "--channel" {
+    return Ok(schedule_progress(schedule_with_channel(parsed, value), index + 2))
+  }
+  if arg == "--schedule-id" {
+    return Ok(schedule_progress(schedule_with_schedule_id(parsed, value), index + 2))
+  }
+  if arg == "--event-kind" {
+    return Ok(schedule_progress(schedule_with_event_kind(parsed, value), index + 2))
+  }
+  if arg == "--release-revision" {
+    return Ok(schedule_progress(schedule_with_release_revision(parsed, value), index + 2))
+  }
+  if arg == "--interval-ms" {
+    return Ok(schedule_progress(schedule_with_interval_ms(parsed, value), index + 2))
+  }
+  if arg == "--next-due-unix-ms" {
+    return Ok(schedule_progress(schedule_with_next_due_unix_ms(parsed, value), index + 2))
+  }
+  if arg == "--now-unix-ms" {
+    return Ok(schedule_progress(schedule_with_now_unix_ms(parsed, value), index + 2))
+  }
+  if arg == "--payload-file" {
+    return Ok(schedule_progress(schedule_with_payload_file(parsed, value), index + 2))
+  }
+  return Err("unexpected schedule argument")
+}
+
+fn parse_schedule_cli_args(parsed: ParsedArgs) -> Result<ScheduleCliArgs, String> {
+  let argv_json = schedule_argv(parsed)
+  let count = schedule_arg_count(argv_json)?
+  let index = 0
+  let state = default_schedule_args()
+  while index < count {
+    let arg = schedule_arg_text(argv_json, index)?
+    if state.subcommand == "" {
+      state = schedule_with_subcommand(state, arg)
+      index += 1
+      continue
+    }
+    let progress = parse_schedule_flag(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn require_schedule_scope(args: ScheduleCliArgs) -> Result<Bool, String> {
+  if args.app_name == "" {
+    return Err("--app is required")
+  }
+  if args.channel == "" {
+    return Err("--channel is required")
+  }
+  if args.schedule_id == "" {
+    return Err("--schedule-id is required")
+  }
+  return Ok(true)
+}
+
+fn reject_schedule_flag(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed for this schedule subcommand"))
+  }
+  return Ok(true)
+}
+
+fn require_schedule_put_flags(args: ScheduleCliArgs) -> Result<Bool, String> {
+  if args.event_kind_text == "" {
+    return Err("--event-kind is required")
+  }
+  if args.release_revision_text == "" {
+    return Err("--release-revision is required")
+  }
+  if args.interval_ms_text == "" {
+    return Err("--interval-ms is required")
+  }
+  if args.next_due_unix_ms_text == "" {
+    return Err("--next-due-unix-ms is required")
+  }
+  return Ok(true)
+}
+
+fn reject_schedule_put_flags(args: ScheduleCliArgs) -> Result<Bool, String> {
+  reject_schedule_flag(args.event_kind_text, "--event-kind")?
+  reject_schedule_flag(args.release_revision_text, "--release-revision")?
+  reject_schedule_flag(args.interval_ms_text, "--interval-ms")?
+  reject_schedule_flag(args.next_due_unix_ms_text, "--next-due-unix-ms")?
+  reject_schedule_flag(args.payload_file, "--payload-file")?
+  return Ok(true)
+}
+
+fn reject_schedule_scope_flags(args: ScheduleCliArgs) -> Result<Bool, String> {
+  reject_schedule_flag(args.app_name, "--app")?
+  reject_schedule_flag(args.channel, "--channel")?
+  reject_schedule_flag(args.schedule_id, "--schedule-id")?
+  return Ok(true)
+}
+
+fn finalize_schedule_get_args(args: ScheduleCliArgs) -> Result<ScheduleCliArgs, String> {
+  require_schedule_scope(args)?
+  reject_schedule_put_flags(args)?
+  reject_schedule_flag(args.now_unix_ms_text, "--now-unix-ms")?
+  return Ok(args)
+}
+
+fn finalize_schedule_put_args(args: ScheduleCliArgs) -> Result<ScheduleCliArgs, String> {
+  require_schedule_scope(args)?
+  require_schedule_put_flags(args)?
+  reject_schedule_flag(args.now_unix_ms_text, "--now-unix-ms")?
+  return Ok(args)
+}
+
+fn finalize_schedule_tick_args(args: ScheduleCliArgs) -> Result<ScheduleCliArgs, String> {
+  if args.now_unix_ms_text == "" {
+    return Err("--now-unix-ms is required")
+  }
+  reject_schedule_scope_flags(args)?
+  reject_schedule_put_flags(args)?
+  return Ok(args)
+}
+
+fn finalize_schedule_args(args: ScheduleCliArgs) -> Result<ScheduleCliArgs, String> {
+  if args.subcommand == "" {
+    return Err("missing schedule subcommand")
+  }
+  if args.subcommand == "get" {
+    return finalize_schedule_get_args(args)
+  }
+  if args.subcommand == "put" {
+    return finalize_schedule_put_args(args)
+  }
+  if args.subcommand == "tick" {
+    return finalize_schedule_tick_args(args)
+  }
+  return Err("unknown schedule subcommand")
+}
+
+fn schedule_definition_path(app_name: String, channel: String, schedule_id: String) -> String {
+  return text_concat3("/v1/schedules/", app_name, text_concat("/", text_concat(channel, text_concat("/", schedule_id))))
+}
+
+fn schedule_tick_path() -> String {
+  return "/v1/schedules/tick"
+}
+
+fn schedule_positive_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value <= 0 {
+    return Err(text_concat(label, " must be a positive integer"))
+  }
+  return Ok(value)
+}
+
+fn schedule_non_negative_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value < 0 {
+    return Err(text_concat(label, " must be a non-negative integer"))
+  }
+  return Ok(value)
+}
+
+fn schedule_payload_json(path: String) -> Result<Json, String> {
+  if path == "" {
+    return parse("{}")
+  }
+  return parse(read_string(path)?)
+}
+
+fn schedule_put_request(args: ScheduleCliArgs) -> Result<SchedulePutRequest, String> {
+  let request = SchedulePutRequest(args.event_kind_text,
+                                   schedule_positive_int(args.release_revision_text, "--release-revision")?,
+                                   schedule_positive_int(args.interval_ms_text, "--interval-ms")?,
+                                   schedule_non_negative_int(args.next_due_unix_ms_text, "--next-due-unix-ms")?,
+                                   true,
+                                   schedule_payload_json(args.payload_file)?)
+  validate_schedule_put_request(request)?
+  return Ok(request)
+}
+
+fn schedule_tick_request(args: ScheduleCliArgs) -> Result<ScheduleTickRequest, String> {
+  let request = ScheduleTickRequest(schedule_non_negative_int(args.now_unix_ms_text, "--now-unix-ms")?)
+  validate_schedule_tick_request(request)?
+  return Ok(request)
+}
+
+fn parse_schedule_definition_reply(reply: JsonResponse) -> Result<ScheduleDefinitionEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = schedule_definition_envelope_from_json(reply.payload)?
+  validate_schedule_definition_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_schedule_tick_reply(reply: JsonResponse) -> Result<ScheduleTickEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = schedule_tick_envelope_from_json(reply.payload)?
+  validate_schedule_tick_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn emit_schedule_definition_json(envelope: ScheduleDefinitionEnvelope) -> Int {
+  print(stringify(envelope.as_json()))
+  return 0
+}
+
+fn schedule_definition_target_text(definition: ScheduleDefinition) -> String {
+  return text_concat3(definition.app, "/", text_concat(definition.channel, text_concat("/", definition.schedule_id)))
+}
+
+fn print_schedule_definition_identity(definition: ScheduleDefinition) -> Void {
+  print(text_concat("schedule=", schedule_definition_target_text(definition)))
+  print(text_concat("event_kind=", definition.event_kind))
+  print(text_concat("release_revision_id=", int_text(definition.release_revision_id)))
+}
+
+fn print_schedule_definition_timing(definition: ScheduleDefinition) -> Void {
+  print(text_concat("interval_ms=", int_text(definition.interval_ms)))
+  print(text_concat("next_due_unix_ms=", int_text(definition.next_due_unix_ms)))
+}
+
+fn print_schedule_definition_meta(definition: ScheduleDefinition) -> Void {
+  print(text_concat("enabled=", stringify(bool_value(definition.enabled))))
+  print(text_concat("revision_id=", int_text(definition.revision_id)))
+}
+
+fn print_schedule_definition_text(definition: ScheduleDefinition) -> Void {
+  print_schedule_definition_identity(definition)
+  print_schedule_definition_timing(definition)
+  print_schedule_definition_meta(definition)
+}
+
+fn emit_schedule_definition(envelope: ScheduleDefinitionEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    return emit_schedule_definition_json(envelope)
+  }
+  print_schedule_definition_text(envelope.definition)
+  return 0
+}
+
+fn emit_ticked_schedule_line(value: Json) -> Result<Bool, String> {
+  let item = ticked_schedule_from_json(value)?
+  validate_ticked_schedule(item)?
+  let line = text_concat3("schedule_id=", item.schedule_id, text_concat(" outcome=", item.outcome))
+  line = text_concat(line, text_concat(" run_id=", int_text(item.run_id)))
+  line = text_concat(line, text_concat(" event_id=", item.event_id))
+  print(text_concat(line, text_concat(" next_due_unix_ms=", int_text(item.next_due_unix_ms))))
+  return Ok(true)
+}
+
+fn emit_schedule_tick_text(envelope: ScheduleTickEnvelope) -> Result<Bool, String> {
+  print(text_concat("checked=", int_text(envelope.checked)))
+  let count = array_len(envelope.triggered)?
+  print(text_concat("triggered=", int_text(count)))
+  let index = 0
+  while index < count {
+    emit_ticked_schedule_line(array_get(envelope.triggered, index)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn emit_schedule_tick(envelope: ScheduleTickEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match emit_schedule_tick_text(envelope) {
+    Ok(_) => { return 0 }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn schedule_usage_error(msg: String) -> Int {
+  print(msg)
+  return 2
+}
+
+fn schedule_runtime_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn finalized_schedule_args(parsed: ParsedArgs) -> Result<ScheduleCliArgs, Int> {
+  match parse_schedule_cli_args(parsed) {
+    Ok(value) => {
+      match finalize_schedule_args(value) {
+        Ok(finalized) => {
+          return Ok(finalized)
+        }
+        Err(msg) => {
+          return Err(schedule_usage_error(msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(schedule_usage_error(msg))
+    }
+  }
+}
+
+async fn run_schedule_get_subcommand(base_url: String,
+                                     options: ClientOptions,
+                                     args: ScheduleCliArgs,
+                                     json_mode: Bool) -> Int {
+  match await get_json(base_url, schedule_definition_path(args.app_name, args.channel, args.schedule_id), options) {
+    Ok(reply) => {
+      match parse_schedule_definition_reply(reply) {
+        Ok(envelope) => {
+          return emit_schedule_definition(envelope, json_mode)
+        }
+        Err(msg) => {
+          return schedule_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return schedule_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_schedule_put_subcommand(base_url: String,
+                                     options: ClientOptions,
+                                     args: ScheduleCliArgs,
+                                     json_mode: Bool) -> Int {
+  match schedule_put_request(args) {
+    Ok(request) => {
+      match await put_json(base_url,
+                           schedule_definition_path(args.app_name, args.channel, args.schedule_id),
+                           request.as_json(),
+                           options,
+                           "") {
+        Ok(reply) => {
+          match parse_schedule_definition_reply(reply) {
+            Ok(envelope) => {
+              return emit_schedule_definition(envelope, json_mode)
+            }
+            Err(msg) => {
+              return schedule_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return schedule_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return schedule_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_schedule_tick_subcommand(base_url: String,
+                                      options: ClientOptions,
+                                      args: ScheduleCliArgs,
+                                      json_mode: Bool) -> Int {
+  match schedule_tick_request(args) {
+    Ok(request) => {
+      match await post_json(base_url, schedule_tick_path(), request.as_json(), options) {
+        Ok(reply) => {
+          match parse_schedule_tick_reply(reply) {
+            Ok(envelope) => {
+              return emit_schedule_tick(envelope, json_mode)
+            }
+            Err(msg) => {
+              return schedule_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return schedule_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return schedule_usage_error(msg)
+    }
+  }
+}
+
+async fn run_schedule_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match finalized_schedule_args(parsed) {
+    Ok(args) => {
+      if args.subcommand == "get" {
+        return await run_schedule_get_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      if args.subcommand == "put" {
+        return await run_schedule_put_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      return await run_schedule_tick_subcommand(base_url, options, args, parsed.json_mode)
+    }
+    Err(exit_code) => {
+      return exit_code
+    }
+  }
+}

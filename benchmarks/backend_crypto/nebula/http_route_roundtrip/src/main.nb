@@ -1,0 +1,37 @@
+module main
+import std::bytes
+import std::http
+
+fn make_get() -> Method {
+  return Get
+}
+
+fn sample_request() -> Request {
+  return Request(make_get(), "/hello/nebula", from_string(""))
+}
+
+@bench
+fn bench_http_route_roundtrip() -> Void {
+  let request = sample_request()
+  match route_param1("/hello/:name", request) {
+    Ok(name) => {
+      let reply = ok_text(name)
+      expect_eq(reply.status, 200)
+      if reply.content_type == "text/plain; charset=utf-8" {
+      } else {
+        expect_eq(1, 0)
+      }
+      if to_string(reply.body) == "nebula" {
+      } else {
+        expect_eq(1, 0)
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("bench-http-route-roundtrip")
+}

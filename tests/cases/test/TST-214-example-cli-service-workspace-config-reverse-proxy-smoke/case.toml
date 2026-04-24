@@ -1,0 +1,139 @@
+id = "TST-214-example-cli-service-workspace-config-reverse-proxy-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_config_proxy')
+state_dir = root / 'state'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+wait_until_health_ok(proc, stderr_lines, port)
+
+seen_if_match = []
+
+class Proxy(BaseHTTPRequestHandler):
+    def _forward(self, method: str) -> None:
+        if not self.path.startswith('/api'):
+            self.send_response(404)
+            self.end_headers()
+            return
+        upstream_path = self.path[len('/api'):]
+        if upstream_path == '':
+            upstream_path = '/'
+        length = int(self.headers.get('Content-Length', '0'))
+        body = self.rfile.read(length) if length else None
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        headers = {k: v for k, v in self.headers.items()}
+        if 'If-Match' in headers:
+            seen_if_match.append(headers['If-Match'])
+        conn.request(method, upstream_path, body=body, headers=headers)
+        resp = conn.getresponse()
+        payload = resp.read()
+        self.send_response(resp.status)
+        for key, value in resp.getheaders():
+            if key.lower() == 'transfer-encoding':
+                continue
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(payload)
+        conn.close()
+
+    def do_GET(self) -> None:
+        self._forward('GET')
+
+    def do_POST(self) -> None:
+        self._forward('POST')
+
+    def do_PUT(self) -> None:
+        self._forward('PUT')
+
+    def do_DELETE(self) -> None:
+        self._forward('DELETE')
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+server = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+proxy_port = server.server_address[1]
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+try:
+    proxied_base = f'http://127.0.0.1:{proxy_port}/api/'
+    prewarm = run_ctl(binary, root, 'config-validate', '--url', proxied_base, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm proxied ctl binary')
+
+    put_result = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--string', 'proxy', '--description', 'proxied value', '--json', '--url', proxied_base, out_dir=ctl_out_dir, no_build=True)
+    require_success(put_result, 'proxied config put')
+    put_payload = json.loads(put_result.stdout)
+    initial_revision_id = put_payload.get('entry', {}).get('revision_id')
+    if initial_revision_id != 1:
+        print_completed(put_result)
+        raise SystemExit(f'proxied config put payload mismatch: {put_payload!r}')
+
+    update_result = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--string', 'proxy-updated', '--description', 'proxied value updated', '--if-match', str(initial_revision_id), '--json', '--url', proxied_base, out_dir=ctl_out_dir, no_build=True)
+    require_success(update_result, 'proxied config update')
+    update_payload = json.loads(update_result.stdout)
+    updated_revision_id = update_payload.get('entry', {}).get('revision_id')
+    if updated_revision_id != 2:
+        print_completed(update_result)
+        raise SystemExit(f'proxied config update payload mismatch: {update_payload!r}')
+
+    list_result = run_ctl(binary, root, 'config', 'list', '--project', 'proj', '--env', 'prod', '--json', '--url', proxied_base, out_dir=ctl_out_dir, no_build=True)
+    require_success(list_result, 'proxied config list')
+    list_payload = json.loads(list_result.stdout)
+    if [entry.get('key') for entry in list_payload.get('entries', [])] != ['flag']:
+        print_completed(list_result)
+        raise SystemExit(f'proxied config list payload mismatch: {list_payload!r}')
+
+    get_result = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--json', '--url', proxied_base, out_dir=ctl_out_dir, no_build=True)
+    require_success(get_result, 'proxied config get')
+    get_payload = json.loads(get_result.stdout)
+    if get_payload.get('entry', {}).get('description') != 'proxied value updated' or get_payload.get('entry', {}).get('revision_id') != updated_revision_id:
+        print_completed(get_result)
+        raise SystemExit(f'proxied config get payload mismatch: {get_payload!r}')
+
+    delete_result = run_ctl(binary, root, 'config', 'delete', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--if-match', str(updated_revision_id), '--json', '--url', proxied_base, out_dir=ctl_out_dir, no_build=True)
+    require_success(delete_result, 'proxied config delete')
+    delete_payload = json.loads(delete_result.stdout)
+    if delete_payload.get('deleted_revision_id') != 3:
+        print_completed(delete_result)
+        raise SystemExit(f'proxied config delete payload drifted: {delete_payload!r}')
+
+    if seen_if_match != [f'"{initial_revision_id}"', f'"{updated_revision_id}"']:
+        raise SystemExit(f'proxy did not forward expected If-Match values: {seen_if_match!r}')
+
+    print('example-cli-service-workspace-config-proxy-ok')
+finally:
+    server.shutdown()
+    server.server_close()
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-config-proxy-ok"]

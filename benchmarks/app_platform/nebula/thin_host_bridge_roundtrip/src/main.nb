@@ -1,0 +1,101 @@
+module main
+import counter::counter_core
+import std::json
+
+fn expect_text_eq(actual: String, expected: String) -> Void {
+  if actual == expected {
+  } else {
+    expect_eq(1, 0)
+  }
+}
+
+fn expect_schema(value: Json, expected: String) -> Void {
+  match get_string(value, "schema") {
+    Ok(schema) => {
+      expect_text_eq(schema, expected)
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn expect_payload_counter(payload: Json, expected: Int) -> Void {
+  match get_int(payload, "counter") {
+    Ok(counter) => {
+      expect_eq(counter, expected)
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn expect_payload_last_command(payload: Json, expected: String) -> Void {
+  match get_string(payload, "last_command") {
+    Ok(last_command) => {
+      expect_text_eq(last_command, expected)
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn verify_event_text(event_text: String) -> Void {
+  match parse(event_text) {
+    Ok(event_json) => {
+      expect_schema(event_json, "thin-host-bridge.event.v1")
+      match get_string(event_json, "kind") {
+        Ok(kind) => {
+          expect_text_eq(kind, "increment_applied")
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn verify_snapshot_text(snapshot_text: String) -> Void {
+  match parse(snapshot_text) {
+    Ok(snapshot_json) => {
+      expect_schema(snapshot_json, "thin-host-bridge.snapshot.v1")
+      match get_value(snapshot_json, "payload") {
+        Ok(payload) => {
+          expect_payload_counter(payload, 1)
+          expect_payload_last_command(payload, "increment")
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+@bench
+fn bench_thin_host_bridge_roundtrip() -> Void {
+  let state = initial_state()
+  let command = increment_command_text()
+  match apply_command_text(state, command) {
+    Ok(step) => {
+      verify_event_text(step.event_text())
+      verify_snapshot_text(query_snapshot_text(step.state()))
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-thin-host-bridge-roundtrip")
+}

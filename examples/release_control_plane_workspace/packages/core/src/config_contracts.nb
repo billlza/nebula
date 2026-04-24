@@ -1,0 +1,425 @@
+module config_contracts
+import contracts
+import std::json
+import std::result
+
+struct ConfigValue {
+  kind: String
+  string_value: String
+  bool_value: Bool
+  int_value: Int
+}
+
+struct ConfigPutRequest {
+  description: String
+  value: ConfigValue
+}
+
+struct ConfigEntry {
+  app: String
+  channel: String
+  key: String
+  description: String
+  value: ConfigValue
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ConfigEntryEnvelope {
+  entry: ConfigEntry
+  request_id: String
+  unix_ms: Int
+}
+
+struct ConfigListEnvelope {
+  app: String
+  channel: String
+  snapshot_revision_id: Int
+  entries: Json
+  request_id: String
+  unix_ms: Int
+}
+
+struct ConfigDeleteEnvelope {
+  app: String
+  channel: String
+  key: String
+  deleted: Bool
+  deleted_revision_id: Int
+  request_id: String
+  unix_ms: Int
+}
+
+struct ConfigRevision {
+  revision_id: Int
+  app: String
+  channel: String
+  key: String
+  action: String
+  description: String
+  value: ConfigValue
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ConfigHistoryEnvelope {
+  app: String
+  channel: String
+  key: String
+  revisions: Json
+  request_id: String
+  unix_ms: Int
+}
+
+struct ConfigScopeFields {
+  app: String
+  channel: String
+}
+
+struct ConfigIdentityFields {
+  app: String
+  channel: String
+  key: String
+}
+
+struct ConfigEntryPayloadFields {
+  description: String
+  value: ConfigValue
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ConfigEntryStateFields {
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ConfigRevisionPayloadFields {
+  description: String
+  value: ConfigValue
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+fn config_string_value(text: String) -> ConfigValue {
+  return ConfigValue("string", text, false, 0)
+}
+
+fn config_bool_value(value: Bool) -> ConfigValue {
+  return ConfigValue("bool", "", value, 0)
+}
+
+fn config_int_value(value: Int) -> ConfigValue {
+  return ConfigValue("int", "", false, value)
+}
+
+fn ConfigValue_as_json(self: ConfigValue) -> Json {
+  return object4(
+    "kind",
+    string_value(self.kind),
+    "string_value",
+    string_value(self.string_value),
+    "bool_value",
+    bool_value(self.bool_value),
+    "int_value",
+    int_value(self.int_value)
+  )
+}
+
+fn ConfigPutRequest_as_json(self: ConfigPutRequest) -> Json {
+  return object2(
+    "description",
+    string_value(self.description),
+    "value",
+    self.value.as_json()
+  )
+}
+
+fn ConfigEntry_as_json(self: ConfigEntry) -> Json {
+  return object7(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "key",
+    string_value(self.key),
+    "description",
+    string_value(self.description),
+    "value",
+    self.value.as_json(),
+    "revision_id",
+    int_value(self.revision_id),
+    "meta",
+    object2(
+      "updated_by",
+      string_value(self.updated_by),
+      "updated_unix_ms",
+      int_value(self.updated_unix_ms)
+    )
+  )
+}
+
+fn ConfigEntryEnvelope_as_json(self: ConfigEntryEnvelope) -> Json {
+  return object3(
+    "entry",
+    self.entry.as_json(),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ConfigListEnvelope_as_json(self: ConfigListEnvelope) -> Json {
+  return object6(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "snapshot_revision_id",
+    int_value(self.snapshot_revision_id),
+    "entries",
+    self.entries,
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ConfigDeleteEnvelope_as_json(self: ConfigDeleteEnvelope) -> Json {
+  return object7(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "key",
+    string_value(self.key),
+    "deleted",
+    bool_value(self.deleted),
+    "deleted_revision_id",
+    int_value(self.deleted_revision_id),
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn ConfigRevision_as_json(self: ConfigRevision) -> Json {
+  return object7(
+    "revision_id",
+    int_value(self.revision_id),
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "key",
+    string_value(self.key),
+    "action",
+    string_value(self.action),
+    "description",
+    string_value(self.description),
+    "value",
+    object3(
+      "payload",
+      self.value.as_json(),
+      "updated_by",
+      string_value(self.updated_by),
+      "updated_unix_ms",
+      int_value(self.updated_unix_ms)
+    )
+  )
+}
+
+fn ConfigHistoryEnvelope_as_json(self: ConfigHistoryEnvelope) -> Json {
+  return object6(
+    "app",
+    string_value(self.app),
+    "channel",
+    string_value(self.channel),
+    "key",
+    string_value(self.key),
+    "revisions",
+    self.revisions,
+    "request_id",
+    string_value(self.request_id),
+    "unix_ms",
+    int_value(self.unix_ms)
+  )
+}
+
+fn config_value_from_json(value: Json) -> Result<ConfigValue, String> {
+  let kind = get_string(value, "kind")?
+  let string_value_text = get_string(value, "string_value")?
+  let bool_value_flag = get_bool(value, "bool_value")?
+  let int_value_number = get_int(value, "int_value")?
+  return Ok(ConfigValue(kind, string_value_text, bool_value_flag, int_value_number))
+}
+
+fn config_put_request_from_json(value: Json) -> Result<ConfigPutRequest, String> {
+  let description = get_string(value, "description")?
+  let config_value_json = get_value(value, "value")?
+  let config_value = config_value_from_json(config_value_json)?
+  return Ok(ConfigPutRequest(description, config_value))
+}
+
+fn config_scope_fields_from_json(value: Json) -> Result<ConfigScopeFields, String> {
+  let app_name = get_string(value, "app")?
+  let channel = get_string(value, "channel")?
+  return Ok(ConfigScopeFields(app_name, channel))
+}
+
+fn config_identity_fields_from_json(value: Json) -> Result<ConfigIdentityFields, String> {
+  let scope = config_scope_fields_from_json(value)?
+  let key = get_string(value, "key")?
+  return Ok(ConfigIdentityFields(scope.app, scope.channel, key))
+}
+
+fn config_entry_meta_fields_from_json(value: Json) -> Result<ConfigEntryStateFields, String> {
+  let meta = get_value(value, "meta")?
+  let revision_id = get_int(value, "revision_id")?
+  let updated_by = get_string(meta, "updated_by")?
+  let updated_unix_ms = get_int(meta, "updated_unix_ms")?
+  return Ok(ConfigEntryStateFields(revision_id, updated_by, updated_unix_ms))
+}
+
+fn config_entry_payload_fields_from_json(value: Json) -> Result<ConfigEntryPayloadFields, String> {
+  let description = get_string(value, "description")?
+  let config_value_json = get_value(value, "value")?
+  let config_value = config_value_from_json(config_value_json)?
+  let meta_fields = config_entry_meta_fields_from_json(value)?
+  return Ok(ConfigEntryPayloadFields(description,
+                                     config_value,
+                                     meta_fields.revision_id,
+                                     meta_fields.updated_by,
+                                     meta_fields.updated_unix_ms))
+}
+
+fn config_entry_from_json(value: Json) -> Result<ConfigEntry, String> {
+  let identity = config_identity_fields_from_json(value)?
+  let payload = config_entry_payload_fields_from_json(value)?
+  return Ok(ConfigEntry(identity.app,
+                        identity.channel,
+                        identity.key,
+                        payload.description,
+                        payload.value,
+                        payload.revision_id,
+                        payload.updated_by,
+                        payload.updated_unix_ms))
+}
+
+fn config_entry_envelope_from_json(value: Json) -> Result<ConfigEntryEnvelope, String> {
+  let entry_json = get_value(value, "entry")?
+  let entry = config_entry_from_json(entry_json)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ConfigEntryEnvelope(entry, metadata.request_id, metadata.unix_ms))
+}
+
+fn validate_config_entries_array(entries: Json) -> Result<Bool, String> {
+  let count = array_len(entries)?
+  let index = 0
+  while index < count {
+    let entry_json = array_get(entries, index)?
+    let entry = config_entry_from_json(entry_json)?
+    if entry.key == "" {
+      return Err("config list entry is missing key")
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn config_list_envelope_from_json(value: Json) -> Result<ConfigListEnvelope, String> {
+  let scope = config_scope_fields_from_json(value)?
+  let snapshot_revision_id = get_int(value, "snapshot_revision_id")?
+  let entries = get_value(value, "entries")?
+  validate_config_entries_array(entries)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ConfigListEnvelope(scope.app,
+                               scope.channel,
+                               snapshot_revision_id,
+                               entries,
+                               metadata.request_id,
+                               metadata.unix_ms))
+}
+
+fn config_delete_envelope_from_json(value: Json) -> Result<ConfigDeleteEnvelope, String> {
+  let identity = config_identity_fields_from_json(value)?
+  let deleted = get_bool(value, "deleted")?
+  let deleted_revision_id = get_int(value, "deleted_revision_id")?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ConfigDeleteEnvelope(identity.app,
+                                 identity.channel,
+                                 identity.key,
+                                 deleted,
+                                 deleted_revision_id,
+                                 metadata.request_id,
+                                 metadata.unix_ms))
+}
+
+fn config_revision_value_from_payload(payload: Json) -> Result<ConfigValue, String> {
+  let config_value_json = get_value(payload, "payload")?
+  return config_value_from_json(config_value_json)
+}
+
+fn config_revision_metadata_from_payload(value: Json,
+                                         payload: Json,
+                                         config_value: ConfigValue) -> Result<ConfigRevisionPayloadFields, String> {
+  let updated_by = get_string(payload, "updated_by")?
+  let updated_unix_ms = get_int(payload, "updated_unix_ms")?
+  let description = get_string(value, "description")?
+  return Ok(ConfigRevisionPayloadFields(description, config_value, updated_by, updated_unix_ms))
+}
+
+fn config_revision_payload_fields_from_json(value: Json) -> Result<ConfigRevisionPayloadFields, String> {
+  let payload = get_value(value, "value")?
+  let config_value = config_revision_value_from_payload(payload)?
+  return config_revision_metadata_from_payload(value, payload, config_value)
+}
+
+fn config_revision_from_json(value: Json) -> Result<ConfigRevision, String> {
+  let revision_id = get_int(value, "revision_id")?
+  let identity = config_identity_fields_from_json(value)?
+  let action = get_string(value, "action")?
+  let payload = config_revision_payload_fields_from_json(value)?
+  return Ok(ConfigRevision(revision_id,
+                           identity.app,
+                           identity.channel,
+                           identity.key,
+                           action,
+                           payload.description,
+                           payload.value,
+                           payload.updated_by,
+                           payload.updated_unix_ms))
+}
+
+fn validate_config_revisions_array(revisions: Json) -> Result<Bool, String> {
+  let count = array_len(revisions)?
+  let index = 0
+  while index < count {
+    let revision_json = array_get(revisions, index)?
+    let revision = config_revision_from_json(revision_json)?
+    if revision.revision_id < 0 {
+      return Err("config history revision_id must be non-negative")
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn config_history_envelope_from_json(value: Json) -> Result<ConfigHistoryEnvelope, String> {
+  let identity = config_identity_fields_from_json(value)?
+  let revisions = get_value(value, "revisions")?
+  validate_config_revisions_array(revisions)?
+  let metadata = envelope_metadata_from_json(value)?
+  return Ok(ConfigHistoryEnvelope(identity.app,
+                                  identity.channel,
+                                  identity.key,
+                                  revisions,
+                                  metadata.request_id,
+                                  metadata.unix_ms))
+}

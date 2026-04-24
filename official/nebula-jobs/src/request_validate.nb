@@ -1,0 +1,53 @@
+module request_validate
+import contracts
+import validate
+import std::json
+import std::result
+
+fn validate_worker_claim_request_shape(worker_id: String, task_kind: String) -> Result<Bool, String> {
+  return validate_worker_claim_request(WorkerClaimRequest(worker_id, task_kind, 0))
+}
+
+fn validate_worker_complete_request_shape(worker_id: String,
+                                         lease_id: String,
+                                         status: String) -> Result<Bool, String> {
+  return validate_worker_complete_request(WorkerCompleteRequest(worker_id,
+                                                               lease_id,
+                                                               status,
+                                                               "",
+                                                               null_value(),
+                                                               0))
+}
+
+fn validate_approval_gate_resolve_request_shape(run_id: Int,
+                                                stage_name: String,
+                                                stage_index: Int,
+                                                decision: String,
+                                                actor: String,
+                                                now_unix_ms: Int) -> Result<Bool, String> {
+  return validate_approval_gate_resolve_request(ApprovalGateResolveRequest(run_id,
+                                                                          stage_name,
+                                                                          stage_index,
+                                                                          decision,
+                                                                          actor,
+                                                                          "",
+                                                                          now_unix_ms))
+}
+
+fn validate_outbox_complete_request_shape(worker_id: String,
+                                          lease_id: String,
+                                          status: String,
+                                          next_attempt_unix_ms: Int) -> Result<Bool, String> {
+  return validate_outbox_complete_request(OutboxCompleteRequest(worker_id,
+                                                               lease_id,
+                                                               status,
+                                                               "",
+                                                               next_attempt_unix_ms,
+                                                               0))
+}
+
+fn validate_outbox_claim_request_shape(worker_id: String,
+                                       topic: String,
+                                       now_unix_ms: Int) -> Result<Bool, String> {
+  return validate_outbox_claim_request(OutboxClaimRequest(worker_id, topic, now_unix_ms))
+}

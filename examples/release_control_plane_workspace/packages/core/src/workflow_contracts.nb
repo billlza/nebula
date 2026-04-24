@@ -1,0 +1,842 @@
+module workflow_contracts
+import std::json
+import std::result
+
+struct WorkflowStageSpec {
+  name: String
+  kind: String
+  task_kind: String
+  timeout_s: Int
+  max_attempts: Int
+}
+
+struct WorkflowPutRequest {
+  trigger_kind: String
+  event_kind: String
+  stages: Json
+}
+
+struct WorkflowDefinition {
+  app: String
+  channel: String
+  trigger_kind: String
+  event_kind: String
+  stages: Json
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct WorkflowDefinitionEnvelope {
+  definition: WorkflowDefinition
+  request_id: String
+  unix_ms: Int
+}
+
+struct WorkflowStageRun {
+  stage_index: Int
+  stage_name: String
+  kind: String
+  task_kind: String
+  status: String
+  attempt: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct WorkflowStageRunMetaFields {
+  worker_id: String
+  lease_expires_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct WorkflowStageRunFields {
+  stage_index: Int
+  stage_name: String
+  kind: String
+  task_kind: String
+  status: String
+  attempt: Int
+  lease_id: String
+}
+
+struct WorkflowRun {
+  run_id: Int
+  app: String
+  channel: String
+  workflow_revision_id: Int
+  event_id: String
+  event_kind: String
+  release_revision_id: Int
+  status: String
+  current_stage_index: Int
+  requested_by: String
+  requested_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  stages: Json
+}
+
+struct WorkflowDefinitionMetaFields {
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct WorkflowDefinitionFields {
+  app: String
+  channel: String
+  trigger_kind: String
+  event_kind: String
+  stages: Json
+  revision_id: Int
+}
+
+struct WorkflowRunMetaFields {
+  status: String
+  current_stage_index: Int
+  requested_by: String
+  requested_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  stages: Json
+}
+
+struct WorkflowRunFields {
+  run_id: Int
+  app: String
+  channel: String
+  workflow_revision_id: Int
+  event_id: String
+  event_kind: String
+  release_revision_id: Int
+}
+
+struct WorkflowRunEnvelope {
+  run: WorkflowRun
+  request_id: String
+  unix_ms: Int
+}
+
+struct WorkflowRunListEnvelope {
+  app: String
+  channel: String
+  runs: Json
+  request_id: String
+  unix_ms: Int
+}
+
+struct WorkflowEventSubmitRequest {
+  event_id: String
+  event_kind: String
+  release_revision_id: Int
+  payload: Json
+}
+
+struct WorkflowEventSubmitEnvelope {
+  outcome: String
+  run: WorkflowRun
+  request_id: String
+  unix_ms: Int
+}
+
+struct WorkerClaimRequest {
+  worker_id: String
+  task_kind: String
+}
+
+struct WorkerLease {
+  lease_id: String
+  run_id: Int
+  app: String
+  channel: String
+  stage_index: Int
+  stage_name: String
+  task_kind: String
+  release_revision_id: Int
+  payload: Json
+  lease_expires_unix_ms: Int
+}
+
+struct WorkerLeaseMetaFields {
+  release_revision_id: Int
+  payload: Json
+  lease_expires_unix_ms: Int
+}
+
+struct WorkerLeaseFields {
+  lease_id: String
+  run_id: Int
+  app: String
+  channel: String
+  stage_index: Int
+  stage_name: String
+  task_kind: String
+}
+
+struct WorkerClaimEnvelope {
+  outcome: String
+  lease: WorkerLease
+  request_id: String
+  unix_ms: Int
+}
+
+struct WorkerHeartbeatRequest {
+  worker_id: String
+}
+
+struct WorkerHeartbeatEnvelope {
+  lease: WorkerLease
+  request_id: String
+  unix_ms: Int
+}
+
+struct WorkerCompleteRequest {
+  worker_id: String
+  status: String
+  result_message: String
+  result_payload: Json
+}
+
+struct WorkerCompleteEnvelope {
+  run: WorkflowRun
+  request_id: String
+  unix_ms: Int
+}
+
+fn idle_worker_lease() -> WorkerLease {
+  return WorkerLease("", 0, "", "", 0, "", "", 0, null_value(), 0)
+}
+
+fn WorkflowStageSpec_as_json(self: WorkflowStageSpec) -> Json {
+  return object5("name",
+                 string_value(self.name),
+                 "kind",
+                 string_value(self.kind),
+                 "task_kind",
+                 string_value(self.task_kind),
+                 "timeout_s",
+                 int_value(self.timeout_s),
+                 "max_attempts",
+                 int_value(self.max_attempts))
+}
+
+fn WorkflowPutRequest_as_json(self: WorkflowPutRequest) -> Json {
+  return object3("trigger_kind",
+                 string_value(self.trigger_kind),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "stages",
+                 self.stages)
+}
+
+fn WorkflowDefinition_as_json(self: WorkflowDefinition) -> Json {
+  return object7("app",
+                 string_value(self.app),
+                 "channel",
+                 string_value(self.channel),
+                 "trigger_kind",
+                 string_value(self.trigger_kind),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "stages",
+                 self.stages,
+                 "revision_id",
+                 int_value(self.revision_id),
+                 "meta",
+                 object2("updated_by",
+                         string_value(self.updated_by),
+                         "updated_unix_ms",
+                         int_value(self.updated_unix_ms)))
+}
+
+fn WorkflowDefinitionEnvelope_as_json(self: WorkflowDefinitionEnvelope) -> Json {
+  return object3("definition",
+                 self.definition.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WorkflowStageRun_as_json(self: WorkflowStageRun) -> Json {
+  return object8("stage_index",
+                 int_value(self.stage_index),
+                 "stage_name",
+                 string_value(self.stage_name),
+                 "kind",
+                 string_value(self.kind),
+                 "task_kind",
+                 string_value(self.task_kind),
+                 "status",
+                 string_value(self.status),
+                 "attempt",
+                 int_value(self.attempt),
+                 "lease_id",
+                 string_value(self.lease_id),
+                 "meta",
+                         object6("worker_id",
+                         string_value(self.worker_id),
+                         "lease_expires_unix_ms",
+                         int_value(self.lease_expires_unix_ms),
+                         "started_unix_ms",
+                         int_value(self.started_unix_ms),
+                         "finished_unix_ms",
+                         int_value(self.finished_unix_ms),
+                         "result_message",
+                         string_value(self.result_message),
+                         "result_payload",
+                         self.result_payload))
+}
+
+fn WorkflowRun_as_json(self: WorkflowRun) -> Json {
+  return object8("run_id",
+                 int_value(self.run_id),
+                 "app",
+                 string_value(self.app),
+                 "channel",
+                 string_value(self.channel),
+                 "workflow_revision_id",
+                 int_value(self.workflow_revision_id),
+                 "event_id",
+                 string_value(self.event_id),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "release_revision_id",
+                 int_value(self.release_revision_id),
+                 "meta",
+                 object7("status",
+                         string_value(self.status),
+                         "current_stage_index",
+                         int_value(self.current_stage_index),
+                         "requested_by",
+                         string_value(self.requested_by),
+                         "requested_unix_ms",
+                         int_value(self.requested_unix_ms),
+                         "finished_unix_ms",
+                         int_value(self.finished_unix_ms),
+                         "result_message",
+                         string_value(self.result_message),
+                         "stages",
+                         self.stages))
+}
+
+fn WorkflowRunEnvelope_as_json(self: WorkflowRunEnvelope) -> Json {
+  return object3("run",
+                 self.run.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WorkflowRunListEnvelope_as_json(self: WorkflowRunListEnvelope) -> Json {
+  return object5("app",
+                 string_value(self.app),
+                 "channel",
+                 string_value(self.channel),
+                 "runs",
+                 self.runs,
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WorkflowEventSubmitRequest_as_json(self: WorkflowEventSubmitRequest) -> Json {
+  return object4("event_id",
+                 string_value(self.event_id),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "release_revision_id",
+                 int_value(self.release_revision_id),
+                 "payload",
+                 self.payload)
+}
+
+fn WorkflowEventSubmitEnvelope_as_json(self: WorkflowEventSubmitEnvelope) -> Json {
+  return object4("outcome",
+                 string_value(self.outcome),
+                 "run",
+                 self.run.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WorkerClaimRequest_as_json(self: WorkerClaimRequest) -> Json {
+  return object2("worker_id",
+                 string_value(self.worker_id),
+                 "task_kind",
+                 string_value(self.task_kind))
+}
+
+fn WorkerLease_as_json(self: WorkerLease) -> Json {
+  return object8("lease_id",
+                 string_value(self.lease_id),
+                 "run_id",
+                 int_value(self.run_id),
+                 "app",
+                 string_value(self.app),
+                 "channel",
+                 string_value(self.channel),
+                 "stage_index",
+                 int_value(self.stage_index),
+                 "stage_name",
+                 string_value(self.stage_name),
+                 "task_kind",
+                 string_value(self.task_kind),
+                 "meta",
+                 object3("release_revision_id",
+                         int_value(self.release_revision_id),
+                         "payload",
+                         self.payload,
+                         "lease_expires_unix_ms",
+                         int_value(self.lease_expires_unix_ms)))
+}
+
+fn WorkerClaimEnvelope_as_json(self: WorkerClaimEnvelope) -> Json {
+  return object4("outcome",
+                 string_value(self.outcome),
+                 "lease",
+                 self.lease.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WorkerHeartbeatRequest_as_json(self: WorkerHeartbeatRequest) -> Json {
+  return object1("worker_id", string_value(self.worker_id))
+}
+
+fn WorkerHeartbeatEnvelope_as_json(self: WorkerHeartbeatEnvelope) -> Json {
+  return object3("lease",
+                 self.lease.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WorkerCompleteRequest_as_json(self: WorkerCompleteRequest) -> Json {
+  return object4("worker_id",
+                 string_value(self.worker_id),
+                 "status",
+                 string_value(self.status),
+                 "result_message",
+                 string_value(self.result_message),
+                 "result_payload",
+                 self.result_payload)
+}
+
+fn WorkerCompleteEnvelope_as_json(self: WorkerCompleteEnvelope) -> Json {
+  return object3("run",
+                 self.run.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn optional_result_payload(value: Json) -> Json {
+  match get_value(value, "result_payload") {
+    Ok(payload) => {
+      return payload
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn workflow_stage_spec_from_json(value: Json) -> Result<WorkflowStageSpec, String> {
+  return Ok(WorkflowStageSpec(get_string(value, "name")?,
+                              get_string(value, "kind")?,
+                              get_string(value, "task_kind")?,
+                              get_int(value, "timeout_s")?,
+                              get_int(value, "max_attempts")?))
+}
+
+fn workflow_stage_run_meta_from_json(value: Json) -> Result<WorkflowStageRunMetaFields, String> {
+  return Ok(WorkflowStageRunMetaFields(get_string(value, "worker_id")?,
+                                       get_int(value, "lease_expires_unix_ms")?,
+                                       get_int(value, "started_unix_ms")?,
+                                       get_int(value, "finished_unix_ms")?,
+                                       get_string(value, "result_message")?,
+                                       optional_result_payload(value)))
+}
+
+fn workflow_stage_run_fields_from_json(value: Json) -> Result<WorkflowStageRunFields, String> {
+  return Ok(WorkflowStageRunFields(get_int(value, "stage_index")?,
+                                   get_string(value, "stage_name")?,
+                                   get_string(value, "kind")?,
+                                   get_string(value, "task_kind")?,
+                                   get_string(value, "status")?,
+                                   get_int(value, "attempt")?,
+                                   get_string(value, "lease_id")?))
+}
+
+fn workflow_stage_run_from_json(value: Json) -> Result<WorkflowStageRun, String> {
+  let fields = workflow_stage_run_fields_from_json(value)?
+  let meta = workflow_stage_run_meta_from_json(get_value(value, "meta")?)?
+  return Ok(WorkflowStageRun(fields.stage_index,
+                             fields.stage_name,
+                             fields.kind,
+                             fields.task_kind,
+                             fields.status,
+                             fields.attempt,
+                             fields.lease_id,
+                             meta.worker_id,
+                             meta.lease_expires_unix_ms,
+                             meta.started_unix_ms,
+                             meta.finished_unix_ms,
+                             meta.result_message,
+                             meta.result_payload))
+}
+
+fn workflow_put_request_from_json(value: Json) -> Result<WorkflowPutRequest, String> {
+  return Ok(WorkflowPutRequest(get_string(value, "trigger_kind")?,
+                               get_string(value, "event_kind")?,
+                               get_value(value, "stages")?))
+}
+
+fn workflow_definition_meta_from_json(value: Json) -> Result<WorkflowDefinitionMetaFields, String> {
+  return Ok(WorkflowDefinitionMetaFields(get_string(value, "updated_by")?,
+                                         get_int(value, "updated_unix_ms")?))
+}
+
+fn workflow_definition_fields_from_json(value: Json) -> Result<WorkflowDefinitionFields, String> {
+  return Ok(WorkflowDefinitionFields(get_string(value, "app")?,
+                                     get_string(value, "channel")?,
+                                     get_string(value, "trigger_kind")?,
+                                     get_string(value, "event_kind")?,
+                                     get_value(value, "stages")?,
+                                     get_int(value, "revision_id")?))
+}
+
+fn workflow_definition_from_json(value: Json) -> Result<WorkflowDefinition, String> {
+  let fields = workflow_definition_fields_from_json(value)?
+  let meta = workflow_definition_meta_from_json(get_value(value, "meta")?)?
+  return Ok(WorkflowDefinition(fields.app,
+                               fields.channel,
+                               fields.trigger_kind,
+                               fields.event_kind,
+                               fields.stages,
+                               fields.revision_id,
+                               meta.updated_by,
+                               meta.updated_unix_ms))
+}
+
+fn workflow_definition_envelope_from_json(value: Json) -> Result<WorkflowDefinitionEnvelope, String> {
+  return Ok(WorkflowDefinitionEnvelope(workflow_definition_from_json(get_value(value, "definition")?)?,
+                                       get_string(value, "request_id")?,
+                                       get_int(value, "unix_ms")?))
+}
+
+fn workflow_run_meta_from_json(value: Json) -> Result<WorkflowRunMetaFields, String> {
+  return Ok(WorkflowRunMetaFields(get_string(value, "status")?,
+                                  get_int(value, "current_stage_index")?,
+                                  get_string(value, "requested_by")?,
+                                  get_int(value, "requested_unix_ms")?,
+                                  get_int(value, "finished_unix_ms")?,
+                                  get_string(value, "result_message")?,
+                                  get_value(value, "stages")?))
+}
+
+fn workflow_run_fields_from_json(value: Json) -> Result<WorkflowRunFields, String> {
+  return Ok(WorkflowRunFields(get_int(value, "run_id")?,
+                              get_string(value, "app")?,
+                              get_string(value, "channel")?,
+                              get_int(value, "workflow_revision_id")?,
+                              get_string(value, "event_id")?,
+                              get_string(value, "event_kind")?,
+                              get_int(value, "release_revision_id")?))
+}
+
+fn workflow_run_from_json(value: Json) -> Result<WorkflowRun, String> {
+  let fields = workflow_run_fields_from_json(value)?
+  let meta = workflow_run_meta_from_json(get_value(value, "meta")?)?
+  return Ok(WorkflowRun(fields.run_id,
+                        fields.app,
+                        fields.channel,
+                        fields.workflow_revision_id,
+                        fields.event_id,
+                        fields.event_kind,
+                        fields.release_revision_id,
+                        meta.status,
+                        meta.current_stage_index,
+                        meta.requested_by,
+                        meta.requested_unix_ms,
+                        meta.finished_unix_ms,
+                        meta.result_message,
+                        meta.stages))
+}
+
+fn workflow_run_envelope_from_json(value: Json) -> Result<WorkflowRunEnvelope, String> {
+  return Ok(WorkflowRunEnvelope(workflow_run_from_json(get_value(value, "run")?)?,
+                                get_string(value, "request_id")?,
+                                get_int(value, "unix_ms")?))
+}
+
+fn workflow_run_list_envelope_from_json(value: Json) -> Result<WorkflowRunListEnvelope, String> {
+  return Ok(WorkflowRunListEnvelope(get_string(value, "app")?,
+                                    get_string(value, "channel")?,
+                                    get_value(value, "runs")?,
+                                    get_string(value, "request_id")?,
+                                    get_int(value, "unix_ms")?))
+}
+
+fn workflow_event_submit_request_from_json(value: Json) -> Result<WorkflowEventSubmitRequest, String> {
+  return Ok(WorkflowEventSubmitRequest(get_string(value, "event_id")?,
+                                       get_string(value, "event_kind")?,
+                                       get_int(value, "release_revision_id")?,
+                                       get_value(value, "payload")?))
+}
+
+fn workflow_event_submit_envelope_from_json(value: Json) -> Result<WorkflowEventSubmitEnvelope, String> {
+  return Ok(WorkflowEventSubmitEnvelope(get_string(value, "outcome")?,
+                                        workflow_run_from_json(get_value(value, "run")?)?,
+                                        get_string(value, "request_id")?,
+                                        get_int(value, "unix_ms")?))
+}
+
+fn worker_claim_request_from_json(value: Json) -> Result<WorkerClaimRequest, String> {
+  return Ok(WorkerClaimRequest(get_string(value, "worker_id")?,
+                               get_string(value, "task_kind")?))
+}
+
+fn worker_lease_meta_from_json(value: Json) -> Result<WorkerLeaseMetaFields, String> {
+  return Ok(WorkerLeaseMetaFields(get_int(value, "release_revision_id")?,
+                                  get_value(value, "payload")?,
+                                  get_int(value, "lease_expires_unix_ms")?))
+}
+
+fn worker_lease_fields_from_json(value: Json) -> Result<WorkerLeaseFields, String> {
+  return Ok(WorkerLeaseFields(get_string(value, "lease_id")?,
+                              get_int(value, "run_id")?,
+                              get_string(value, "app")?,
+                              get_string(value, "channel")?,
+                              get_int(value, "stage_index")?,
+                              get_string(value, "stage_name")?,
+                              get_string(value, "task_kind")?))
+}
+
+fn worker_lease_from_json(value: Json) -> Result<WorkerLease, String> {
+  let fields = worker_lease_fields_from_json(value)?
+  let meta = worker_lease_meta_from_json(get_value(value, "meta")?)?
+  return Ok(WorkerLease(fields.lease_id,
+                        fields.run_id,
+                        fields.app,
+                        fields.channel,
+                        fields.stage_index,
+                        fields.stage_name,
+                        fields.task_kind,
+                        meta.release_revision_id,
+                        meta.payload,
+                        meta.lease_expires_unix_ms))
+}
+
+fn worker_claim_envelope_from_json(value: Json) -> Result<WorkerClaimEnvelope, String> {
+  return Ok(WorkerClaimEnvelope(get_string(value, "outcome")?,
+                                worker_lease_from_json(get_value(value, "lease")?)?,
+                                get_string(value, "request_id")?,
+                                get_int(value, "unix_ms")?))
+}
+
+fn worker_heartbeat_request_from_json(value: Json) -> Result<WorkerHeartbeatRequest, String> {
+  return Ok(WorkerHeartbeatRequest(get_string(value, "worker_id")?))
+}
+
+fn worker_heartbeat_envelope_from_json(value: Json) -> Result<WorkerHeartbeatEnvelope, String> {
+  return Ok(WorkerHeartbeatEnvelope(worker_lease_from_json(get_value(value, "lease")?)?,
+                                    get_string(value, "request_id")?,
+                                    get_int(value, "unix_ms")?))
+}
+
+fn worker_complete_request_from_json(value: Json) -> Result<WorkerCompleteRequest, String> {
+  return Ok(WorkerCompleteRequest(get_string(value, "worker_id")?,
+                                  get_string(value, "status")?,
+                                  get_string(value, "result_message")?,
+                                  optional_result_payload(value)))
+}
+
+fn worker_complete_envelope_from_json(value: Json) -> Result<WorkerCompleteEnvelope, String> {
+  return Ok(WorkerCompleteEnvelope(workflow_run_from_json(get_value(value, "run")?)?,
+                                   get_string(value, "request_id")?,
+                                   get_int(value, "unix_ms")?))
+}
+
+@test
+fn test_workflow_definition_envelope_roundtrip() -> Void {
+  let stages = array_build(array_push(array_builder(),
+                                      WorkflowStageSpec("gate", "approval_gate", "", 0, 0).as_json()))
+  let definition = WorkflowDefinition("control-plane",
+                                      "prod",
+                                      "internal_event",
+                                      "release_apply_requested",
+                                      stages,
+                                      1,
+                                      "admin",
+                                      123)
+  let envelope = WorkflowDefinitionEnvelope(definition, "req-workflow", 456)
+  match workflow_definition_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.definition.app == "control-plane", "workflow definition app drifted")
+      assert(decoded.definition.channel == "prod", "workflow definition channel drifted")
+      assert(decoded.definition.revision_id == 1, "workflow definition revision drifted")
+      assert(decoded.request_id == "req-workflow", "workflow definition request_id drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_workflow_run_envelope_roundtrip() -> Void {
+  let stage_runs = array_builder()
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(0, "gate", "approval_gate", "", "completed", 0, "", "", 0, 0, 10, "", null_value()).as_json())
+  stage_runs = array_push(stage_runs,
+                          WorkflowStageRun(1, "apply", "leased_task", "apply_release", "ready", 1, "", "", 0, 0, 0, "", null_value()).as_json())
+  let run = WorkflowRun(9,
+                        "control-plane",
+                        "prod",
+                        1,
+                        "evt-1",
+                        "release_apply_requested",
+                        2,
+                        "ready",
+                        1,
+                        "writer",
+                        100,
+                        0,
+                        "",
+                        array_build(stage_runs))
+  let envelope = WorkflowRunEnvelope(run, "req-run", 200)
+  match workflow_run_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.run.run_id == 9, "workflow run id drifted")
+      assert(decoded.run.status == "ready", "workflow run status drifted")
+      assert(decoded.run.event_id == "evt-1", "workflow run event_id drifted")
+      assert(decoded.request_id == "req-run", "workflow run request_id drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_worker_claim_envelope_roundtrip() -> Void {
+  let lease = WorkerLease("lease-1",
+                          9,
+                          "control-plane",
+                          "prod",
+                          1,
+                          "apply",
+                          "apply_release",
+                          2,
+                          object1("config_revision", int_value(7)),
+                          300)
+  let envelope = WorkerClaimEnvelope("claimed", lease, "req-claim", 400)
+  match worker_claim_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.outcome == "claimed", "worker claim outcome drifted")
+      assert(decoded.lease.lease_id == "lease-1", "worker claim lease drifted")
+      assert(decoded.lease.run_id == 9, "worker claim run drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_workflow_event_submit_existing_roundtrip() -> Void {
+  let stages = array_builder()
+  stages = array_push(stages,
+                      WorkflowStageRun(0, "approval", "approval_gate", "", "completed", 0, "", "", 0, 0, 10, "approval gate passed", null_value()).as_json())
+  stages = array_push(stages,
+                      WorkflowStageRun(1, "apply", "leased_task", "apply_release", "ready", 1, "", "", 0, 0, 0, "", null_value()).as_json())
+  let run = WorkflowRun(12,
+                        "control-plane",
+                        "prod",
+                        2,
+                        "event-release-2",
+                        "release_apply_requested",
+                        3,
+                        "ready",
+                        1,
+                        "writer",
+                        100,
+                        0,
+                        "",
+                        array_build(stages))
+  let envelope = WorkflowEventSubmitEnvelope("existing", run, "req-event-existing", 500)
+  match workflow_event_submit_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.outcome == "existing", "workflow event existing outcome drifted")
+      assert(decoded.run.run_id == 12, "workflow event existing run_id drifted")
+      assert(decoded.run.release_revision_id == 3, "workflow event existing release revision drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_worker_complete_envelope_roundtrip() -> Void {
+  let stages = array_builder()
+  stages = array_push(stages,
+                      WorkflowStageRun(0, "approval", "approval_gate", "", "completed", 0, "", "", 0, 0, 10, "approval gate passed", null_value()).as_json())
+  stages = array_push(stages,
+                      WorkflowStageRun(1,
+                                       "apply",
+                                       "leased_task",
+                                       "apply_release",
+                                       "completed",
+                                       1,
+                                       "lease-1-1",
+                                       "ops-worker",
+                                       130,
+                                       120,
+                                       125,
+                                       "release applied locally",
+                                       null_value()).as_json())
+  let run = WorkflowRun(13,
+                        "control-plane",
+                        "prod",
+                        2,
+                        "event-release-3",
+                        "release_apply_requested",
+                        4,
+                        "completed",
+                        1,
+                        "writer",
+                        110,
+                        125,
+                        "workflow completed",
+                        array_build(stages))
+  let envelope = WorkerCompleteEnvelope(run, "req-complete", 600)
+  match worker_complete_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      assert(decoded.run.status == "completed", "worker complete run status drifted")
+      assert(decoded.run.finished_unix_ms == 125, "worker complete finished_unix_ms drifted")
+      assert(decoded.request_id == "req-complete", "worker complete request_id drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

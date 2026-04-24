@@ -1,0 +1,12 @@
+id = "TST-138-gitignore-build-variants-and-artifacts"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "git -C \"$NEBULA_REPO_ROOT\" check-ignore -v build-audit build-multi build-phase2 artifacts > work/gitignore-build-variants.out"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F '/build-*/' work/gitignore-build-variants.out && grep -F '/artifacts/' work/gitignore-build-variants.out && grep -F 'build-audit' work/gitignore-build-variants.out && grep -F 'build-multi' work/gitignore-build-variants.out && grep -F 'build-phase2' work/gitignore-build-variants.out && grep -F 'artifacts' work/gitignore-build-variants.out"
+expect_rc = 0

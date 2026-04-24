@@ -1,0 +1,7 @@
+id = "TST-053-release-contract-clang-default"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'Official release tooling supports `clang++` as the default host compiler contract' \"$NEBULA_REPO_ROOT/README.md\" && grep -F '`nebula add --git`, `nebula fetch`, and `nebula update` require `git` on `PATH`.' \"$NEBULA_REPO_ROOT/README.md\" && grep -F 'official release behavior treats `clang++` as the supported default host compiler contract' \"$NEBULA_REPO_ROOT/spec/tooling_cli.md\" && grep -F '`add --git`, `fetch`, and `update` require `git` on `PATH`' \"$NEBULA_REPO_ROOT/spec/tooling_cli.md\" && grep -F 'No silent `g++` fallback is part of' \"$NEBULA_REPO_ROOT/RELEASE_PROCESS.md\" && grep -F '`git` dependency resolve path using the shipped binary' \"$NEBULA_REPO_ROOT/RELEASE_PROCESS.md\" && grep -F 'unset CXX' \"$NEBULA_REPO_ROOT/.github/workflows/release.yml\" && grep -F 'Remove-Item Env:CXX' \"$NEBULA_REPO_ROOT/.github/workflows/release.yml\" && grep -F 'add \"$archive_project\" dep --git' \"$NEBULA_REPO_ROOT/.github/workflows/release.yml\" && grep -F 'add $archiveProject dep --git' \"$NEBULA_REPO_ROOT/.github/workflows/release.yml\" && grep -F 'depends_on \"llvm\"' \"$NEBULA_REPO_ROOT/packaging/homebrew/nebula.rb.in\""
+expect_rc = 0

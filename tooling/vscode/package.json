@@ -1,0 +1,84 @@
+{
+  "name": "nebula-vscode",
+  "displayName": "Nebula",
+  "description": "VS Code support for the Nebula language.",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "publisher": "nebula",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/billlza/nebula.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters"
+  ],
+  "activationEvents": [
+    "onLanguage:nebula",
+    "onCommand:nebula.explainSymbol",
+    "onCommand:nebula.newProject",
+    "onCommand:nebula.restartLanguageServer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "nebula",
+        "aliases": [
+          "Nebula",
+          "nebula"
+        ],
+        "extensions": [
+          ".nb"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nebula",
+        "scopeName": "source.nebula",
+        "path": "./syntaxes/nebula.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nebula.explainSymbol",
+        "title": "Nebula: Explain Symbol"
+      },
+      {
+        "command": "nebula.newProject",
+        "title": "Nebula: New Project"
+      },
+      {
+        "command": "nebula.restartLanguageServer",
+        "title": "Nebula: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "Nebula",
+      "properties": {
+        "nebula.binaryPath": {
+          "type": "string",
+          "default": "nebula",
+          "description": "Path to the nebula CLI binary used for LSP, fmt, explain, and new."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.3"
+  }
+}

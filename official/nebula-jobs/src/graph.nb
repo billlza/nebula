@@ -1,0 +1,8 @@
+module graph
+import std::json
+import std::result
+import validate
+
+fn validate_stage_graph(stages: Json) -> Result<Bool, String> {
+  return validate_stage_specs(stages)
+}

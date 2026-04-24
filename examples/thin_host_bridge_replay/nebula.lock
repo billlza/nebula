@@ -1,0 +1,53 @@
+schema_version = 2
+root_package = "thin-host-bridge-replay"
+root_manifest_hash = "75e1ae2fa283c447"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "thin-host-bridge-replay"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "75e1ae2fa283c447"
+source_fingerprint = "6a8a971e0507a4b2"
+integrity_fingerprint = "72c17ab6c19f3004"
+is_root = 1
+dependencies = ["bridge=thin-host-bridge", "counter=thin-host-counter-core"]
+
+[[package]]
+name = "thin-host-bridge"
+version = "0.1.0"
+root = "../thin_host_app_core/packages/bridge"
+manifest = "../thin_host_app_core/packages/bridge/nebula.toml"
+entry = "src/host_bridge.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../thin_host_app_core/packages/bridge"
+resolved_rev = ""
+manifest_hash = "ff765a900084745e"
+source_fingerprint = "28f4280b9012f2ad"
+integrity_fingerprint = "b7b981912b0bd3d0"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "thin-host-counter-core"
+version = "0.1.0"
+root = "../thin_host_app_core/packages/counter_core"
+manifest = "../thin_host_app_core/packages/counter_core/nebula.toml"
+entry = "src/counter_core.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../thin_host_app_core/packages/counter_core"
+resolved_rev = ""
+manifest_hash = "fae73102dae29bdd"
+source_fingerprint = "eb90ddf7810417c5"
+integrity_fingerprint = "aa69ada2993f3749"
+is_root = 0
+dependencies = ["bridge=thin-host-bridge"]

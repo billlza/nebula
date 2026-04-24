@@ -1,0 +1,34 @@
+module http
+import std::http
+import std::result
+import std::task
+import server
+
+extern fn __nebula_tls_server_http_read_request(self: TlsServerStream,
+                                                max_header_bytes: Int,
+                                                max_body_bytes: Int) -> Future<Result<Request, String>>
+extern fn __nebula_tls_server_http_write_response(self: TlsServerStream,
+                                                  response: Response) -> Future<Result<Void, String>>
+extern fn __nebula_tls_server_http_write_response_with_connection(self: TlsServerStream,
+                                                                  response: Response,
+                                                                  close_connection: Bool) -> Future<Result<Void, String>>
+
+async fn TlsServerStream_read_request(self: TlsServerStream) -> Result<Request, String> {
+  return await __nebula_tls_server_http_read_request(self, 8192, 1048576)
+}
+
+async fn TlsServerStream_read_request_limited(self: TlsServerStream,
+                                              max_header_bytes: Int,
+                                              max_body_bytes: Int) -> Result<Request, String> {
+  return await __nebula_tls_server_http_read_request(self, max_header_bytes, max_body_bytes)
+}
+
+async fn TlsServerStream_write_response(self: TlsServerStream, response: Response) -> Result<Void, String> {
+  return await __nebula_tls_server_http_write_response(self, response)
+}
+
+async fn TlsServerStream_write_response_with_connection(self: TlsServerStream,
+                                                        response: Response,
+                                                        close_connection: Bool) -> Result<Void, String> {
+  return await __nebula_tls_server_http_write_response_with_connection(self, response, close_connection)
+}

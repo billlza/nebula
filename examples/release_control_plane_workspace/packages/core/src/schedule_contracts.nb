@@ -1,0 +1,388 @@
+module schedule_contracts
+import validate
+import std::json
+import std::result
+
+struct SchedulePutRequest {
+  event_kind: String
+  release_revision_id: Int
+  interval_ms: Int
+  next_due_unix_ms: Int
+  enabled: Bool
+  payload: Json
+}
+
+struct ScheduleDefinition {
+  app: String
+  channel: String
+  schedule_id: String
+  event_kind: String
+  release_revision_id: Int
+  interval_ms: Int
+  next_due_unix_ms: Int
+  enabled: Bool
+  payload: Json
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ScheduleDefinitionMeta {
+  enabled: Bool
+  payload: Json
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ScheduleDefinitionFields {
+  app: String
+  channel: String
+  schedule_id: String
+  event_kind: String
+  release_revision_id: Int
+  interval_ms: Int
+  next_due_unix_ms: Int
+}
+
+struct ScheduleDefinitionEnvelope {
+  definition: ScheduleDefinition
+  request_id: String
+  unix_ms: Int
+}
+
+struct ScheduleTickRequest {
+  now_unix_ms: Int
+}
+
+struct TickedSchedule {
+  schedule_id: String
+  outcome: String
+  run_id: Int
+  event_id: String
+  next_due_unix_ms: Int
+}
+
+struct ScheduleTickEnvelope {
+  checked: Int
+  triggered: Json
+  request_id: String
+  unix_ms: Int
+}
+
+fn SchedulePutRequest_as_json(self: SchedulePutRequest) -> Json {
+  return object6("event_kind",
+                 string_value(self.event_kind),
+                 "release_revision_id",
+                 int_value(self.release_revision_id),
+                 "interval_ms",
+                 int_value(self.interval_ms),
+                 "next_due_unix_ms",
+                 int_value(self.next_due_unix_ms),
+                 "enabled",
+                 bool_value(self.enabled),
+                 "payload",
+                 self.payload)
+}
+
+fn ScheduleDefinition_as_json(self: ScheduleDefinition) -> Json {
+  return object8("app",
+                 string_value(self.app),
+                 "channel",
+                 string_value(self.channel),
+                 "schedule_id",
+                 string_value(self.schedule_id),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "release_revision_id",
+                 int_value(self.release_revision_id),
+                 "interval_ms",
+                 int_value(self.interval_ms),
+                 "next_due_unix_ms",
+                 int_value(self.next_due_unix_ms),
+                 "meta",
+                 object5("enabled",
+                         bool_value(self.enabled),
+                         "payload",
+                         self.payload,
+                         "revision_id",
+                         int_value(self.revision_id),
+                         "updated_by",
+                         string_value(self.updated_by),
+                         "updated_unix_ms",
+                         int_value(self.updated_unix_ms)))
+}
+
+fn ScheduleDefinitionEnvelope_as_json(self: ScheduleDefinitionEnvelope) -> Json {
+  return object3("definition",
+                 self.definition.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn ScheduleTickRequest_as_json(self: ScheduleTickRequest) -> Json {
+  return object1("now_unix_ms", int_value(self.now_unix_ms))
+}
+
+fn TickedSchedule_as_json(self: TickedSchedule) -> Json {
+  return object5("schedule_id",
+                 string_value(self.schedule_id),
+                 "outcome",
+                 string_value(self.outcome),
+                 "run_id",
+                 int_value(self.run_id),
+                 "event_id",
+                 string_value(self.event_id),
+                 "next_due_unix_ms",
+                 int_value(self.next_due_unix_ms))
+}
+
+fn ScheduleTickEnvelope_as_json(self: ScheduleTickEnvelope) -> Json {
+  return object4("checked",
+                 int_value(self.checked),
+                 "triggered",
+                 self.triggered,
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn schedule_put_request_from_json(value: Json) -> Result<SchedulePutRequest, String> {
+  return Ok(SchedulePutRequest(get_string(value, "event_kind")?,
+                               get_int(value, "release_revision_id")?,
+                               get_int(value, "interval_ms")?,
+                               get_int(value, "next_due_unix_ms")?,
+                               get_bool(value, "enabled")?,
+                               get_value(value, "payload")?))
+}
+
+fn schedule_definition_meta_from_json(value: Json) -> Result<ScheduleDefinitionMeta, String> {
+  return Ok(ScheduleDefinitionMeta(get_bool(value, "enabled")?,
+                                   get_value(value, "payload")?,
+                                   get_int(value, "revision_id")?,
+                                   get_string(value, "updated_by")?,
+                                   get_int(value, "updated_unix_ms")?))
+}
+
+fn schedule_definition_fields_from_json(value: Json) -> Result<ScheduleDefinitionFields, String> {
+  return Ok(ScheduleDefinitionFields(get_string(value, "app")?,
+                                     get_string(value, "channel")?,
+                                     get_string(value, "schedule_id")?,
+                                     get_string(value, "event_kind")?,
+                                     get_int(value, "release_revision_id")?,
+                                     get_int(value, "interval_ms")?,
+                                     get_int(value, "next_due_unix_ms")?))
+}
+
+fn schedule_definition_from_json(value: Json) -> Result<ScheduleDefinition, String> {
+  let fields = schedule_definition_fields_from_json(value)?
+  let meta = schedule_definition_meta_from_json(get_value(value, "meta")?)?
+  return Ok(ScheduleDefinition(fields.app,
+                               fields.channel,
+                               fields.schedule_id,
+                               fields.event_kind,
+                               fields.release_revision_id,
+                               fields.interval_ms,
+                               fields.next_due_unix_ms,
+                               meta.enabled,
+                               meta.payload,
+                               meta.revision_id,
+                               meta.updated_by,
+                               meta.updated_unix_ms))
+}
+
+fn schedule_definition_envelope_from_json(value: Json) -> Result<ScheduleDefinitionEnvelope, String> {
+  return Ok(ScheduleDefinitionEnvelope(schedule_definition_from_json(get_value(value, "definition")?)?,
+                                      get_string(value, "request_id")?,
+                                      get_int(value, "unix_ms")?))
+}
+
+fn schedule_tick_request_from_json(value: Json) -> Result<ScheduleTickRequest, String> {
+  return Ok(ScheduleTickRequest(get_int(value, "now_unix_ms")?))
+}
+
+fn ticked_schedule_from_json(value: Json) -> Result<TickedSchedule, String> {
+  return Ok(TickedSchedule(get_string(value, "schedule_id")?,
+                           get_string(value, "outcome")?,
+                           get_int(value, "run_id")?,
+                           get_string(value, "event_id")?,
+                           get_int(value, "next_due_unix_ms")?))
+}
+
+fn schedule_tick_envelope_from_json(value: Json) -> Result<ScheduleTickEnvelope, String> {
+  return Ok(ScheduleTickEnvelope(get_int(value, "checked")?,
+                                 get_value(value, "triggered")?,
+                                 get_string(value, "request_id")?,
+                                 get_int(value, "unix_ms")?))
+}
+
+fn validate_schedule_id(value: String) -> Result<Bool, String> {
+  return validate_schedule_id_segment(value)
+}
+
+fn validate_schedule_put_request(request: SchedulePutRequest) -> Result<Bool, String> {
+  if request.event_kind == "" {
+    return Err("schedule event_kind must be non-empty")
+  }
+  if request.release_revision_id <= 0 {
+    return Err("schedule release_revision_id must be positive")
+  }
+  if request.interval_ms <= 0 {
+    return Err("schedule interval_ms must be positive")
+  }
+  if request.next_due_unix_ms < 0 {
+    return Err("schedule next_due_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn schedule_definition_put_request(definition: ScheduleDefinition) -> SchedulePutRequest {
+  return SchedulePutRequest(definition.event_kind,
+                            definition.release_revision_id,
+                            definition.interval_ms,
+                            definition.next_due_unix_ms,
+                            definition.enabled,
+                            definition.payload)
+}
+
+fn validate_schedule_definition_identity(definition: ScheduleDefinition) -> Result<Bool, String> {
+  validate_app_segment(definition.app)?
+  validate_channel_segment(definition.channel)?
+  validate_schedule_id(definition.schedule_id)?
+  return Ok(true)
+}
+
+fn validate_schedule_definition_meta(definition: ScheduleDefinition) -> Result<Bool, String> {
+  if definition.revision_id <= 0 {
+    return Err("schedule revision_id must be positive")
+  }
+  validate_actor_segment(definition.updated_by)?
+  if definition.updated_unix_ms < 0 {
+    return Err("schedule updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_schedule_definition(definition: ScheduleDefinition) -> Result<Bool, String> {
+  validate_schedule_definition_identity(definition)?
+  validate_schedule_put_request(schedule_definition_put_request(definition))?
+  return validate_schedule_definition_meta(definition)
+}
+
+fn validate_schedule_definition_envelope(envelope: ScheduleDefinitionEnvelope) -> Result<Bool, String> {
+  validate_schedule_definition(envelope.definition)?
+  if envelope.request_id == "" {
+    return Err("schedule definition envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("schedule definition envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_schedule_tick_request(request: ScheduleTickRequest) -> Result<Bool, String> {
+  if request.now_unix_ms < 0 {
+    return Err("schedule now_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_ticked_schedule(value: TickedSchedule) -> Result<Bool, String> {
+  validate_schedule_id(value.schedule_id)?
+  if value.outcome != "created" && value.outcome != "existing" {
+    return Err("schedule tick outcome must be created or existing")
+  }
+  if value.run_id <= 0 {
+    return Err("schedule tick run_id must be positive")
+  }
+  if value.event_id == "" {
+    return Err("schedule tick event_id must be non-empty")
+  }
+  if value.next_due_unix_ms < 0 {
+    return Err("schedule tick next_due_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_ticked_schedules_array(triggered: Json) -> Result<Bool, String> {
+  let count = array_len(triggered)?
+  let index = 0
+  while index < count {
+    validate_ticked_schedule(ticked_schedule_from_json(array_get(triggered, index)?)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_schedule_tick_envelope(envelope: ScheduleTickEnvelope) -> Result<Bool, String> {
+  if envelope.checked < 0 {
+    return Err("schedule tick checked must be non-negative")
+  }
+  validate_ticked_schedules_array(envelope.triggered)?
+  if envelope.request_id == "" {
+    return Err("schedule tick envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("schedule tick envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_schedule_definition_envelope_roundtrip() -> Void {
+  let definition = ScheduleDefinition("control-plane",
+                                      "prod",
+                                      "nightly",
+                                      "release_apply_requested",
+                                      1,
+                                      60000,
+                                      123,
+                                      true,
+                                      object1("source", string_value("test")),
+                                      1,
+                                      "admin",
+                                      456)
+  let envelope = ScheduleDefinitionEnvelope(definition, "req-schedule", 789)
+  match schedule_definition_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      match validate_schedule_definition_envelope(decoded) {
+        Ok(_) => {}
+        Err(msg) => {
+          panic(msg)
+        }
+      }
+      assert(decoded.definition.schedule_id == "nightly", "schedule id drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_schedule_tick_envelope_roundtrip() -> Void {
+  let triggered = array_build(array_push(array_builder(),
+                                         TickedSchedule("nightly",
+                                                        "created",
+                                                        7,
+                                                        "schedule-control-plane-prod-nightly-1000",
+                                                        2000).as_json()))
+  let envelope = ScheduleTickEnvelope(1, triggered, "req-tick", 123)
+  match schedule_tick_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      match validate_schedule_tick_envelope(decoded) {
+        Ok(_) => {}
+        Err(msg) => {
+          panic(msg)
+        }
+      }
+      assert(decoded.checked == 1, "schedule tick checked drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

@@ -1,0 +1,41 @@
+id = "TST-249-release-control-plane-container-assets-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+root = repo_root / 'examples' / 'release_control_plane_workspace' / 'deploy' / 'container'
+dockerfile = (root / 'Dockerfile.runtime').read_text(encoding='utf-8')
+readme = (root / 'README.md').read_text(encoding='utf-8')
+
+for fragment in [
+    'COPY .service-out/main.out /srv/release-control-plane/main.out',
+    'libpq5',
+    'USER nebula',
+    'ENTRYPOINT ["/srv/release-control-plane/main.out"]',
+]:
+    if fragment not in dockerfile:
+        raise SystemExit(f'Dockerfile.runtime missing fragment: {fragment!r}')
+for forbidden in ['nginx', 'caddy', 'nebula run']:
+    if forbidden in dockerfile:
+        raise SystemExit(f'Dockerfile.runtime should stay narrow and not contain: {forbidden!r}')
+for fragment in [
+    'nebula build apps/service --mode release --out-dir .service-out',
+    'docker build -f deploy/container/Dockerfile.runtime -t release-control-plane:local .',
+    'docker run --rm',
+    'libpq5',
+    'APP_READ_TOKEN_FILE=/run/release-control-plane-secrets/read.token',
+    'observe stream on stdout/stderr',
+]:
+    if fragment not in readme:
+        raise SystemExit(f'container/README.md missing fragment: {fragment!r}')
+print('release-control-plane-container-assets-ok')
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-container-assets-ok"]

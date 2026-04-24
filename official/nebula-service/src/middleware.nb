@@ -1,0 +1,119 @@
+module middleware
+import context
+import errors
+import std::http
+import std::result
+import std::task
+import observe::log
+import observe::metrics
+
+enum AuthDecision {
+  Allow(Void)
+  AllowPrincipal(Principal)
+  Deny(Response)
+}
+
+fn allow() -> AuthDecision {
+  return Allow
+}
+
+fn allow_principal(value: Principal) -> AuthDecision {
+  return AllowPrincipal(value)
+}
+
+fn deny(response: Response) -> AuthDecision {
+  return Deny(response)
+}
+
+fn auth_verifier_failed(ctx: RequestContext, msg: String) -> Response {
+  error_event_request_with_text_classified(ctx.service_name,
+                                           "auth_verifier_error",
+                                           msg,
+                                           ctx.request_id,
+                                           ctx.request_id_text,
+                                           classification("request_start", "peer_request_ready"))
+  delta_counter(ctx.service_name, "auth_verifier_errors", "1", 1)
+  return internal_error(ctx)
+}
+
+async fn reject(condition: Bool,
+                denied: Response,
+                ctx: RequestContext,
+                request: Request,
+                next: Fn(RequestContext, Request) -> Future<Response>) -> Response {
+  if condition {
+    return denied
+  }
+  return await next(ctx, request)
+}
+
+async fn reject_result(condition: Bool,
+                       denied: Response,
+                       ctx: RequestContext,
+                       request: Request,
+                       next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  if condition {
+    return Ok(denied)
+  }
+  return await next(ctx, request)
+}
+
+async fn reject_when_draining(ctx: RequestContext,
+                              request: Request,
+                              next: Fn(RequestContext, Request) -> Future<Response>) -> Response {
+  return await reject(ctx.is_draining(), draining(ctx), ctx, request, next)
+}
+
+async fn reject_when_draining_result(ctx: RequestContext,
+                                     request: Request,
+                                     next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  return await reject_result(ctx.is_draining(), draining(ctx), ctx, request, next)
+}
+
+async fn authorize(ctx: RequestContext,
+                   request: Request,
+                   verifier: Fn(RequestContext, Request) -> Future<Result<AuthDecision, String>>,
+                   next: Fn(RequestContext, Request) -> Future<Response>) -> Response {
+  match await verifier(ctx, request) {
+    Ok(decision) => {
+      match decision {
+        Allow => {
+          return await next(ctx, request)
+        }
+        AllowPrincipal(value) => {
+          return await next(ctx.with_principal(value), request)
+        }
+        Deny(response) => {
+          return response
+        }
+      }
+    }
+    Err(msg) => {
+      return auth_verifier_failed(ctx, msg)
+    }
+  }
+}
+
+async fn authorize_result(ctx: RequestContext,
+                          request: Request,
+                          verifier: Fn(RequestContext, Request) -> Future<Result<AuthDecision, String>>,
+                          next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  match await verifier(ctx, request) {
+    Ok(decision) => {
+      match decision {
+        Allow => {
+          return await next(ctx, request)
+        }
+        AllowPrincipal(value) => {
+          return await next(ctx.with_principal(value), request)
+        }
+        Deny(response) => {
+          return Ok(response)
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(auth_verifier_failed(ctx, msg))
+    }
+  }
+}

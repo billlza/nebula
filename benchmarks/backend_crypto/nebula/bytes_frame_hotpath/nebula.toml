@@ -1,0 +1,7 @@
+schema_version = 1
+
+[package]
+name = "bench-bytes-frame-hotpath"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"

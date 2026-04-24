@@ -1,0 +1,37 @@
+module http
+import std::http
+import std::result
+import std::task
+import client
+
+extern fn __nebula_tls_http_write_request(self: TlsClientStream, request: ClientRequest) -> Future<Result<Void, String>>
+extern fn __nebula_tls_http_read_response(self: TlsClientStream, max_header_bytes: Int, max_body_bytes: Int) -> Future<Result<ClientResponse, String>>
+extern fn __nebula_tls_http_read_response_for(self: TlsClientStream,
+                                              method: Method,
+                                              max_header_bytes: Int,
+                                              max_body_bytes: Int) -> Future<Result<ClientResponse, String>>
+
+async fn TlsClientStream_write_request(self: TlsClientStream, request: ClientRequest) -> Result<Void, String> {
+  return await __nebula_tls_http_write_request(self, request)
+}
+
+async fn TlsClientStream_read_response(self: TlsClientStream) -> Result<ClientResponse, String> {
+  return await __nebula_tls_http_read_response(self, 8192, 1048576)
+}
+
+async fn TlsClientStream_read_response_limited(self: TlsClientStream,
+                                               max_header_bytes: Int,
+                                               max_body_bytes: Int) -> Result<ClientResponse, String> {
+  return await __nebula_tls_http_read_response(self, max_header_bytes, max_body_bytes)
+}
+
+async fn TlsClientStream_read_response_for(self: TlsClientStream, method: Method) -> Result<ClientResponse, String> {
+  return await __nebula_tls_http_read_response_for(self, method, 8192, 1048576)
+}
+
+async fn TlsClientStream_read_response_limited_for(self: TlsClientStream,
+                                                   method: Method,
+                                                   max_header_bytes: Int,
+                                                   max_body_bytes: Int) -> Result<ClientResponse, String> {
+  return await __nebula_tls_http_read_response_for(self, method, max_header_bytes, max_body_bytes)
+}

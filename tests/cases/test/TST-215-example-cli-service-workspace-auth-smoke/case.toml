@@ -1,0 +1,103 @@
+id = "TST-215-example-cli-service-workspace-auth-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_auth')
+state_dir = root / 'state'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(
+    binary,
+    root,
+    {
+        'APP_STATE_DIR': str(state_dir),
+        'APP_AUTH_REQUIRED': '1',
+        'APP_READ_TOKEN': 'reader-token',
+        'APP_WRITE_TOKEN': 'writer-token',
+        'APP_ADMIN_TOKEN': 'admin-token',
+    },
+)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+
+    prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    whoami = run_ctl(binary, root, 'auth', 'whoami', '--url', base_url, '--token', 'admin-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(whoami, 'whoami')
+    whoami_payload = json.loads(whoami.stdout)
+    if whoami_payload.get('actor') != 'admin' or whoami_payload.get('role') != 'admin' or whoami_payload.get('auth_enabled') is not True:
+        print_completed(whoami)
+        raise SystemExit(f'unexpected whoami payload: {whoami_payload!r}')
+
+    unauthorized = run_ctl(binary, root, 'auth', 'whoami', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if unauthorized.returncode != 1 or 'authorization header is required' not in unauthorized.stdout:
+        print_completed(unauthorized)
+        raise SystemExit(f'expected unauthorized whoami failure, got rc={unauthorized.returncode}')
+
+    reader_put = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--bool', 'true', '--url', base_url, '--token', 'reader-token', out_dir=ctl_out_dir, no_build=True)
+    if reader_put.returncode != 1 or 'required role: writer' not in reader_put.stdout:
+        print_completed(reader_put)
+        raise SystemExit(f'expected reader put to fail with forbidden, got rc={reader_put.returncode}')
+
+    writer_put = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--bool', 'true', '--description', 'secured flag', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(writer_put, 'writer put')
+    writer_payload = json.loads(writer_put.stdout)
+    current_revision_id = writer_payload.get('entry', {}).get('revision_id')
+    if writer_payload.get('entry', {}).get('meta', {}).get('updated_by') != 'writer' or current_revision_id != 1:
+        print_completed(writer_put)
+        raise SystemExit(f'expected writer actor in config entry payload: {writer_payload!r}')
+
+    reader_get = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--url', base_url, '--token', 'reader-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(reader_get, 'reader get')
+
+    writer_delete = run_ctl(binary, root, 'config', 'delete', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--if-match', str(current_revision_id), '--url', base_url, '--token', 'writer-token', out_dir=ctl_out_dir, no_build=True)
+    if writer_delete.returncode != 1 or 'required role: admin' not in writer_delete.stdout:
+        print_completed(writer_delete)
+        raise SystemExit(f'expected writer delete to fail with forbidden, got rc={writer_delete.returncode}')
+
+    admin_delete = run_ctl(binary, root, 'config', 'delete', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--if-match', str(current_revision_id), '--url', base_url, out_dir=ctl_out_dir, no_build=True, env={'APP_TOKEN': 'admin-token'})
+    require_success(admin_delete, 'admin delete via APP_TOKEN')
+    if 'deleted=proj/prod/flag deleted_revision_id=2' not in admin_delete.stdout:
+        print_completed(admin_delete)
+        raise SystemExit('admin delete output drifted')
+
+    history = run_ctl(binary, root, 'config', 'history', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--url', base_url, '--token', 'reader-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(history, 'history after auth flow')
+    history_payload = json.loads(history.stdout)
+    revisions = history_payload.get('revisions', [])
+    if len(revisions) != 2 or revisions[0].get('value', {}).get('updated_by') != 'admin' or revisions[1].get('value', {}).get('updated_by') != 'writer':
+        print_completed(history)
+        raise SystemExit(f'unexpected history actor trail: {history_payload!r}')
+
+    print('example-cli-service-workspace-auth-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-auth-ok"]

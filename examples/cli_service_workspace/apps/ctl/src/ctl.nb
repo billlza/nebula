@@ -1,0 +1,277 @@
+module ctl
+import auth
+import args
+import client
+import config
+import core::contracts
+import core::validate
+import errors
+import render
+import std::http_json
+import std::json
+import std::result
+
+fn unexpected_status(status: Int) -> String {
+  return text_concat("unexpected status ", int_text(status))
+}
+
+fn print_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn print_usage_error() -> Int {
+  usage()
+  return 2
+}
+
+fn parse_status_field(reply: JsonResponse) -> Result<String, String> {
+  return get_string(reply.payload, "status")
+}
+
+fn build_status_summary(base_url: String,
+                        health: JsonResponse,
+                        health_state: String,
+                        ready: JsonResponse,
+                        ready_state: String,
+                        info: ServiceInfo) -> StatusSummary {
+  let ok = health.status == 200 &&
+           health_state == "ok" &&
+           ready.status == 200 &&
+           ready_state == "ready"
+  return StatusSummary(base_url,
+                       health.status,
+                       health_state,
+                       ready.status,
+                       ready_state,
+                       ok,
+                       info)
+}
+
+fn build_status_summary_from_replies(base_url: String,
+                                     health: JsonResponse,
+                                     ready: JsonResponse,
+                                     info: ServiceInfo) -> Result<StatusSummary, String> {
+  match parse_status_field(health) {
+    Ok(health_state) => {
+      match parse_status_field(ready) {
+        Ok(ready_state) => {
+          return Ok(build_status_summary(base_url, health, health_state, ready, ready_state, info))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn parse_service_info_reply(reply: JsonResponse) -> Result<ServiceInfo, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  match service_info_from_json(reply.payload) {
+    Ok(info) => {
+      match validate_service_info(info) {
+        Ok(_) => {
+          return Ok(info)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn parse_echo_response_reply(request: EchoRequest, reply: JsonResponse) -> Result<EchoResponse, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  match echo_response_from_json(reply.payload) {
+    Ok(response) => {
+      match validate_echo_response(request, response) {
+        Ok(_) => {
+          return Ok(response)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_service_info(base_url: String, options: ClientOptions) -> Result<ServiceInfo, String> {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      match await get_json(normalized, "/v1/info", options) {
+        Ok(reply) => {
+          return parse_service_info_reply(reply)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_status_summary_normalized(normalized: String,
+                                         options: ClientOptions) -> Result<StatusSummary, String> {
+  match await get_json(normalized, "/healthz", options) {
+    Ok(health) => {
+      match await get_json(normalized, "/readyz", options) {
+        Ok(ready) => {
+          match await fetch_service_info(normalized, options) {
+            Ok(info) => {
+              return build_status_summary_from_replies(normalized, health, ready, info)
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_status_summary(base_url: String, options: ClientOptions) -> Result<StatusSummary, String> {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      return await fetch_status_summary_normalized(normalized, options)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn send_ping(base_url: String, message: String, options: ClientOptions) -> Result<EchoResponse, String> {
+  match validate_message(message) {
+    Ok(_) => {
+      match normalize_base_url(base_url) {
+        Ok(normalized) => {
+          let request = EchoRequest(message)
+          match await post_json(normalized, "/v1/echo", request.as_json(), options) {
+            Ok(reply) => {
+              return parse_echo_response_reply(request, reply)
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn run_status(base_url: String, options: ClientOptions, json_mode: Bool) -> Int {
+  match await fetch_status_summary(base_url, options) {
+    Ok(summary) => {
+      emit_status(summary, json_mode)
+      return exit_code_from_status(summary)
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+async fn run_info(base_url: String, options: ClientOptions, json_mode: Bool) -> Int {
+  match await fetch_service_info(base_url, options) {
+    Ok(info) => {
+      emit_service_info(info, json_mode)
+      return 0
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+async fn run_ping(base_url: String, options: ClientOptions, message: String, json_mode: Bool) -> Int {
+  match await send_ping(base_url, message, options) {
+    Ok(response) => {
+      emit_echo_response(response, json_mode)
+      return 0
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+fn run_config_validate(base_url: String, json_mode: Bool) -> Int {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      emit_config_validate(normalized, json_mode)
+      return 0
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+async fn run_command(parsed: ParsedArgs) -> Int {
+  let base_url = selected_base_url(parsed.url_override)
+  let options = client_options(selected_token(parsed.token_override),
+                               selected_ca_file(parsed.ca_file_override))
+  if parsed.command == "status" {
+    return await run_status(base_url, options, parsed.json_mode)
+  }
+  if parsed.command == "info" {
+    return await run_info(base_url, options, parsed.json_mode)
+  }
+  if parsed.command == "config-validate" {
+    return run_config_validate(base_url, parsed.json_mode)
+  }
+  if parsed.command == "config" {
+    return await run_config_command(base_url, options, parsed)
+  }
+  if parsed.command == "auth" {
+    return await run_auth_command(base_url, options, parsed)
+  }
+  if parsed.command == "ping" {
+    return await run_ping(base_url, options, parsed.ping_message, parsed.json_mode)
+  }
+  return print_usage_error()
+}
+
+async fn run() -> Int {
+  match parse_args() {
+    Ok(parsed) => {
+      return await run_command(parsed)
+    }
+    Err(_) => {
+      return print_usage_error()
+    }
+  }
+}

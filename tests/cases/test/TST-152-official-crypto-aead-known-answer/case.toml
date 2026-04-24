@@ -1,0 +1,21 @@
+id = "TST-152-official-crypto-aead-known-answer"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/official-crypto-aead-kat && mkdir -p work/official-crypto-aead-kat && cp -R \"$NEBULA_REPO_ROOT/official/nebula-crypto\" work/official-crypto-aead-kat/pkg && mkdir -p work/official-crypto-aead-kat/app/src && cat > work/official-crypto-aead-kat/app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"official-crypto-aead-kat\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\n\n[dependencies]\ncrypto = { path = \"../pkg\" }\nEOF\ncat > work/official-crypto-aead-kat/app/src/main.nb <<'EOF'\nmodule main\nimport crypto::aead\nimport crypto::hash\nimport std::bytes\nimport std::result\n\nfn main() -> Void {\n  let ok = true\n  match from_hex(\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\") {\n    Ok(key_bytes) => {\n      match chacha20_poly1305_key_from_bytes(key_bytes) {\n        Ok(key) => {\n          match from_hex(\"101112131415161718191a1b\") {\n            Ok(nonce) => {\n              match from_hex(\"a0a1a2a3a4a5a6a7\") {\n                Ok(aad) => {\n                  let plaintext = from_string(\"nebula-post-quantum-channel\")\n                  match seal(key, nonce, aad, plaintext) {\n                    Ok(ciphertext) => {\n                      if hex(ciphertext) != \"30af27726a78eb1974b5474ea8ded41b0e139804e7aab71aecf6dbcaa6d2e2ce76a4b895c03b5ee72d09ba\" {\n                        ok = false\n                      }\n                      match open(key, nonce, aad, ciphertext) {\n                        Ok(decoded) => {\n                          if equal(decoded, plaintext) == false {\n                            ok = false\n                          }\n                        }\n                        Err(_) => {\n                          ok = false\n                        }\n                      }\n                    }\n                    Err(_) => {\n                      ok = false\n                    }\n                  }\n                }\n                Err(_) => {\n                  ok = false\n                }\n              }\n            }\n            Err(_) => {\n              ok = false\n            }\n          }\n        }\n        Err(_) => {\n          ok = false\n        }\n      }\n    }\n    Err(_) => {\n      ok = false\n    }\n  }\n  if ok {\n    print(\"crypto-aead-kat-ok\")\n  } else {\n    print(\"crypto-aead-kat-bad\")\n  }\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-crypto-aead-kat/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-crypto-aead-kat/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["crypto-aead-kat-ok"]

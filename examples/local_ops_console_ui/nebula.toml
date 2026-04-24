@@ -1,0 +1,10 @@
+schema_version = 1
+
+[package]
+name = "local-ops-console-ui"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+ui = { path = "../../official/nebula-ui" }

@@ -1,0 +1,307 @@
+module schedule_server
+import auth
+import core::policy
+import core::schedule_contracts
+import core::validate
+import preview
+import schedule_store
+import service::context
+import service::errors
+import service::middleware
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+
+struct ScheduleIdentity {
+  app: String
+  channel: String
+  schedule_id: String
+}
+
+struct SchedulePutInput {
+  identity: ScheduleIdentity
+  put_request: SchedulePutRequest
+}
+
+fn schedule_definition_pattern() -> String {
+  return "/v1/schedules/:app/:channel/:schedule_id"
+}
+
+fn schedule_tick_path() -> String {
+  return "/v1/schedules/tick"
+}
+
+fn is_schedule_route(request: Request) -> Bool {
+  return path_matches(schedule_definition_pattern(), request) ||
+         path_matches(schedule_tick_path(), request)
+}
+
+fn schedule_method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn schedule_definition_etag(definition: ScheduleDefinition) -> String {
+  return stringify(string_value(int_text(definition.revision_id)))
+}
+
+fn ensure_schedule_permission_capability(ctx: RequestContext, permission: String) -> Result<Bool, Response> {
+  return ensure_permission_capability(ctx, "schedule_preview_disabled", "schedule_preview_invalid", permission)
+}
+
+fn schedule_definition_response(ctx: RequestContext, definition: ScheduleDefinition) -> Result<Response, String> {
+  let envelope = ScheduleDefinitionEnvelope(definition, ctx.request_id_text, unix_millis())
+  validate_schedule_definition_envelope(envelope)?
+  return ok_json_with_etag(envelope.as_json(), schedule_definition_etag(definition))
+}
+
+fn schedule_tick_response(ctx: RequestContext, result: ScheduleTickEnvelope) -> Result<Response, String> {
+  let envelope = ScheduleTickEnvelope(result.checked, result.triggered, ctx.request_id_text, unix_millis())
+  validate_schedule_tick_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn invalid_schedule_request(ctx: RequestContext, code: String, message: String) -> Result<Response, String> {
+  return Ok(for_request(400, ctx, code, message))
+}
+
+fn missing_schedule_definition(ctx: RequestContext,
+                               app_name: String,
+                               channel: String,
+                               schedule_id: String) -> Result<Response, String> {
+  let target = text_concat3(app_name, "/", text_concat(channel, text_concat("/", schedule_id)))
+  return Ok(for_request(404, ctx, "schedule_not_found", text_concat("schedule definition not found: ", target)))
+}
+
+fn schedule_tick_error_response(ctx: RequestContext, msg: String) -> Result<Response, String> {
+  if msg == "workflow definition not found" {
+    return Ok(for_request(409, ctx, "schedule_workflow_not_found", msg))
+  }
+  if msg == "release revision not found" {
+    return Ok(for_request(409, ctx, "schedule_release_revision_not_found", msg))
+  }
+  if msg == "workflow event kind is not enabled for this definition" {
+    return Ok(for_request(409, ctx, "schedule_event_kind_not_enabled", msg))
+  }
+  return Err(msg)
+}
+
+fn ensure_schedule_permission_scope(ctx: RequestContext,
+                                    permission: String,
+                                    app_name: String,
+                                    channel: String) -> Result<Bool, Response> {
+  return require_permission_scope(ctx, permission, app_name, channel)
+}
+
+fn schedule_identity_from_request(ctx: RequestContext, request: Request) -> Result<ScheduleIdentity, Response> {
+  match route_params3(schedule_definition_pattern(), request) {
+    Ok(params) => {
+      match validate_app_segment(params.first) {
+        Ok(_) => {}
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_schedule_app", msg))
+        }
+      }
+      match validate_channel_segment(params.second) {
+        Ok(_) => {}
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_schedule_channel", msg))
+        }
+      }
+      match validate_schedule_id(params.third) {
+        Ok(_) => {
+          return Ok(ScheduleIdentity(params.first, params.second, params.third))
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_schedule_id", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_schedule_route", msg))
+    }
+  }
+}
+
+fn schedule_json_body(ctx: RequestContext, request: Request) -> Result<Json, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      return Ok(payload)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn schedule_put_request_from_payload(ctx: RequestContext, payload: Json) -> Result<SchedulePutRequest, Response> {
+  match schedule_put_request_from_json(payload) {
+    Ok(request) => {
+      match validate_schedule_put_request(request) {
+        Ok(_) => {
+          return Ok(request)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_schedule_definition", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_schedule_definition", msg))
+    }
+  }
+}
+
+fn schedule_put_request_from_http(ctx: RequestContext, request: Request) -> Result<SchedulePutRequest, Response> {
+  let payload = schedule_json_body(ctx, request)?
+  return schedule_put_request_from_payload(ctx, payload)
+}
+
+fn schedule_tick_request_from_http(ctx: RequestContext, request: Request) -> Result<ScheduleTickRequest, Response> {
+  let payload = schedule_json_body(ctx, request)?
+  match schedule_tick_request_from_json(payload) {
+    Ok(tick_request) => {
+      match validate_schedule_tick_request(tick_request) {
+        Ok(_) => {
+          return Ok(tick_request)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_schedule_tick", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_schedule_tick", msg))
+    }
+  }
+}
+
+fn schedule_put_input_from_request(ctx: RequestContext, request: Request) -> Result<SchedulePutInput, Response> {
+  let identity = schedule_identity_from_request(ctx, request)?
+  match ensure_schedule_permission_scope(ctx, schedule_write_permission(), identity.app, identity.channel) {
+    Ok(_) => {}
+    Err(response) => { return Err(response) }
+  }
+  let put_request = schedule_put_request_from_http(ctx, request)?
+  return Ok(SchedulePutInput(identity, put_request))
+}
+
+async fn handle_schedule_get_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_schedule_get_route_authorized)
+}
+
+async fn handle_schedule_get_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, schedule_read_permission(), handle_schedule_get_route_inner)
+}
+
+async fn handle_schedule_get_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ensure_schedule_permission_capability(ctx, schedule_read_permission()) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  match schedule_identity_from_request(ctx, request) {
+    Ok(identity) => {
+      match ensure_schedule_permission_scope(ctx, schedule_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_schedule_definition(identity.app, identity.channel, identity.schedule_id) {
+        Ok(definition) => {
+          return schedule_definition_response(ctx, definition)
+        }
+        Err(msg) => {
+          if msg == "schedule definition not found" {
+            return missing_schedule_definition(ctx, identity.app, identity.channel, identity.schedule_id)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_schedule_put_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_schedule_put_route_authorized)
+}
+
+async fn handle_schedule_put_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, schedule_write_permission(), handle_schedule_put_route_inner)
+}
+
+async fn handle_schedule_put_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ensure_schedule_permission_capability(ctx, schedule_write_permission()) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  let updated_by = updated_by_actor(ctx)?
+  match schedule_put_input_from_request(ctx, request) {
+    Ok(input) => {
+      let definition = write_schedule_definition(input.identity.app,
+                                                 input.identity.channel,
+                                                 input.identity.schedule_id,
+                                                 input.put_request,
+                                                 updated_by)?
+      return schedule_definition_response(ctx, definition)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_schedule_tick_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_schedule_tick_route_authorized)
+}
+
+async fn handle_schedule_tick_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, schedule_tick_permission(), handle_schedule_tick_route_inner)
+}
+
+async fn handle_schedule_tick_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match ensure_schedule_permission_capability(ctx, schedule_tick_permission()) {
+    Ok(_) => {}
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  let actor = updated_by_actor(ctx)?
+  match schedule_tick_request_from_http(ctx, request) {
+    Ok(tick_request) => {
+      match tick_schedules(tick_request, actor) {
+        Ok(envelope) => {
+          return schedule_tick_response(ctx, envelope)
+        }
+        Err(msg) => {
+          return schedule_tick_error_response(ctx, msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_schedule_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(schedule_tick_path(), request) {
+    if method_matches(Post, request.method) {
+      return await handle_schedule_tick_route(ctx, request)
+    }
+    return schedule_method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_schedule_get_route(ctx, request)
+  }
+  if method_matches(Put, request.method) {
+    return await handle_schedule_put_route(ctx, request)
+  }
+  return schedule_method_not_allowed()
+}

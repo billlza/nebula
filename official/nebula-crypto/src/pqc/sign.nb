@@ -1,0 +1,81 @@
+module pqc.sign
+import std::bytes
+import std::result
+
+struct MlDsa65KeyPair {}
+
+struct MlDsa65PublicKey {}
+
+struct MlDsa65SecretKey {}
+
+struct MlDsa65Signature {}
+
+extern fn __nebula_crypto_ml_dsa_65_keypair() -> Result<MlDsa65KeyPair, String>
+extern fn __nebula_crypto_ml_dsa_65_keypair_to_bytes(self: MlDsa65KeyPair) -> Bytes
+extern fn __nebula_crypto_ml_dsa_65_keypair_from_bytes(bytes: Bytes) -> Result<MlDsa65KeyPair, String>
+extern fn __nebula_crypto_ml_dsa_65_keypair_public_key(self: MlDsa65KeyPair) -> MlDsa65PublicKey
+extern fn __nebula_crypto_ml_dsa_65_keypair_secret_key(self: MlDsa65KeyPair) -> MlDsa65SecretKey
+
+extern fn __nebula_crypto_ml_dsa_65_public_key_to_bytes(self: MlDsa65PublicKey) -> Bytes
+extern fn __nebula_crypto_ml_dsa_65_public_key_from_bytes(bytes: Bytes) -> Result<MlDsa65PublicKey, String>
+
+extern fn __nebula_crypto_ml_dsa_65_secret_key_to_bytes(self: MlDsa65SecretKey) -> Bytes
+extern fn __nebula_crypto_ml_dsa_65_secret_key_from_bytes(bytes: Bytes) -> Result<MlDsa65SecretKey, String>
+
+extern fn __nebula_crypto_ml_dsa_65_signature_to_bytes(self: MlDsa65Signature) -> Bytes
+extern fn __nebula_crypto_ml_dsa_65_signature_from_bytes(bytes: Bytes) -> Result<MlDsa65Signature, String>
+
+extern fn __nebula_crypto_ml_dsa_65_sign(secret_key: MlDsa65SecretKey, message: Bytes) -> Result<MlDsa65Signature, String>
+extern fn __nebula_crypto_ml_dsa_65_verify(public_key: MlDsa65PublicKey, message: Bytes, signature: MlDsa65Signature) -> Bool
+
+fn ml_dsa_65_keypair() -> Result<MlDsa65KeyPair, String> {
+  return __nebula_crypto_ml_dsa_65_keypair()
+}
+
+fn MlDsa65KeyPair_to_bytes(self: MlDsa65KeyPair) -> Bytes {
+  return __nebula_crypto_ml_dsa_65_keypair_to_bytes(self)
+}
+
+fn ml_dsa_65_keypair_from_bytes(bytes: Bytes) -> Result<MlDsa65KeyPair, String> {
+  return __nebula_crypto_ml_dsa_65_keypair_from_bytes(bytes)
+}
+
+fn MlDsa65KeyPair_public_key(self: MlDsa65KeyPair) -> MlDsa65PublicKey {
+  return __nebula_crypto_ml_dsa_65_keypair_public_key(self)
+}
+
+fn MlDsa65KeyPair_secret_key(self: MlDsa65KeyPair) -> MlDsa65SecretKey {
+  return __nebula_crypto_ml_dsa_65_keypair_secret_key(self)
+}
+
+fn MlDsa65PublicKey_to_bytes(self: MlDsa65PublicKey) -> Bytes {
+  return __nebula_crypto_ml_dsa_65_public_key_to_bytes(self)
+}
+
+fn ml_dsa_65_public_key_from_bytes(bytes: Bytes) -> Result<MlDsa65PublicKey, String> {
+  return __nebula_crypto_ml_dsa_65_public_key_from_bytes(bytes)
+}
+
+fn MlDsa65SecretKey_to_bytes(self: MlDsa65SecretKey) -> Bytes {
+  return __nebula_crypto_ml_dsa_65_secret_key_to_bytes(self)
+}
+
+fn ml_dsa_65_secret_key_from_bytes(bytes: Bytes) -> Result<MlDsa65SecretKey, String> {
+  return __nebula_crypto_ml_dsa_65_secret_key_from_bytes(bytes)
+}
+
+fn MlDsa65Signature_to_bytes(self: MlDsa65Signature) -> Bytes {
+  return __nebula_crypto_ml_dsa_65_signature_to_bytes(self)
+}
+
+fn ml_dsa_65_signature_from_bytes(bytes: Bytes) -> Result<MlDsa65Signature, String> {
+  return __nebula_crypto_ml_dsa_65_signature_from_bytes(bytes)
+}
+
+fn sign(secret_key: MlDsa65SecretKey, message: Bytes) -> Result<MlDsa65Signature, String> {
+  return __nebula_crypto_ml_dsa_65_sign(secret_key, message)
+}
+
+fn verify(public_key: MlDsa65PublicKey, message: Bytes, signature: MlDsa65Signature) -> Bool {
+  return __nebula_crypto_ml_dsa_65_verify(public_key, message, signature)
+}

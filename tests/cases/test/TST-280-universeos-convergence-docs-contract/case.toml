@@ -1,0 +1,7 @@
+id = "TST-280-universeos-convergence-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport os\nfrom pathlib import Path\n\nrepo = Path(os.environ['NEBULA_REPO_ROOT'])\ndoc = repo / 'docs' / 'universeos_convergence.md'\nreadme = repo / 'README.md'\nroadmap = repo / 'ROADMAP.md'\napp_platform = repo / 'docs' / 'app_platform_convergence.md'\n\ntext = doc.read_text(encoding='utf-8')\nrequired = [\n    'Swift/Rust/C++23-class general language ecosystem: 15% to 25%',\n    'CLI, system tools, and internal backend/control-plane work: 45% to 60%',\n    'upper-layer universeOS platform language for tools, services, and app-core logic: 25% to 40%',\n    'kernel, driver, or freestanding runtime implementation language: 3% to 8%',\n    'freestanding/no-std runtime profile',\n    'traits/protocols or an equivalent model',\n    'LLVM, Cranelift, or a direct object backend',\n    'thin-host split',\n]\nfor needle in required:\n    if needle not in text:\n        raise SystemExit(f'missing universeOS convergence contract text: {needle}')\n\nfor path in (readme, roadmap, app_platform):\n    body = path.read_text(encoding='utf-8')\n    if 'docs/universeos_convergence.md' not in body:\n        raise SystemExit(f'missing universeOS convergence link in {path}')\n\nprint('universeos-convergence-docs-ok')\nPY"
+expect_stdout_contains = ["universeos-convergence-docs-ok"]

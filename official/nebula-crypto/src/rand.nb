@@ -1,0 +1,9 @@
+module rand
+import std::bytes
+import std::result
+
+extern fn __nebula_crypto_random_bytes(len: Int) -> Result<Bytes, String>
+
+fn random_bytes(len: Int) -> Result<Bytes, String> {
+  return __nebula_crypto_random_bytes(len)
+}

@@ -1,0 +1,35 @@
+module startup
+import auth
+import broker_outbox_store
+import config_store
+import preview
+import schedule_store
+import store
+import workflow_payload_store
+import workflow_store
+import std::result
+
+fn validate_startup_contracts() -> Result<Bool, String> {
+  validate_auth_configuration()?
+  validate_preview_configuration()?
+  return Ok(true)
+}
+
+fn initialize_startup_stores() -> Result<Bool, String> {
+  initialize_release_store()?
+  initialize_config_store()?
+  initialize_workflow_store()?
+  return initialize_async_platform_stores()
+}
+
+fn initialize_async_platform_stores() -> Result<Bool, String> {
+  initialize_schedule_store()?
+  initialize_broker_outbox_store()?
+  initialize_workflow_payload_store()?
+  return Ok(true)
+}
+
+fn preflight() -> Result<Bool, String> {
+  validate_startup_contracts()?
+  return initialize_startup_stores()
+}

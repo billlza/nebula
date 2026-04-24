@@ -1,0 +1,25 @@
+module main
+import crypto::hash
+import crypto::rand
+import std::bytes
+import std::result
+
+fn main() -> Void {
+  let digest = blake3(from_string("nebula"))
+  if len(digest) != 32 {
+    print("crypto-bad")
+  } else {
+    match random_bytes(16) {
+      Ok(bytes) => {
+        if len(bytes) == 16 {
+          print("crypto-ok")
+        } else {
+          print("crypto-bad")
+        }
+      }
+      Err(msg) => {
+        print(msg)
+      }
+    }
+  }
+}

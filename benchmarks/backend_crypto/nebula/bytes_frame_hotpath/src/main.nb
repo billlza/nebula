@@ -1,0 +1,21 @@
+module main
+import std::bytes
+
+fn payload() -> Bytes {
+  return from_string("0123456789abcdef0123456789abcdef")
+}
+
+@bench
+fn bench_bytes_frame_hotpath() -> Void {
+  let header = from_string("hdr:")
+  let delimiter = from_string("|")
+  let frame = concat(header, concat(payload(), concat(delimiter, payload())))
+  if is_empty(frame) {
+    expect_eq(1, 0)
+  }
+  expect_eq(len(frame), 69)
+}
+
+fn main() -> Void {
+  print("bench-bytes-frame-hotpath")
+}

@@ -1,0 +1,277 @@
+module validate
+import app
+import contracts
+import std::bytes
+import std::json
+import std::result
+
+extern fn __ctl_service_core_normalize_base_url(url: String) -> Result<String, String>
+extern fn __ctl_service_core_base_url_scheme(url: String) -> Result<String, String>
+extern fn __ctl_service_core_base_url_host(url: String) -> Result<String, String>
+extern fn __ctl_service_core_base_url_port(url: String) -> Result<Int, String>
+extern fn __ctl_service_core_base_url_authority(url: String) -> Result<String, String>
+extern fn __ctl_service_core_base_url_path_prefix(url: String) -> Result<String, String>
+extern fn __ctl_service_core_validate_path_segment(label: String, value: String) -> Result<Bool, String>
+
+fn text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn text_concat3(first: String, second: String, third: String) -> String {
+  return text_concat(text_concat(first, second), third)
+}
+
+fn int_text(value: Int) -> String {
+  return stringify(int_value(value))
+}
+
+fn bool_text(value: Bool) -> String {
+  return stringify(bool_value(value))
+}
+
+fn normalize_base_url(url: String) -> Result<String, String> {
+  return __ctl_service_core_normalize_base_url(url)
+}
+
+fn base_url_scheme(url: String) -> Result<String, String> {
+  return __ctl_service_core_base_url_scheme(url)
+}
+
+fn base_url_host(url: String) -> Result<String, String> {
+  return __ctl_service_core_base_url_host(url)
+}
+
+fn base_url_port(url: String) -> Result<Int, String> {
+  return __ctl_service_core_base_url_port(url)
+}
+
+fn base_url_authority(url: String) -> Result<String, String> {
+  return __ctl_service_core_base_url_authority(url)
+}
+
+fn base_url_path_prefix(url: String) -> Result<String, String> {
+  return __ctl_service_core_base_url_path_prefix(url)
+}
+
+fn validate_message(message: String) -> Result<Bool, String> {
+  if message == "" {
+    return Err("message must be non-empty")
+  }
+  return Ok(true)
+}
+
+fn validate_service_info(info: ServiceInfo) -> Result<Bool, String> {
+  if info.service == "" {
+    return Err("service info is missing service")
+  }
+  if info.version == "" {
+    return Err("service info is missing version")
+  }
+  if info.profile == "" {
+    return Err("service info is missing profile")
+  }
+  if info.request_id == "" {
+    return Err("service info is missing request_id")
+  }
+  if info.unix_ms < 0 {
+    return Err("service info unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_echo_request(request: EchoRequest) -> Result<Bool, String> {
+  return validate_message(request.message)
+}
+
+fn validate_echo_response(request: EchoRequest, response: EchoResponse) -> Result<Bool, String> {
+  if response.message != request.message {
+    return Err("echo response message mismatch")
+  }
+  if response.service == "" {
+    return Err("echo response is missing service")
+  }
+  if response.request_id == "" {
+    return Err("echo response is missing request_id")
+  }
+  return Ok(true)
+}
+
+fn validate_project_segment(project: String) -> Result<Bool, String> {
+  return __ctl_service_core_validate_path_segment("project", project)
+}
+
+fn validate_environment_segment(environment: String) -> Result<Bool, String> {
+  return __ctl_service_core_validate_path_segment("environment", environment)
+}
+
+fn validate_key_segment(key: String) -> Result<Bool, String> {
+  return __ctl_service_core_validate_path_segment("key", key)
+}
+
+fn validate_actor_segment(actor: String) -> Result<Bool, String> {
+  return __ctl_service_core_validate_path_segment("actor", actor)
+}
+
+fn validate_role(role: String) -> Result<Bool, String> {
+  if role == "reader" || role == "writer" || role == "admin" {
+    return Ok(true)
+  }
+  return Err("role must be one of reader/writer/admin")
+}
+
+fn validate_config_value(value: ConfigValue) -> Result<Bool, String> {
+  if value.kind == "string" {
+    if value.bool_value || value.int_value != 0 {
+      return Err("string config values must keep inactive fields at zero values")
+    }
+    return Ok(true)
+  }
+  if value.kind == "bool" {
+    if value.string_value != "" || value.int_value != 0 {
+      return Err("bool config values must keep inactive fields at zero values")
+    }
+    return Ok(true)
+  }
+  if value.kind == "int" {
+    if value.string_value != "" || value.bool_value {
+      return Err("int config values must keep inactive fields at zero values")
+    }
+    return Ok(true)
+  }
+  return Err("config value kind must be one of string/bool/int")
+}
+
+fn validate_config_put_request(request: ConfigPutRequest) -> Result<Bool, String> {
+  return validate_config_value(request.value)
+}
+
+fn validate_config_entry_identity(entry: ConfigEntry) -> Result<Bool, String> {
+  validate_project_segment(entry.project)?
+  validate_environment_segment(entry.environment)?
+  validate_key_segment(entry.key)?
+  return Ok(true)
+}
+
+fn validate_config_entry_state(entry: ConfigEntry) -> Result<Bool, String> {
+  if entry.revision_id < 0 {
+    return Err("config entry revision_id must be non-negative")
+  }
+  validate_actor_segment(entry.updated_by)?
+  if entry.updated_unix_ms < 0 {
+    return Err("config entry updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_entry(entry: ConfigEntry) -> Result<Bool, String> {
+  validate_config_entry_identity(entry)?
+  validate_config_value(entry.value)?
+  validate_config_entry_state(entry)?
+  return Ok(true)
+}
+
+fn validate_config_entry_envelope(envelope: ConfigEntryEnvelope) -> Result<Bool, String> {
+  validate_config_entry(envelope.entry)?
+  if envelope.request_id == "" {
+    return Err("config entry envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config entry envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_list_envelope(envelope: ConfigListEnvelope) -> Result<Bool, String> {
+  validate_project_segment(envelope.project)?
+  validate_environment_segment(envelope.environment)?
+  validate_config_entries_array(envelope.entries)?
+  if envelope.request_id == "" {
+    return Err("config list envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config list envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_delete_envelope(envelope: ConfigDeleteEnvelope) -> Result<Bool, String> {
+  validate_project_segment(envelope.project)?
+  validate_environment_segment(envelope.environment)?
+  validate_key_segment(envelope.key)?
+  if envelope.deleted_revision_id < 0 {
+    return Err("config delete envelope deleted_revision_id must be non-negative")
+  }
+  if envelope.request_id == "" {
+    return Err("config delete envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config delete envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_revision_action(action: String) -> Result<Bool, String> {
+  if action != "put" && action != "delete" {
+    return Err("config revision action must be put or delete")
+  }
+  return Ok(true)
+}
+
+fn validate_config_revision_identity(revision: ConfigRevision) -> Result<Bool, String> {
+  validate_project_segment(revision.project)?
+  validate_environment_segment(revision.environment)?
+  validate_key_segment(revision.key)?
+  return Ok(true)
+}
+
+fn validate_config_revision(revision: ConfigRevision) -> Result<Bool, String> {
+  if revision.revision_id < 0 {
+    return Err("config revision revision_id must be non-negative")
+  }
+  validate_config_revision_identity(revision)?
+  validate_config_revision_action(revision.action)?
+  validate_config_value(revision.value)?
+  validate_actor_segment(revision.updated_by)?
+  if revision.updated_unix_ms < 0 {
+    return Err("config revision updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_history_envelope(envelope: ConfigHistoryEnvelope) -> Result<Bool, String> {
+  validate_project_segment(envelope.project)?
+  validate_environment_segment(envelope.environment)?
+  validate_key_segment(envelope.key)?
+  validate_config_revisions_array(envelope.revisions)?
+  if envelope.request_id == "" {
+    return Err("config history envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config history envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_whoami_envelope(envelope: WhoAmIEnvelope) -> Result<Bool, String> {
+  validate_actor_segment(envelope.actor)?
+  validate_role(envelope.role)?
+  if envelope.request_id == "" {
+    return Err("whoami envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("whoami envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+@bench
+fn bench_normalize_default_base_url() -> Void {
+  match normalize_base_url(default_base_url()) {
+    Ok(url) => {
+      assert(url == default_base_url(), "normalized base URL drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

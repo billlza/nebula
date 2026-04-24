@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-control-plane-env
+  namespace: release-control-plane
+data:
+  NEBULA_BIND_HOST: "0.0.0.0"
+  NEBULA_PORT: "40480"
+  NEBULA_MAX_HEADER_BYTES: "16384"
+  NEBULA_MAX_BODY_BYTES: "1048576"
+  NEBULA_REQUEST_TIMEOUT_MS: "15000"
+  NEBULA_HANDLER_TIMEOUT_MS: "5000"
+  NEBULA_WRITE_TIMEOUT_MS: "5000"
+  NEBULA_KEEP_ALIVE: "1"
+  NEBULA_KEEP_ALIVE_IDLE_TIMEOUT_MS: "1000"
+  NEBULA_KEEP_ALIVE_MAX_REQUESTS: "32"
+  NEBULA_PANIC_TO_500: "1"
+  APP_DATA_BACKEND: "sqlite"
+  APP_STATE_DIR: "/var/lib/release-control-plane"
+  APP_AUTH_REQUIRED: "1"
+  APP_READ_TOKEN_FILE: "/run/release-control-plane-secrets/read.token"
+  APP_WRITE_TOKEN_FILE: "/run/release-control-plane-secrets/write.token"
+  APP_ADMIN_TOKEN_FILE: "/run/release-control-plane-secrets/admin.token"
+  APP_WORKER_TOKEN_FILE: "/run/release-control-plane-secrets/worker.token"
+  APP_POSTGRES_DSN_FILE: "/run/release-control-plane-secrets/postgres.dsn"

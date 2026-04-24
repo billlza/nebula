@@ -1,0 +1,69 @@
+module main
+import crypto::aead
+import crypto::pqc.kem
+import std::bytes
+
+fn test_key_bytes() -> Bytes {
+  return from_string("0123456789abcdef0123456789abcdef")
+}
+
+@bench
+fn bench_aead_pqc_core() -> Void {
+  match chacha20_poly1305_key_from_bytes(test_key_bytes()) {
+    Ok(key) => {
+      let nonce = from_string("0123456789ab")
+      let aad = from_string("nebula-aead")
+      let plaintext = from_string("nebula backend+crypto benchmark")
+      match seal(key, nonce, aad, plaintext) {
+        Ok(ciphertext) => {
+          match open(key, nonce, aad, ciphertext) {
+            Ok(recovered) => {
+              if to_string(recovered) == "nebula backend+crypto benchmark" {
+              } else {
+                expect_eq(1, 0)
+              }
+            }
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+  match ml_kem_768_keypair() {
+    Ok(pair) => {
+      match encapsulate(pair.public_key()) {
+        Ok(encap) => {
+          match decapsulate(pair.secret_key(), encap.ciphertext()) {
+            Ok(shared_secret) => {
+              if encap.shared_secret().equal(shared_secret) {
+              } else {
+                expect_eq(1, 0)
+              }
+            }
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("bench-aead-pqc-core")
+}

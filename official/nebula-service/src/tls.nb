@@ -1,0 +1,1326 @@
+module tls
+import config
+import context
+import drain
+import errors
+import headers
+import middleware
+import recover
+import server
+import std::http
+import std::json
+import std::net
+import std::result
+import std::task
+import std::time
+import tlss::server
+import tlss::http
+import tlss::http2
+import observe::log
+import observe::metrics
+
+struct TlsRequestSpan {
+  request_id: Int
+  request_id_text: String
+  request_id_from_header: Bool
+  started_at_ms: Int
+  received_at_unix_ms: Int
+}
+
+struct TlsRequestReadReady {
+  request: Request
+  span: TlsRequestSpan
+}
+
+struct TlsRequestReadFailure {
+  request_id: Int
+  request_id_text: String
+  message: String
+}
+
+struct TlsConnectionOutcome {
+  request_count: Int
+  draining_mode: Bool
+}
+
+struct TlsConnectionLoopState {
+  request_count: Int
+  draining_mode: Bool
+  should_stop: Bool
+}
+
+enum TlsConnectionReadOutcome {
+  Ready(TlsRequestReadReady)
+  BadRequest(TlsRequestReadFailure)
+  RequestTimeout(TlsRequestReadFailure)
+  KeepAliveIdleTimeout(Void)
+}
+
+enum TlsAcceptLoopOutcome {
+  Accepted(TlsServerStream)
+  Idle(Void)
+}
+
+enum TlsServeGoal {
+  Finite(Int)
+  RunForever(Void)
+}
+
+struct TlsDrainServeState {
+  served: Int
+  draining_mode: Bool
+  should_stop: Bool
+}
+
+enum TlsDrainAcceptResolution {
+  AcceptedStream(TlsServerStream)
+  Completed(TlsDrainServeState)
+}
+
+fn mtls_denied_response(ctx: RequestContext) -> Response {
+  if !ctx.tls_peer_present() {
+    return for_request(401,
+                       ctx,
+                       "mtls_required",
+                       "mutual TLS client certificate is required")
+  }
+  if !ctx.tls_peer_verified() {
+    return for_request(403,
+                       ctx,
+                       "mtls_unverified",
+                       "mutual TLS client certificate is not verified")
+  }
+  return for_request(403,
+                     ctx,
+                     "mtls_unavailable",
+                     "mutual TLS principal is unavailable")
+}
+
+fn mtls_principal_claims_with_identity(subject: String,
+                                       fingerprint_sha256: String,
+                                       san_claims: Json,
+                                       identity_debug: Json) -> Json {
+  return object6(
+    "scheme",
+    string_value("mtls"),
+    "tls_peer_subject",
+    string_value(subject),
+    "tls_peer_verified",
+    bool_value(true),
+    "tls_peer_fingerprint_sha256",
+    string_value(fingerprint_sha256),
+    "tls_peer_san_claims",
+    san_claims,
+    "tls_peer_identity",
+    identity_debug
+  )
+}
+
+fn mtls_principal(ctx: RequestContext) -> Result<Principal, String> {
+  if !ctx.tls_peer_present() {
+    return Err("mutual TLS client certificate is required")
+  }
+  if !ctx.tls_peer_verified() {
+    return Err("mutual TLS client certificate is not verified")
+  }
+  let subject = ctx.tls_peer_subject()?
+  let fingerprint_sha256 = ctx.tls_peer_fingerprint_sha256()?
+  let san_claims = ctx.tls_peer_san_claims()?
+  let identity_debug = ctx.tls_peer_identity_debug()
+  return Ok(principal(subject, mtls_principal_claims_with_identity(subject,
+                                                                   fingerprint_sha256,
+                                                                   san_claims,
+                                                                   identity_debug)))
+}
+
+async fn verify_mtls_principal(ctx: RequestContext, request: Request) -> Result<AuthDecision, String> {
+  match mtls_principal(ctx) {
+    Ok(value) => {
+      return Ok(allow_principal(value))
+    }
+    Err(_) => {
+      return Ok(deny(mtls_denied_response(ctx)))
+    }
+  }
+}
+
+async fn authorize_mtls(ctx: RequestContext,
+                        request: Request,
+                        next: Fn(RequestContext, Request) -> Future<Response>) -> Response {
+  match mtls_principal(ctx) {
+    Ok(value) => {
+      return await next(ctx.with_principal(value), request)
+    }
+    Err(_) => {
+      return mtls_denied_response(ctx)
+    }
+  }
+}
+
+async fn authorize_mtls_result(ctx: RequestContext,
+                               request: Request,
+                               next: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Response, String> {
+  match mtls_principal(ctx) {
+    Ok(value) => {
+      return await next(ctx.with_principal(value), request)
+    }
+    Err(_) => {
+      return Ok(mtls_denied_response(ctx))
+    }
+  }
+}
+
+fn continue_tls_connection(request_count: Int, draining_mode: Bool) -> TlsConnectionLoopState {
+  return TlsConnectionLoopState(request_count, draining_mode, false)
+}
+
+fn stop_tls_connection(request_count: Int, draining_mode: Bool) -> TlsConnectionLoopState {
+  return TlsConnectionLoopState(request_count, draining_mode, true)
+}
+
+fn tls_listener_bound_address(cfg: ServiceConfig, listener: TlsListener) -> ListenerBoundAddress {
+  let configured = ListenerBoundAddress(cfg.bind_host, cfg.port)
+  match TlsListener_local_addr(listener) {
+    Ok(local_addr) => {
+      match local_addr.host() {
+        Ok(bound_host) => {
+          match local_addr.port() {
+            Ok(bound_port) => {
+              return ListenerBoundAddress(bound_host, bound_port)
+            }
+            Err(_) => {
+              return ListenerBoundAddress(bound_host, configured.port)
+            }
+          }
+        }
+        Err(_) => {
+          return configured
+        }
+      }
+    }
+    Err(_) => {
+      return configured
+    }
+  }
+}
+
+fn announce_tls_listener_bound(cfg: ServiceConfig, listener: TlsListener) -> Void {
+  let bound = tls_listener_bound_address(cfg, listener)
+  lifecycle_listener_bound(cfg.name, bound.host, bound.port, keep_alive_message(cfg))
+}
+
+async fn bind_tls_listener(cfg: ServiceConfig, tls_cfg: ServerConfig) -> Result<TlsListener, String> {
+  match await bind_host(cfg.bind_host, cfg.port, tls_cfg) {
+    Ok(listener) => {
+      announce_tls_listener_bound(cfg, listener)
+      return Ok(listener)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn tls_request_read_failure(msg: String) -> TlsRequestReadFailure {
+  let request_id = unix_millis()
+  let request_id_text = local_request_id_text(request_id)
+  return TlsRequestReadFailure(request_id, request_id_text, msg)
+}
+
+fn tls_start_request_span(cfg: ServiceConfig, request: Request) -> TlsRequestSpan {
+  let local_request_id = unix_millis()
+  let request_identity = resolve_request_identity(cfg.header_policy, request, local_request_id)
+  let started_at_ms = steady_millis()
+  request_started_with_text_classified(cfg.name,
+                                       local_request_id,
+                                       request_identity.request_id_text,
+                                       request.path,
+                                       classification("request_start", "peer_request_ready"))
+  return TlsRequestSpan(local_request_id,
+                        request_identity.request_id_text,
+                        request_identity.request_id_from_header,
+                        started_at_ms,
+                        local_request_id)
+}
+
+fn tls_peer_subject_text(stream: TlsServerStream) -> String {
+  match TlsServerStream_peer_subject(stream) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return ""
+    }
+  }
+}
+
+fn tls_peer_fingerprint_sha256_text(stream: TlsServerStream) -> String {
+  match TlsServerStream_peer_fingerprint_sha256(stream) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return ""
+    }
+  }
+}
+
+fn tls_peer_san_claims_value(stream: TlsServerStream) -> Json {
+  match TlsServerStream_peer_san_claims(stream) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn tls_peer_identity_debug_value(stream: TlsServerStream) -> Json {
+  match TlsServerStream_peer_identity_debug(stream) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn tls_http2_debug_state_value(stream: TlsServerStream) -> Json {
+  match TlsServerStream_http2_debug_state(stream) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn tls_transport_debug_value(stream: TlsServerStream) -> Json {
+  return object3(
+    "alpn_protocol",
+    string_value(TlsServerStream_alpn_protocol(stream)),
+    "tls_peer_identity",
+    tls_peer_identity_debug_value(stream),
+    "http2",
+    tls_http2_debug_state_value(stream)
+  )
+}
+
+fn tls_transport_phase_classification(stream: TlsServerStream, fallback: Json) -> Json {
+  let transport_debug = tls_transport_debug_value(stream)
+  return transport_debug_phase_classification_or(transport_debug, fallback)
+}
+
+fn tls_request_context(cfg: ServiceConfig,
+                       span: TlsRequestSpan,
+                       draining_mode: Bool,
+                       stream: TlsServerStream) -> RequestContext {
+  return RequestContext(cfg.name,
+                        span.request_id,
+                        span.request_id_text,
+                        span.request_id_from_header,
+                        span.started_at_ms,
+                        span.received_at_unix_ms,
+                        draining_mode,
+                        false,
+                        "",
+                        null_value(),
+                        TlsServerStream_peer_present(stream),
+                        TlsServerStream_peer_verified(stream),
+                        tls_peer_subject_text(stream),
+                        tls_peer_fingerprint_sha256_text(stream),
+                        tls_peer_san_claims_value(stream),
+                        tls_transport_debug_value(stream))
+}
+
+fn tls_next_reply_context(cfg: ServiceConfig,
+                          drain_cfg: DrainConfig,
+                          current_draining: Bool,
+                          span: TlsRequestSpan,
+                          stream: TlsServerStream) -> Result<ReplyContextState, String> {
+  match next_draining_mode(cfg, drain_cfg, current_draining) {
+    Ok(next_mode) => {
+      return Ok(ReplyContextState(tls_request_context(cfg, span, next_mode, stream), next_mode))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn tls_ready_request(cfg: ServiceConfig, request: Request) -> TlsRequestReadReady {
+  return TlsRequestReadReady(request, tls_start_request_span(cfg, request))
+}
+
+fn tls_applied_connection_outcome(state: TlsConnectionLoopState) -> TlsConnectionOutcome {
+  return TlsConnectionOutcome(state.request_count, state.draining_mode)
+}
+
+fn tls_close_after_next_response(cfg: ServiceConfig,
+                                 request: Request,
+                                 request_count: Int,
+                                 draining_mode: Bool) -> Bool {
+  return close_connection_after_response(cfg, request, request_count + 1, draining_mode)
+}
+
+fn tls_stream_uses_http2(stream: TlsServerStream) -> Bool {
+  return TlsServerStream_alpn_protocol(stream) == "h2"
+}
+
+async fn tls_stream_read_request_limited(stream: TlsServerStream,
+                                         max_header_bytes: Int,
+                                         max_body_bytes: Int) -> Result<Request, String> {
+  if tls_stream_uses_http2(stream) {
+    return await TlsServerStream_read_request_limited_h2(stream, max_header_bytes, max_body_bytes)
+  }
+  return await TlsServerStream_read_request_limited(stream, max_header_bytes, max_body_bytes)
+}
+
+async fn tls_write_and_close(stream: TlsServerStream, reply: Response) -> Result<Void, String> {
+  if tls_stream_uses_http2(stream) {
+    let outcome = await TlsServerStream_write_response_h2(stream, reply)
+    match outcome {
+      Ok(_) => {
+        return outcome
+      }
+      Err(msg) => {
+        TlsServerStream_abort(stream)
+        return Err(msg)
+      }
+    }
+  }
+  match await TlsServerStream_write_response(stream, reply) {
+    Ok(_) => {
+      return await TlsServerStream_close(stream)
+    }
+    Err(msg) => {
+      TlsServerStream_abort(stream)
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_write_reply(stream: TlsServerStream,
+                         reply: Response,
+                         close_connection: Bool) -> Result<Void, String> {
+  if close_connection {
+    return await tls_write_and_close(stream, reply)
+  }
+  if tls_stream_uses_http2(stream) {
+    let outcome = await TlsServerStream_write_response_with_connection_h2(stream, reply, false)
+    match outcome {
+      Ok(_) => {
+        return outcome
+      }
+      Err(msg) => {
+        TlsServerStream_abort(stream)
+        return Err(msg)
+      }
+    }
+  }
+  let outcome = await TlsServerStream_write_response_with_connection(stream, reply, false)
+  match outcome {
+    Ok(_) => {
+      return outcome
+    }
+    Err(msg) => {
+      TlsServerStream_abort(stream)
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_write_and_close_with_timeout(stream: TlsServerStream,
+                                          reply: Response,
+                                          write_timeout_ms: Int) -> Result<Void, String> {
+  match await timeout(millis(write_timeout_ms), tls_write_and_close(stream, reply)) {
+    Ok(outcome) => {
+      return outcome
+    }
+    Err(msg) => {
+      TlsServerStream_abort(stream)
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_write_request_reply_with_timeout(stream: TlsServerStream,
+                                              request: Request,
+                                              reply: Response,
+                                              write_timeout_ms: Int,
+                                              close_connection: Bool) -> Result<Void, String> {
+  let wire_reply = reply
+  if method_is_head(request.method) {
+    wire_reply = response_without_body(reply)
+  }
+  match await timeout(millis(write_timeout_ms), tls_write_reply(stream, wire_reply, close_connection)) {
+    Ok(outcome) => {
+      return outcome
+    }
+    Err(msg) => {
+      TlsServerStream_abort(stream)
+      return Err(msg)
+    }
+  }
+}
+
+fn tls_error_event_request_with_debug(cfg: ServiceConfig,
+                                      event: String,
+                                      message: String,
+                                      request_id: Int,
+                                      request_id_text: String,
+                                      fallback_classification: Json,
+                                      stream: TlsServerStream) -> Void {
+  let transport_debug = tls_transport_debug_value(stream)
+  error_event_request_with_details_classified(cfg.name,
+                                              event,
+                                              message,
+                                              request_id,
+                                              request_id_text,
+                                              transport_debug_phase_classification_or(transport_debug,
+                                                                                      fallback_classification),
+                                              transport_debug)
+}
+
+async fn tls_finish_reply(stream: TlsServerStream,
+                          cfg: ServiceConfig,
+                          request: Request,
+                          span: TlsRequestSpan,
+                          reply: Response,
+                          close_connection: Bool,
+                          write_timeout_event: String,
+                          write_failed_event: String) -> Result<Int, String> {
+  match await tls_write_request_reply_with_timeout(stream,
+                                                   request,
+                                                   reply,
+                                                   cfg.write_timeout_ms,
+                                                   close_connection) {
+    Ok(_) => {
+      let duration_ms = steady_millis() - span.started_at_ms
+      request_finished_with_text_classified(cfg.name,
+                                            span.request_id,
+                                            span.request_id_text,
+                                            reply.status,
+                                            duration_ms,
+                                            tls_transport_phase_classification(stream,
+                                                                              response_finished_classification()))
+      return Ok(1)
+    }
+    Err(msg) => {
+      if is_timeout_error(msg) {
+        tls_error_event_request_with_debug(cfg,
+                                           write_timeout_event,
+                                           msg,
+                                           span.request_id,
+                                           span.request_id_text,
+                                           response_write_classification(),
+                                           stream)
+        delta_counter(cfg.name, "write_timeouts", "1", 1)
+        return Ok(1)
+      }
+      tls_error_event_request_with_debug(cfg,
+                                         write_failed_event,
+                                         msg,
+                                         span.request_id,
+                                         span.request_id_text,
+                                         response_write_classification(),
+                                         stream)
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_write_bad_request(stream: TlsServerStream,
+                               cfg: ServiceConfig,
+                               request_id: Int,
+                               request_id_text: String) -> Result<Int, String> {
+  match await tls_write_and_close_with_timeout(stream,
+                                              bad_request(cfg.name, request_id, "bad request"),
+                                              cfg.write_timeout_ms) {
+    Ok(_) => {
+      return Ok(1)
+    }
+    Err(write_msg) => {
+      if is_timeout_error(write_msg) {
+        tls_error_event_request_with_debug(cfg,
+                                           "bad_request_write_timeout",
+                                           write_msg,
+                                           request_id,
+                                           request_id_text,
+                                           response_write_classification(),
+                                           stream)
+        delta_counter(cfg.name, "write_timeouts", "1", 1)
+        return Ok(1)
+      }
+      tls_error_event_request_with_debug(cfg,
+                                         "bad_request_write_failed",
+                                         write_msg,
+                                         request_id,
+                                         request_id_text,
+                                         response_write_classification(),
+                                         stream)
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn tls_write_request_timeout(stream: TlsServerStream,
+                                   cfg: ServiceConfig,
+                                   request_id: Int,
+                                   request_id_text: String) -> Result<Int, String> {
+  match await tls_write_and_close_with_timeout(stream,
+                                              request_timeout(cfg.name, request_id),
+                                              cfg.write_timeout_ms) {
+    Ok(_) => {
+      return Ok(1)
+    }
+    Err(write_msg) => {
+      if is_timeout_error(write_msg) {
+        tls_error_event_request_with_debug(cfg,
+                                           "timeout_response_write_timeout",
+                                           write_msg,
+                                           request_id,
+                                           request_id_text,
+                                           response_write_classification(),
+                                           stream)
+        delta_counter(cfg.name, "write_timeouts", "1", 1)
+        return Ok(1)
+      }
+      tls_error_event_request_with_debug(cfg,
+                                         "timeout_write_failed",
+                                         write_msg,
+                                         request_id,
+                                         request_id_text,
+                                         response_write_classification(),
+                                         stream)
+      return Err(write_msg)
+    }
+  }
+}
+
+fn tls_keep_alive_idle_timeout_connection_state(stream: TlsServerStream,
+                                                served: Int,
+                                                current_draining: Bool) -> TlsConnectionLoopState {
+  TlsServerStream_abort(stream)
+  return stop_tls_connection(served, current_draining)
+}
+
+fn tls_request_count_result(outcome: Result<TlsConnectionOutcome, String>) -> Result<Int, String> {
+  match outcome {
+    Ok(connection) => {
+      return Ok(connection.request_count)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn tls_finite_serve_goal(limit: Int) -> TlsServeGoal {
+  return Finite(limit)
+}
+
+fn tls_run_forever_serve_goal() -> TlsServeGoal {
+  return RunForever
+}
+
+fn tls_serve_goal_invalid_message(goal: TlsServeGoal) -> String {
+  match goal {
+    Finite(limit) => {
+      if limit <= 0 {
+        return "serve_n limit must be positive"
+      }
+      return ""
+    }
+    RunForever => {
+      return ""
+    }
+  }
+}
+
+fn tls_serve_goal_reached_limit(goal: TlsServeGoal, served: Int) -> Bool {
+  match goal {
+    Finite(limit) => {
+      return served >= limit
+    }
+    RunForever => {
+      return false
+    }
+  }
+}
+
+fn tls_serve_goal_complete(cfg: ServiceConfig,
+                           goal: TlsServeGoal,
+                           served: Int) -> Result<Int, String> {
+  match goal {
+    Finite(_) => {
+      lifecycle_listener_stopped(cfg.name, "limit_reached", served)
+      return Ok(served)
+    }
+    RunForever => {
+      return Ok(served)
+    }
+  }
+}
+
+fn tls_serve_goal_step_failed(cfg: ServiceConfig,
+                              goal: TlsServeGoal,
+                              served: Int,
+                              msg: String) -> Result<Int, String> {
+  match goal {
+    Finite(_) => {
+      return Err(msg)
+    }
+    RunForever => {
+      if msg == "tls listener is closed" {
+        lifecycle_listener_stopped(cfg.name, "listener_closed", served)
+        return Ok(served)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+fn continue_tls_drain_serve_state(served: Int, draining_mode: Bool) -> TlsDrainServeState {
+  return TlsDrainServeState(served, draining_mode, false)
+}
+
+fn stop_tls_drain_serve_state(served: Int, draining_mode: Bool) -> TlsDrainServeState {
+  return TlsDrainServeState(served, draining_mode, true)
+}
+
+fn tls_stop_drained_listener(listener: TlsListener,
+                             cfg: ServiceConfig,
+                             served: Int,
+                             draining_mode: Bool) -> TlsDrainServeState {
+  TlsListener_close(listener)
+  lifecycle_listener_stopped(cfg.name, "drained", served)
+  return stop_tls_drain_serve_state(served, draining_mode)
+}
+
+fn tls_listener_closed_drain_serve_state(cfg: ServiceConfig,
+                                         served: Int,
+                                         draining_mode: Bool) -> TlsDrainServeState {
+  lifecycle_listener_stopped(cfg.name, "listener_closed", served)
+  return stop_tls_drain_serve_state(served, draining_mode)
+}
+
+fn tls_continue_drain_serve_state_from_connection(served: Int,
+                                                  connection: TlsConnectionOutcome) -> TlsDrainServeState {
+  return continue_tls_drain_serve_state(served + connection.request_count, connection.draining_mode)
+}
+
+fn tls_drain_serve_state_from_connection_result(served: Int,
+                                                outcome: Result<TlsConnectionOutcome, String>) -> Result<TlsDrainServeState, String> {
+  match outcome {
+    Ok(connection) => {
+      return Ok(tls_continue_drain_serve_state_from_connection(served, connection))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn tls_idle_drain_serve_state(listener: TlsListener,
+                              cfg: ServiceConfig,
+                              drain_cfg: DrainConfig,
+                              served: Int,
+                              draining_mode: Bool) -> Result<TlsDrainServeState, String> {
+  if !draining_mode {
+    match next_draining_mode(cfg, drain_cfg, draining_mode) {
+      Ok(next_mode) => {
+        return Ok(continue_tls_drain_serve_state(served, next_mode))
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Ok(tls_stop_drained_listener(listener, cfg, served, draining_mode))
+}
+
+fn tls_advance_connection_before_read(cfg: ServiceConfig,
+                                      drain_cfg: DrainConfig,
+                                      request_count: Int,
+                                      current_draining: Bool) -> Result<TlsConnectionLoopState, String> {
+  if request_count <= 0 {
+    return Ok(continue_tls_connection(request_count, current_draining))
+  }
+  match next_draining_mode(cfg, drain_cfg, current_draining) {
+    Ok(next_mode) => {
+      if next_mode {
+        return Ok(stop_tls_connection(request_count, next_mode))
+      }
+      return Ok(continue_tls_connection(request_count, next_mode))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_accept_next_without_drain(listener: TlsListener) -> Result<TlsAcceptLoopOutcome, String> {
+  match await TlsListener_accept(listener) {
+    Ok(stream) => {
+      return Ok(Accepted(stream))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_accept_next_with_drain(listener: TlsListener,
+                                    drain_cfg: DrainConfig) -> Result<TlsAcceptLoopOutcome, String> {
+  match await TlsListener_accept_timeout(listener, drain_cfg.poll_interval_ms) {
+    Ok(stream) => {
+      return Ok(Accepted(stream))
+    }
+    Err(msg) => {
+      if msg == "timeout" {
+        return Ok(Idle)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_accept_next(listener: TlsListener, drain_cfg: DrainConfig) -> Result<TlsAcceptLoopOutcome, String> {
+  if !drain_cfg.enabled() {
+    return await tls_accept_next_without_drain(listener)
+  }
+  return await tls_accept_next_with_drain(listener, drain_cfg)
+}
+
+async fn tls_read_connection_request(stream: TlsServerStream,
+                                     cfg: ServiceConfig,
+                                     served: Int) -> Result<TlsConnectionReadOutcome, String> {
+  match await timeout(millis(next_request_timeout_ms(cfg, served)),
+                      tls_stream_read_request_limited(stream, cfg.max_header_bytes, cfg.max_body_bytes)) {
+    Ok(outcome) => {
+      match outcome {
+        Ok(request) => {
+          return Ok(Ready(tls_ready_request(cfg, request)))
+        }
+        Err(msg) => {
+          return Ok(BadRequest(tls_request_read_failure(msg)))
+        }
+      }
+    }
+    Err(msg) => {
+      if served > 0 && is_timeout_error(msg) {
+        return Ok(KeepAliveIdleTimeout)
+      }
+      return Ok(RequestTimeout(tls_request_read_failure(msg)))
+    }
+  }
+}
+
+async fn tls_bad_request_connection_state(stream: TlsServerStream,
+                                          cfg: ServiceConfig,
+                                          served: Int,
+                                          current_draining: Bool,
+                                          failure: TlsRequestReadFailure) -> Result<TlsConnectionLoopState, String> {
+  tls_error_event_request_with_debug(cfg,
+                                     "request_rejected",
+                                     failure.message,
+                                     failure.request_id,
+                                     failure.request_id_text,
+                                     request_rejected_classification(),
+                                     stream)
+  delta_counter(cfg.name, "bad_requests", "1", 1)
+  match await tls_write_bad_request(stream, cfg, failure.request_id, failure.request_id_text) {
+    Ok(count) => {
+      return Ok(stop_tls_connection(served + count, current_draining))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_request_timeout_connection_state(stream: TlsServerStream,
+                                              cfg: ServiceConfig,
+                                              served: Int,
+                                              current_draining: Bool,
+                                              failure: TlsRequestReadFailure) -> Result<TlsConnectionLoopState, String> {
+  tls_error_event_request_with_debug(cfg,
+                                     "request_timeout",
+                                     failure.message,
+                                     failure.request_id,
+                                     failure.request_id_text,
+                                     request_timeout_classification(),
+                                     stream)
+  delta_counter(cfg.name, "request_timeouts", "1", 1)
+  match await tls_write_request_timeout(stream, cfg, failure.request_id, failure.request_id_text) {
+    Ok(count) => {
+      return Ok(stop_tls_connection(served + count, current_draining))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_successful_reply_connection_state(stream: TlsServerStream,
+                                               cfg: ServiceConfig,
+                                               request: Request,
+                                               span: TlsRequestSpan,
+                                               reply: Response,
+                                               served: Int,
+                                               current_draining: Bool) -> Result<TlsConnectionLoopState, String> {
+  let close_connection = tls_close_after_next_response(cfg, request, served, current_draining)
+  match await tls_finish_reply(stream,
+                               cfg,
+                               request,
+                               span,
+                               reply,
+                               close_connection,
+                               "write_timeout",
+                               "write_response_failed") {
+    Ok(count) => {
+      let next_count = served + count
+      if close_connection {
+        return Ok(stop_tls_connection(next_count, current_draining))
+      }
+      return Ok(continue_tls_connection(next_count, current_draining))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_handler_timeout_connection_state(stream: TlsServerStream,
+                                              cfg: ServiceConfig,
+                                              drain_cfg: DrainConfig,
+                                              request: Request,
+                                              span: TlsRequestSpan,
+                                              served: Int,
+                                              current_draining: Bool,
+                                              msg: String) -> Result<TlsConnectionLoopState, String> {
+  tls_error_event_request_with_debug(cfg,
+                                     "handler_timeout",
+                                     msg,
+                                     span.request_id,
+                                     span.request_id_text,
+                                     request_handler_classification(),
+                                     stream)
+  delta_counter(cfg.name, "handler_timeouts", "1", 1)
+  match tls_next_reply_context(cfg, drain_cfg, current_draining, span, stream) {
+    Ok(reply_state) => {
+      match await tls_finish_reply(stream,
+                                   cfg,
+                                   request,
+                                   span,
+                                   handler_timeout(reply_state.ctx),
+                                   true,
+                                   "timeout_response_write_timeout",
+                                   "timeout_write_failed") {
+        Ok(count) => {
+          return Ok(stop_tls_connection(served + count, reply_state.draining_mode))
+        }
+        Err(write_msg) => {
+          return Err(write_msg)
+        }
+      }
+    }
+    Err(next_msg) => {
+      return Err(next_msg)
+    }
+  }
+}
+
+async fn tls_handler_error_connection_state(stream: TlsServerStream,
+                                            cfg: ServiceConfig,
+                                            request: Request,
+                                            span: TlsRequestSpan,
+                                            reply_ctx: RequestContext,
+                                            served: Int,
+                                            current_draining: Bool,
+                                            msg: String) -> Result<TlsConnectionLoopState, String> {
+  tls_error_event_request_with_debug(cfg,
+                                     "handler_error",
+                                     msg,
+                                     span.request_id,
+                                     span.request_id_text,
+                                     request_handler_classification(),
+                                     stream)
+  delta_counter(cfg.name, "handler_errors", "1", 1)
+  let error_reply = internal_error(reply_ctx)
+  let close_connection = tls_close_after_next_response(cfg, request, served, current_draining)
+  match await tls_finish_reply(stream,
+                               cfg,
+                               request,
+                               span,
+                               error_reply,
+                               close_connection,
+                               "internal_error_write_timeout",
+                               "internal_error_write_failed") {
+    Ok(count) => {
+      return Ok(stop_tls_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+fn tls_handler_panic_response(ctx: RequestContext) -> Response {
+  if ctx.is_draining() {
+    return draining(ctx)
+  }
+  return internal_error(ctx)
+}
+
+async fn tls_panic_reply_connection_state_with_policy(stream: TlsServerStream,
+                                                      cfg: ServiceConfig,
+                                                      request: Request,
+                                                      span: TlsRequestSpan,
+                                                      reply_ctx: RequestContext,
+                                                      served: Int,
+                                                      current_draining: Bool,
+                                                      panic_msg: String) -> Result<TlsConnectionLoopState, String> {
+  if !panic_recovery_enabled(cfg) {
+    panic(panic_msg)
+  }
+  tls_error_event_request_with_debug(cfg,
+                                     "handler_panic",
+                                     panic_msg,
+                                     span.request_id,
+                                     span.request_id_text,
+                                     request_handler_classification(),
+                                     stream)
+  delta_counter(cfg.name, "handler_panics", "1", 1)
+  let close_connection = tls_close_after_next_response(cfg, request, served, current_draining)
+  match await tls_finish_reply(stream,
+                               cfg,
+                               request,
+                               span,
+                               tls_handler_panic_response(reply_ctx),
+                               close_connection,
+                               "internal_error_write_timeout",
+                               "internal_error_write_failed") {
+    Ok(count) => {
+      return Ok(stop_tls_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn tls_non_ready_connection_state(stream: TlsServerStream,
+                                        cfg: ServiceConfig,
+                                        served: Int,
+                                        current_draining: Bool,
+                                        outcome: TlsConnectionReadOutcome) -> Result<TlsConnectionLoopState, String> {
+  match outcome {
+    BadRequest(failure) => {
+      return await tls_bad_request_connection_state(stream, cfg, served, current_draining, failure)
+    }
+    RequestTimeout(failure) => {
+      return await tls_request_timeout_connection_state(stream, cfg, served, current_draining, failure)
+    }
+    KeepAliveIdleTimeout => {
+      return Ok(tls_keep_alive_idle_timeout_connection_state(stream, served, current_draining))
+    }
+    Ready(_) => {
+      return Err("expected non-ready TLS connection read outcome")
+    }
+  }
+}
+
+async fn tls_ready_result_with_context_connection_state(stream: TlsServerStream,
+                                                        cfg: ServiceConfig,
+                                                        drain_cfg: DrainConfig,
+                                                        served: Int,
+                                                        current_draining: Bool,
+                                                        request: Request,
+                                                        span: TlsRequestSpan,
+                                                        handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<TlsConnectionLoopState, String> {
+  let ctx = tls_request_context(cfg, span, current_draining, stream)
+  match await timeout(millis(cfg.handler_timeout_ms),
+                      __nebula_service_catch_result_response_panic(handler(ctx, request))) {
+    Ok(caught_outcome) => {
+      match tls_next_reply_context(cfg, drain_cfg, current_draining, span, stream) {
+        Ok(reply_state) => {
+          match caught_outcome {
+            Ok(handler_outcome) => {
+              match handler_outcome {
+                Ok(reply) => {
+                  return await tls_successful_reply_connection_state(stream,
+                                                                     cfg,
+                                                                     request,
+                                                                     span,
+                                                                     reply,
+                                                                     served,
+                                                                     reply_state.draining_mode)
+                }
+                Err(msg) => {
+                  return await tls_handler_error_connection_state(stream,
+                                                                  cfg,
+                                                                  request,
+                                                                  span,
+                                                                  reply_state.ctx,
+                                                                  served,
+                                                                  reply_state.draining_mode,
+                                                                  msg)
+                }
+              }
+            }
+            Err(panic_msg) => {
+              return await tls_panic_reply_connection_state_with_policy(stream,
+                                                                        cfg,
+                                                                        request,
+                                                                        span,
+                                                                        reply_state.ctx,
+                                                                        served,
+                                                                        reply_state.draining_mode,
+                                                                        panic_msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return await tls_handler_timeout_connection_state(stream,
+                                                        cfg,
+                                                        drain_cfg,
+                                                        request,
+                                                        span,
+                                                        served,
+                                                        current_draining,
+                                                        msg)
+    }
+  }
+}
+
+async fn tls_result_with_context_connection_iteration_state(stream: TlsServerStream,
+                                                            cfg: ServiceConfig,
+                                                            drain_cfg: DrainConfig,
+                                                            served: Int,
+                                                            current_draining: Bool,
+                                                            handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<TlsConnectionLoopState, String> {
+  match await tls_read_connection_request(stream, cfg, served) {
+    Ok(outcome) => {
+      match outcome {
+        Ready(ready) => {
+          return await tls_ready_result_with_context_connection_state(stream,
+                                                                      cfg,
+                                                                      drain_cfg,
+                                                                      served,
+                                                                      current_draining,
+                                                                      ready.request,
+                                                                      ready.span,
+                                                                      handler)
+        }
+        _ => {
+          return await tls_non_ready_connection_state(stream, cfg, served, current_draining, outcome)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn handle_accepted_tls_stream_result_with_context(stream: TlsServerStream,
+                                                        cfg: ServiceConfig,
+                                                        drain_cfg: DrainConfig,
+                                                        draining_mode: Bool,
+                                                        handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<TlsConnectionOutcome, String> {
+  let served = 0
+  let current_draining = draining_mode
+  while true {
+    match tls_advance_connection_before_read(cfg, drain_cfg, served, current_draining) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(tls_applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await tls_result_with_context_connection_iteration_state(stream,
+                                                                   cfg,
+                                                                   drain_cfg,
+                                                                   served,
+                                                                   current_draining,
+                                                                   handler) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(tls_applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Err("handle_accepted_tls_stream_result_with_context fell through unexpectedly")
+}
+
+async fn serve_tls_request_once_result_with_context(listener: TlsListener,
+                                                    cfg: ServiceConfig,
+                                                    handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  match await TlsListener_accept(listener) {
+    Ok(stream) => {
+      return tls_request_count_result(
+        await handle_accepted_tls_stream_result_with_context(stream, cfg, disabled(), false, handler)
+      )
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_tls_result_with_context_goal(listener: TlsListener,
+                                            cfg: ServiceConfig,
+                                            goal: TlsServeGoal,
+                                            handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  let invalid = tls_serve_goal_invalid_message(goal)
+  if invalid != "" {
+    return Err(invalid)
+  }
+  let served = 0
+  while true {
+    if tls_serve_goal_reached_limit(goal, served) {
+      return tls_serve_goal_complete(cfg, goal, served)
+    }
+    match await serve_tls_request_once_result_with_context(listener, cfg, handler) {
+      Ok(count) => {
+        served += count
+      }
+      Err(msg) => {
+        return tls_serve_goal_step_failed(cfg, goal, served, msg)
+      }
+    }
+  }
+  return Ok(served)
+}
+
+async fn serve_requests_n_result_with_context_tls(listener: TlsListener,
+                                                  cfg: ServiceConfig,
+                                                  limit: Int,
+                                                  handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  return await serve_tls_result_with_context_goal(listener, cfg, tls_finite_serve_goal(limit), handler)
+}
+
+async fn serve_requests_result_with_context_tls(listener: TlsListener,
+                                                cfg: ServiceConfig,
+                                                handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  return await serve_tls_result_with_context_goal(listener, cfg, tls_run_forever_serve_goal(), handler)
+}
+
+async fn tls_drain_accept_resolution(listener: TlsListener,
+                                     cfg: ServiceConfig,
+                                     drain_cfg: DrainConfig,
+                                     served: Int,
+                                     draining_mode: Bool) -> Result<TlsDrainAcceptResolution, String> {
+  match await tls_accept_next(listener, drain_cfg) {
+    Ok(outcome) => {
+      match outcome {
+        Accepted(stream) => {
+          return Ok(AcceptedStream(stream))
+        }
+        Idle => {
+          match tls_idle_drain_serve_state(listener, cfg, drain_cfg, served, draining_mode) {
+            Ok(state) => {
+              return Ok(Completed(state))
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+      }
+    }
+    Err(msg) => {
+      if msg == "tls listener is closed" {
+        return Ok(Completed(tls_listener_closed_drain_serve_state(cfg, served, draining_mode)))
+      }
+      return Err(msg)
+    }
+  }
+}
+
+async fn tls_result_drain_serve_iteration_state(listener: TlsListener,
+                                                cfg: ServiceConfig,
+                                                drain_cfg: DrainConfig,
+                                                served: Int,
+                                                draining_mode: Bool,
+                                                handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<TlsDrainServeState, String> {
+  match await tls_drain_accept_resolution(listener, cfg, drain_cfg, served, draining_mode) {
+    Ok(resolution) => {
+      match resolution {
+        AcceptedStream(stream) => {
+          return tls_drain_serve_state_from_connection_result(
+            served,
+            await handle_accepted_tls_stream_result_with_context(stream,
+                                                                 cfg,
+                                                                 drain_cfg,
+                                                                 draining_mode,
+                                                                 handler)
+          )
+        }
+        Completed(state) => {
+          return Ok(state)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_requests_result_until_drained_tls(listener: TlsListener,
+                                                 cfg: ServiceConfig,
+                                                 drain_cfg: DrainConfig,
+                                                 handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  let served = 0
+  let draining_mode = false
+  while true {
+    match advance_listener_draining_mode_if_needed(cfg, drain_cfg, draining_mode) {
+      Ok(next_mode) => {
+        draining_mode = next_mode
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await tls_result_drain_serve_iteration_state(listener,
+                                                       cfg,
+                                                       drain_cfg,
+                                                       served,
+                                                       draining_mode,
+                                                       handler) {
+      Ok(state) => {
+        served = state.served
+        draining_mode = state.draining_mode
+        if state.should_stop {
+          return Ok(state.served)
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Ok(served)
+}

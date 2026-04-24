@@ -1,0 +1,163 @@
+id = "TST-278-release-control-plane-jwt-scope-authz-smoke"
+suite = "test"
+description = "release control plane enforces app/channel scoped authz for JWT principals via subject bindings"
+
+[[steps]]
+kind = "shell"
+timeout = 240
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/release_control_plane_jwt_scope_authz")
+state_dir = root / "state"
+ctl_out_dir = root / ".ctl-out"
+secrets_dir = root / "jwt"
+scope_file = root / "scopes.json"
+jwks_file = secrets_dir / "jwks.json"
+reader_file = secrets_dir / "reader.jwt"
+writer_file = secrets_dir / "writer.jwt"
+admin_file = secrets_dir / "admin.jwt"
+
+JWKS = '{"keys":[{"kty":"RSA","kid":"test-key","alg":"RS256","n":"u1XzrSC7xLK4FJVZNaJ578TOvBS0g6Gv2P66IUCnzWx6kAi0W1tkI5skloF75EjLCPvi-CT4AP07PTee62TEiLQNC9MkVATTT_mbCkhMWqeUr4S6Bj3N19yhL2Fmymfg7RU8kTA7R2l9XhPdUGNqXfpLTD7aXXtSrlgvw-6WjHa1vAR60QJb31PAjmQKwo8EoJtkrY-DsEgKhhFqKmfhTp_H119vB5UfygkvcypsLdOXK89Iz7t2E1RmqDLe1-ngiOnYbIIJueB33VKnJCITo5RZb0Qj6-zbu7iBcz9lgztezT-kN-orcmkoYTrSkCBzszDO7_lKvLLk2pQadMBmpw","e":"AQAB"}]}'
+READER = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.ODsFGAvLT3lIkDuhA28kGBUg-dCvVNiVAxPUg_hB5QEiwr8C58qnZwJGYNYmuM2TBXYOXLyDkPg8wwXdNng3Hzv1dAFWrsPRDl6oFiY0TE7WnwV3B0Ik-wgTdu5u8VryRWJjMArJOdC3Uiqb7dTukNhcWKL3GMIL3qwgjulOUa5KUeJfdcNBYwyNrnJY14rNpaeGBSRB47Te_LAA-HtPvkq4P4Ohd565IaeWzT0hgc4PozqH7YEgxb4CEsIefWunpGIBgRzFEkYGWev17Oa8SfrKRFvPTQNbT2A6GnHhZGH8eMDTLf7Od1gbjQNIcrhJ6oUz1UjNApGSyS-AwHAWvw"
+WRITER = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6IndyaXRlciIsInJvbGVzIjpbIndyaXRlciJdfQ.KEId8JtcdsFVuWVUbgoqnbeNvx6ZILEp4lEK_TaOZCE3FYUATNBCzBKLWgiEEH8gkK7GLoK6EJ4yKAQfRbrRMoqVY8JTDA6hUrwpDsHFgfIRuzluMDspjCY6MtJaTxy8sxoBTlN1rerR0zBLJ1nJ8Mn9pQBdlSKpk8-qn1SImV1WJVraET_jj8pQUKM5PQapimCSyrCWQ87miV0IpmcdUncKWWfAYEkgNfExqXrxIFTjdNwS9c4CE-iH2Af2uTY5zHO8PZ0huaqrZo3AWdw09-mgtEeOGzkmUCG_BPgP7zoOjfWDTKzNIPV9RhP4xzKPwJrv-PK35rm939ppRI9JmQ"
+ADMIN = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6ImFkbWluIiwicm9sZXMiOlsiYWRtaW4iXX0.RpiboD2z984vRU17KGuUSKOEYJYts5Z1kXPiPdISDtrSZdN3CLoNqLRhGPCqXie54RO577jtyG08fW9_3WYulSrJ05YDFM5AjPv3O7BTI4oDsD4UyAYzQCHX28hNUifLr-ZqMzk7-E2OFSyhBRZ9ngoJqMW5brnD6xLFRn4mSusPHaw0DqgiQhfG-OhYyzH81lqnlA5ZKYSyB6OHNTsNsVawiT07TcDNqyHD8Ibs4ex088Ejp5OO4wAytSCAK4L01iBRh3KpE7tF9lx9FEmIG8_N1DyUp6Gp5Jd3NELU9pk8fQeo4Zh1armmKAN3oCpFObhkCOJdwhm3yKTf6-t1Dw"
+
+copy_example(repo_root, root)
+secrets_dir.mkdir(parents=True, exist_ok=True)
+jwks_file.write_text(JWKS, encoding="utf-8")
+reader_file.write_text(READER + "\\n", encoding="utf-8")
+writer_file.write_text(WRITER + "\\n", encoding="utf-8")
+admin_file.write_text(ADMIN + "\\n", encoding="utf-8")
+scope_file.write_text(
+    json.dumps(
+        {
+            "bindings": [
+                {"subject": "reader", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "writer", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "admin", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+            ]
+        }
+    ),
+    encoding="utf-8",
+)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(
+    binary,
+    root,
+    {
+        "APP_STATE_DIR": str(state_dir),
+        "APP_AUTH_REQUIRED": "1",
+        "APP_AUTH_MODE": "jwt",
+        "APP_AUTH_JWT_PREVIEW": "1",
+        "APP_AUTH_JWT_ISSUER": "https://issuer.example",
+        "APP_AUTH_JWT_AUDIENCE": "release-control-plane",
+        "APP_AUTH_JWKS_FILE": str(jwks_file),
+        "APP_AUTH_SCOPE_FILE": str(scope_file),
+        "APP_SCHEDULES_PREVIEW": "1",
+    },
+)
+
+def require_denied(result, permission_text: str, scope_text: str, label: str) -> None:
+    if result.returncode != 1:
+        print_completed(result)
+        raise SystemExit(f"{label} unexpectedly succeeded")
+    if permission_text not in result.stdout or scope_text not in result.stdout:
+        print_completed(result)
+        raise SystemExit(f"{label} missing scoped denial detail")
+
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f"http://127.0.0.1:{port}"
+    prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, "prewarm ctl")
+
+    writer_token = writer_file.read_text(encoding="utf-8").strip()
+    reader_token = reader_file.read_text(encoding="utf-8").strip()
+    admin_token = admin_file.read_text(encoding="utf-8").strip()
+
+    writer_put_prod = run_ctl(
+        binary, root,
+        "config", "put",
+        "--app", "control-plane",
+        "--channel", "prod",
+        "--key", "feature.flag",
+        "--bool", "true",
+        "--description", "flag",
+        "--url", base_url,
+        "--token", writer_token,
+        "--json",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_success(writer_put_prod, "jwt writer put prod")
+
+    writer_put_stage = run_ctl(
+        binary, root,
+        "config", "put",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--key", "feature.flag",
+        "--bool", "true",
+        "--description", "flag",
+        "--url", base_url,
+        "--token", writer_token,
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(writer_put_stage, "permission=config.write", "scope=control-plane/stage", "jwt writer put stage")
+
+    reader_release_stage = run_ctl(
+        binary, root,
+        "release", "get",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--url", base_url,
+        "--token", reader_token,
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(reader_release_stage, "permission=release.read", "scope=control-plane/stage", "jwt reader release get stage")
+
+    admin_schedule_stage = run_ctl(
+        binary, root,
+        "schedule", "put",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--schedule-id", "nightly",
+        "--event-kind", "release_apply_requested",
+        "--release-revision", "1",
+        "--interval-ms", "60000",
+        "--next-due-unix-ms", "1000",
+        "--url", base_url,
+        "--token", admin_token,
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(admin_schedule_stage, "permission=schedule.write", "scope=control-plane/stage", "jwt admin schedule put stage")
+finally:
+    terminate_process(proc)
+
+print("release-control-plane-jwt-scope-authz-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-jwt-scope-authz-ok"]

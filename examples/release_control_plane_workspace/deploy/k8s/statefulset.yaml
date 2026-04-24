@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: release-control-plane
+  namespace: release-control-plane
+spec:
+  serviceName: release-control-plane
+  replicas: 1
+  selector:
+    matchLabels:
+      app: release-control-plane
+  template:
+    metadata:
+      labels:
+        app: release-control-plane
+    spec:
+      containers:
+        - name: release-control-plane
+          image: release-control-plane:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 40480
+              name: http
+          envFrom:
+            - configMapRef:
+                name: release-control-plane-env
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/release-control-plane
+            - name: auth-secrets
+              mountPath: /run/release-control-plane-secrets
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+      volumes:
+        - name: auth-secrets
+          secret:
+            secretName: release-control-plane-auth
+        - name: state
+          persistentVolumeClaim:
+            claimName: release-control-plane-state

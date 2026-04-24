@@ -1,0 +1,364 @@
+module client
+import core::contracts
+import core::validate
+import std::bytes
+import std::fs
+import std::http
+import std::http_json
+import std::json
+import std::net
+import std::result
+import tls::client
+import tls::http
+
+struct ClientOptions {
+  token: String
+  ca_file: String
+}
+
+struct JsonResponse {
+  status: Int
+  etag: String
+  payload: Json
+}
+
+struct RequestTarget {
+  scheme: String
+  host: String
+  port: Int
+  authority: String
+  full_path: String
+}
+
+struct ResolvedBaseUrl {
+  normalized: String
+  scheme: String
+  host: String
+  port: Int
+  authority: String
+}
+
+fn client_options(token: String, ca_file: String) -> ClientOptions {
+  return ClientOptions(token, ca_file)
+}
+
+fn request_path(base_url: String, suffix: String) -> Result<String, String> {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      match base_url_path_prefix(normalized) {
+        Ok(prefix) => {
+          if prefix == "" {
+            return Ok(suffix)
+          }
+          return Ok(text_concat(prefix, suffix))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn resolve_base_url_authority(normalized: String,
+                              scheme: String,
+                              host: String,
+                              port: Int) -> Result<ResolvedBaseUrl, String> {
+  let authority = base_url_authority(normalized)?
+  return Ok(ResolvedBaseUrl(normalized, scheme, host, port, authority))
+}
+
+fn resolve_base_url_port(normalized: String, scheme: String, host: String) -> Result<ResolvedBaseUrl, String> {
+  let port = base_url_port(normalized)?
+  return resolve_base_url_authority(normalized, scheme, host, port)
+}
+
+fn resolve_base_url_host(normalized: String, scheme: String) -> Result<ResolvedBaseUrl, String> {
+  let host = base_url_host(normalized)?
+  return resolve_base_url_port(normalized, scheme, host)
+}
+
+fn resolve_base_url(base_url: String) -> Result<ResolvedBaseUrl, String> {
+  let normalized = normalize_base_url(base_url)?
+  let scheme = base_url_scheme(normalized)?
+  return resolve_base_url_host(normalized, scheme)
+}
+
+fn resolve_request_target(base_url: String, path: String) -> Result<RequestTarget, String> {
+  match resolve_base_url(base_url) {
+    Ok(resolved) => {
+      match request_path(resolved.normalized, path) {
+        Ok(full_path) => {
+          return Ok(RequestTarget(resolved.scheme, resolved.host, resolved.port, resolved.authority, full_path))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn authorization_value(token: String) -> String {
+  return text_concat("Bearer ", token)
+}
+
+fn wire_request_no_extra_header(method: Method,
+                                authority: String,
+                                path: String,
+                                content_type: String,
+                                body: Bytes,
+                                options: ClientOptions) -> Result<ClientRequest, String> {
+  if options.token == "" {
+    return Ok(request(method, authority, path, content_type, body))
+  }
+  return request1(method,
+                  authority,
+                  path,
+                  content_type,
+                  body,
+                  "Authorization",
+                  authorization_value(options.token))
+}
+
+fn wire_request(method: Method,
+                authority: String,
+                path: String,
+                content_type: String,
+                body: Bytes,
+                options: ClientOptions,
+                extra_header_name: String,
+                extra_header_value: String) -> Result<ClientRequest, String> {
+  if extra_header_name == "" {
+    return wire_request_no_extra_header(method, authority, path, content_type, body, options)
+  }
+  if options.token == "" {
+    return request1(method,
+                    authority,
+                    path,
+                    content_type,
+                    body,
+                    extra_header_name,
+                    extra_header_value)
+  }
+  return request2(method,
+                  authority,
+                  path,
+                  content_type,
+                  body,
+                  "Authorization",
+                  authorization_value(options.token),
+                  extra_header_name,
+                  extra_header_value)
+}
+
+fn tls_config(options: ClientOptions) -> Result<ClientConfig, String> {
+  if options.ca_file == "" {
+    return client_config_default_roots()
+  }
+  let ca_pem = read_string(options.ca_file)?
+  return client_config_from_ca_pem_text(ca_pem)
+}
+
+async fn send_http_request_target(target: RequestTarget,
+                                  method: Method,
+                                  content_type: String,
+                                  body: Bytes,
+                                  options: ClientOptions,
+                                  extra_header_name: String,
+                                  extra_header_value: String) -> Result<ClientResponse, String> {
+  let request_value = wire_request(method,
+                                   target.authority,
+                                   target.full_path,
+                                   content_type,
+                                   body,
+                                   options,
+                                   extra_header_name,
+                                   extra_header_value)?
+  match await connect_host(target.host, target.port) {
+    Ok(stream) => {
+      match await stream.write_request(request_value) {
+        Ok(_) => {
+          match await stream.read_response() {
+            Ok(response) => {
+              stream.close()
+              return Ok(response)
+            }
+            Err(msg) => {
+              stream.close()
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          stream.close()
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn dial_tls_target(target: RequestTarget, options: ClientOptions) -> Result<TlsClientStream, String> {
+  let config = tls_config(options)?
+  return await dial_host(target.host, target.port, config)
+}
+
+async fn send_https_stream_request(stream: TlsClientStream, request_value: ClientRequest) -> Result<ClientResponse, String> {
+  match await stream.write_request(request_value) {
+    Ok(_) => {
+      match await stream.read_response() {
+        Ok(response) => {
+          stream.close()
+          return Ok(response)
+        }
+        Err(msg) => {
+          stream.close()
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(msg)
+    }
+  }
+}
+
+async fn send_https_request_target(target: RequestTarget,
+                                   method: Method,
+                                   content_type: String,
+                                   body: Bytes,
+                                   options: ClientOptions,
+                                   extra_header_name: String,
+                                   extra_header_value: String) -> Result<ClientResponse, String> {
+  let request_value = wire_request(method,
+                                   target.authority,
+                                   target.full_path,
+                                   content_type,
+                                   body,
+                                   options,
+                                   extra_header_name,
+                                   extra_header_value)?
+  match await dial_tls_target(target, options) {
+    Ok(stream) => {
+      return await send_https_stream_request(stream, request_value)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn send_request(base_url: String,
+                      method: Method,
+                      path: String,
+                      content_type: String,
+                      body: Bytes,
+                      options: ClientOptions,
+                      extra_header_name: String,
+                      extra_header_value: String) -> Result<ClientResponse, String> {
+  match resolve_request_target(base_url, path) {
+    Ok(target) => {
+      if target.scheme == "https" {
+        return await send_https_request_target(target, method, content_type, body, options, extra_header_name, extra_header_value)
+      }
+      return await send_http_request_target(target, method, content_type, body, options, extra_header_name, extra_header_value)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn parse_json_response(response: ClientResponse) -> Result<JsonResponse, String> {
+  let etag = text_concat("", "")
+  match response_header(response, "ETag") {
+    Ok(value) => {
+      etag = value
+    }
+    Err(_) => {}
+  }
+  match parse_json_body(response.body) {
+    Ok(payload) => {
+      return Ok(JsonResponse(response.status, etag, payload))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn get_json(base_url: String, path: String, options: ClientOptions) -> Result<JsonResponse, String> {
+  match await send_request(base_url, Get, path, "", from_string(""), options, "", "") {
+    Ok(response) => {
+      return parse_json_response(response)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn post_json(base_url: String, path: String, payload: Json, options: ClientOptions) -> Result<JsonResponse, String> {
+  let body = from_string(stringify(payload))
+  match await send_request(base_url, Post, path, "application/json; charset=utf-8", body, options, "", "") {
+    Ok(response) => {
+      return parse_json_response(response)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn put_json(base_url: String,
+                  path: String,
+                  payload: Json,
+                  options: ClientOptions,
+                  if_match_value: String) -> Result<JsonResponse, String> {
+  let body = from_string(stringify(payload))
+  let header_name = text_concat("", "")
+  let header_value = text_concat("", "")
+  if if_match_value != "" {
+    header_name = "If-Match"
+    header_value = if_match_value
+  }
+  match await send_request(base_url, Put, path, "application/json; charset=utf-8", body, options, header_name, header_value) {
+    Ok(response) => {
+      return parse_json_response(response)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn delete_json(base_url: String,
+                     path: String,
+                     options: ClientOptions,
+                     if_match_value: String) -> Result<JsonResponse, String> {
+  let header_name = text_concat("", "")
+  let header_value = text_concat("", "")
+  if if_match_value != "" {
+    header_name = "If-Match"
+    header_value = if_match_value
+  }
+  match await send_request(base_url, Delete, path, "", from_string(""), options, header_name, header_value) {
+    Ok(response) => {
+      return parse_json_response(response)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}

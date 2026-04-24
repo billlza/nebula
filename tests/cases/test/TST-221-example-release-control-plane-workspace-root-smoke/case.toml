@@ -1,0 +1,112 @@
+id = "TST-221-example-release-control-plane-workspace-root-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import copy_example, fetch_workspace, nebula, require_success
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_root')
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+
+if not (root / 'nebula.lock').exists():
+    raise SystemExit('workspace fetch did not write a root nebula.lock')
+if (root / 'apps' / 'ctl' / 'nebula.lock').exists() or (root / 'apps' / 'service' / 'nebula.lock').exists() or (root / 'packages' / 'core' / 'nebula.lock').exists():
+    raise SystemExit('workspace fetch should not write member lockfiles')
+
+lock_text = (root / 'nebula.lock').read_text(encoding='utf-8')
+for fragment in [
+    'root_package = "@workspace:',
+    'source_kind = "workspace"',
+    'name = "release-control-plane-service"',
+    'name = "nebula-service"',
+    'name = "nebula-db-sqlite"',
+    'source_kind = "installed"',
+    'source_kind = "path"',
+]:
+    if fragment not in lock_text:
+        raise SystemExit(f'missing lockfile fragment: {fragment!r}')
+
+require_success(nebula(binary, 'check', root), 'workspace check')
+root_run = nebula(binary, 'run', root, '--run-gate', 'none', '--', 'control-plane-validate')
+require_success(root_run, 'workspace root run')
+if 'base_url=http://127.0.0.1:40480' not in root_run.stdout:
+    print(root_run.stdout, end='')
+    print(root_run.stderr, end='')
+    raise SystemExit('workspace root run did not target the CLI default command path')
+
+print('example-release-control-plane-workspace-root-check-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-root-check-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import nebula, require_success
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_root')
+tests = nebula(binary, 'test', '--dir', root)
+require_success(tests, 'workspace test')
+tests_output = tests.stdout + tests.stderr
+if '[test] test_default_base_url_contract' not in tests_output or '[test] test_release_entry_envelope_roundtrip' not in tests_output:
+    print(tests_output, end='')
+    raise SystemExit('workspace test did not execute the expected core tests')
+
+print('example-release-control-plane-workspace-root-test-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-root-test-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import nebula, require_success
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_root')
+latency_csv = Path('benchmark_results/latency.csv')
+if latency_csv.exists():
+    latency_csv.unlink()
+bench = nebula(binary, 'bench', '--dir', root)
+require_success(bench, 'workspace bench')
+bench_output = bench.stdout + bench.stderr
+if 'NEBULA_BENCH' not in bench_output:
+    print(bench_output, end='')
+    raise SystemExit('workspace bench did not emit benchmark output')
+if not latency_csv.exists():
+    raise SystemExit('workspace bench did not write benchmark_results/latency.csv')
+if 'file,warmup_iterations,measure_iterations' not in latency_csv.read_text(encoding='utf-8'):
+    raise SystemExit('workspace bench latency.csv was missing the expected header')
+
+print('example-release-control-plane-workspace-root-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-root-ok"]

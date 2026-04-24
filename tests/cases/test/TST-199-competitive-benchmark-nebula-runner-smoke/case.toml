@@ -1,0 +1,8 @@
+id = "TST-199-competitive-benchmark-nebula-runner-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport json\nimport os\nimport subprocess\nfrom pathlib import Path\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nout_path = Path('work/backend_crypto_bench_results.json')\nout_path.parent.mkdir(parents=True, exist_ok=True)\nsubprocess.run([\n    'python3',\n    str(repo_root / 'scripts' / 'competitive_bench.py'),\n    'run-nebula',\n    '--binary',\n    os.environ['NEBULA_BINARY'],\n    '--workload',\n    'http_route_roundtrip',\n    '--workload',\n    'hash_throughput',\n    '--json-out',\n    str(out_path),\n], check=True)\nresults = json.loads(out_path.read_text(encoding='utf-8'))\nrows = {item['id']: item for item in results['results']}\nfor workload_id in ('http_route_roundtrip', 'hash_throughput'):\n    row = rows.get(workload_id)\n    if row is None:\n        raise SystemExit(f'missing workload result: {workload_id}')\n    if row['status'] != 'ok':\n        raise SystemExit(f'workload did not succeed: {row!r}')\n    metrics = row.get('metrics', {})\n    for key in ('p50_ms', 'mean_ms', 'throughput_ops_s', 'platform', 'perf_capability'):\n        if key not in metrics:\n            raise SystemExit(f'missing metric {key} for {workload_id}: {row!r}')\nprint('competitive-benchmark-nebula-runner-ok')\nPY"
+expect_rc = 0
+expect_stdout_contains = ["competitive-benchmark-nebula-runner-ok"]

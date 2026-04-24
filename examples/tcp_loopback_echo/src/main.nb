@@ -1,0 +1,58 @@
+module main
+import server
+import std::bytes
+import std::net
+import std::result
+import std::task
+import std::time
+
+async fn main() -> Void {
+  match ipv4("127.0.0.1", 40480) {
+    Ok(addr) => {
+      match await bind(addr) {
+        Ok(listener) => {
+          let task = spawn(serve_once(listener))
+          await sleep(millis(1))
+
+          match await connect(addr) {
+            Ok(stream) => {
+              let payload = from_string("hello")
+              match await stream.write_all(payload) {
+                Ok(_) => {
+                  match await stream.read(64) {
+                    Ok(bytes) => {
+                      if to_string(bytes) == "hello" {
+                        print("tcp-loopback-ok")
+                      } else {
+                        print("tcp-loopback-bad")
+                      }
+                    }
+                    Err(msg) => {
+                      print(msg)
+                    }
+                  }
+                }
+                Err(msg) => {
+                  print(msg)
+                }
+              }
+
+              stream.close()
+              listener.close()
+              await join(task)
+            }
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

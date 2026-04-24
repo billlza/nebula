@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-control-plane
+  namespace: release-control-plane
+spec:
+  type: ClusterIP
+  selector:
+    app: release-control-plane
+  ports:
+    - name: http
+      port: 80
+      targetPort: 40480

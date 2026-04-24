@@ -1,0 +1,390 @@
+module schedule_store
+import core::schedule_contracts
+import core::validate
+import core::workflow_contracts
+import db
+import std::json
+import std::result
+import std::time
+import store
+import workflow_store
+
+struct ScheduleDefinitionLookup {
+  found: Bool
+  definition: ScheduleDefinition
+}
+
+struct ScheduleDefinitionRow {
+  app: String
+  channel: String
+  schedule_id: String
+  event_kind: String
+  release_revision_id: Int
+  interval_ms: Int
+  next_due_unix_ms: Int
+  enabled: Bool
+  payload: Json
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct ScheduleRowIdentity {
+  app: String
+  channel: String
+  schedule_id: String
+  event_kind: String
+}
+
+struct ScheduleRowTiming {
+  release_revision_id: Int
+  interval_ms: Int
+  next_due_unix_ms: Int
+  enabled: Bool
+}
+
+struct ScheduleRowMeta {
+  payload: Json
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+fn schedule_state_store_path() -> String {
+  return release_store_path()
+}
+
+fn open_schedule_tx() -> Result<Transaction, String> {
+  let conn = open(schedule_state_store_path())?
+  return conn.begin_transaction()
+}
+
+fn schedule_migrations() -> Json {
+  let builder = array_builder()
+  let create_schedules_sql = "CREATE TABLE IF NOT EXISTS schedule_definitions (app TEXT NOT NULL, channel TEXT NOT NULL, schedule_id TEXT NOT NULL, event_kind TEXT NOT NULL, release_revision_id INTEGER NOT NULL, interval_ms INTEGER NOT NULL, next_due_unix_ms INTEGER NOT NULL, enabled INTEGER NOT NULL, payload TEXT NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (app, channel, schedule_id))"
+  builder = array_push(builder, migration(12, "create_schedule_definitions", create_schedules_sql))
+  return array_build(builder)
+}
+
+fn initialize_schedule_store() -> Result<Bool, String> {
+  let conn = open(schedule_state_store_path())?
+  conn.run_migrations(schedule_migrations())?
+  return Ok(true)
+}
+
+fn schedule_definition_placeholder() -> ScheduleDefinition {
+  return ScheduleDefinition("", "", "", "", 0, 0, 0, false, null_value(), 0, "", 0)
+}
+
+fn select_schedule_definition_sql() -> String {
+  return "SELECT app, channel, schedule_id, event_kind, release_revision_id, interval_ms, next_due_unix_ms, enabled, payload, revision_id, updated_by, updated_unix_ms FROM schedule_definitions WHERE app = ? AND channel = ? AND schedule_id = ?"
+}
+
+fn insert_schedule_definition_sql() -> String {
+  return "INSERT INTO schedule_definitions(app, channel, schedule_id, event_kind, release_revision_id, interval_ms, next_due_unix_ms, enabled, payload, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_schedule_definition_sql() -> String {
+  return "UPDATE schedule_definitions SET event_kind = ?, release_revision_id = ?, interval_ms = ?, next_due_unix_ms = ?, enabled = ?, payload = ?, revision_id = ?, updated_by = ?, updated_unix_ms = ? WHERE app = ? AND channel = ? AND schedule_id = ?"
+}
+
+fn due_schedules_sql() -> String {
+  return "SELECT app, channel, schedule_id, event_kind, release_revision_id, interval_ms, next_due_unix_ms, enabled, payload, revision_id, updated_by, updated_unix_ms FROM schedule_definitions WHERE enabled = 1 AND next_due_unix_ms <= ? ORDER BY next_due_unix_ms ASC, app ASC, channel ASC, schedule_id ASC"
+}
+
+fn schedule_identity_params(app_name: String, channel: String, schedule_id: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, string_value(schedule_id))
+  return array_build(builder)
+}
+
+fn schedule_definition_params(definition: ScheduleDefinition) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(definition.app))
+  builder = array_push(builder, string_value(definition.channel))
+  builder = array_push(builder, string_value(definition.schedule_id))
+  builder = builder_with_schedule_state(builder, definition)
+  return array_build(builder)
+}
+
+fn builder_with_schedule_state(builder: JsonArrayBuilder, definition: ScheduleDefinition) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(definition.event_kind))
+  builder = array_push(builder, int_value(definition.release_revision_id))
+  builder = array_push(builder, int_value(definition.interval_ms))
+  builder = array_push(builder, int_value(definition.next_due_unix_ms))
+  builder = array_push(builder, bool_value(definition.enabled))
+  builder = array_push(builder, string_value(stringify(definition.payload)))
+  builder = array_push(builder, int_value(definition.revision_id))
+  builder = array_push(builder, string_value(definition.updated_by))
+  builder = array_push(builder, int_value(definition.updated_unix_ms))
+  return builder
+}
+
+fn schedule_definition_update_params(definition: ScheduleDefinition) -> Json {
+  let builder = array_builder()
+  builder = builder_with_schedule_state(builder, definition)
+  builder = array_push(builder, string_value(definition.app))
+  builder = array_push(builder, string_value(definition.channel))
+  builder = array_push(builder, string_value(definition.schedule_id))
+  return array_build(builder)
+}
+
+fn schedule_row_identity(row: Row) -> Result<ScheduleRowIdentity, String> {
+  return Ok(ScheduleRowIdentity(row.get_string("app")?,
+                                row.get_string("channel")?,
+                                row.get_string("schedule_id")?,
+                                row.get_string("event_kind")?))
+}
+
+fn schedule_row_timing(row: Row) -> Result<ScheduleRowTiming, String> {
+  return Ok(ScheduleRowTiming(row.get_int("release_revision_id")?,
+                              row.get_int("interval_ms")?,
+                              row.get_int("next_due_unix_ms")?,
+                              row.get_bool("enabled")?))
+}
+
+fn schedule_row_meta(row: Row) -> Result<ScheduleRowMeta, String> {
+  return Ok(ScheduleRowMeta(parse(row.get_string("payload")?)?,
+                            row.get_int("revision_id")?,
+                            row.get_string("updated_by")?,
+                            row.get_int("updated_unix_ms")?))
+}
+
+fn schedule_definition_from_parts(identity: ScheduleRowIdentity,
+                                  timing: ScheduleRowTiming,
+                                  meta: ScheduleRowMeta) -> ScheduleDefinition {
+  return ScheduleDefinition(identity.app,
+                            identity.channel,
+                            identity.schedule_id,
+                            identity.event_kind,
+                            timing.release_revision_id,
+                            timing.interval_ms,
+                            timing.next_due_unix_ms,
+                            timing.enabled,
+                            meta.payload,
+                            meta.revision_id,
+                            meta.updated_by,
+                            meta.updated_unix_ms)
+}
+
+fn schedule_definition_from_row(row: Row) -> Result<ScheduleDefinition, String> {
+  let identity = schedule_row_identity(row)?
+  let timing = schedule_row_timing(row)?
+  let meta = schedule_row_meta(row)?
+  return Ok(schedule_definition_from_parts(identity, timing, meta))
+}
+
+fn schedule_definition_lookup_tx(tx: Transaction,
+                                 app_name: String,
+                                 channel: String,
+                                 schedule_id: String) -> Result<ScheduleDefinitionLookup, String> {
+  let rows = tx.query(select_schedule_definition_sql(), schedule_identity_params(app_name, channel, schedule_id))?
+  if rows.len()? == 0 {
+    return Ok(ScheduleDefinitionLookup(false, schedule_definition_placeholder()))
+  }
+  return Ok(ScheduleDefinitionLookup(true, schedule_definition_from_row(rows.row(0)?)?))
+}
+
+fn created_schedule_definition(app_name: String,
+                               channel: String,
+                               schedule_id: String,
+                               request: SchedulePutRequest,
+                               updated_by: String) -> ScheduleDefinition {
+  return ScheduleDefinition(app_name,
+                            channel,
+                            schedule_id,
+                            request.event_kind,
+                            request.release_revision_id,
+                            request.interval_ms,
+                            request.next_due_unix_ms,
+                            request.enabled,
+                            request.payload,
+                            1,
+                            updated_by,
+                            unix_millis())
+}
+
+fn updated_schedule_definition(current: ScheduleDefinition,
+                               request: SchedulePutRequest,
+                               updated_by: String) -> ScheduleDefinition {
+  return ScheduleDefinition(current.app,
+                            current.channel,
+                            current.schedule_id,
+                            request.event_kind,
+                            request.release_revision_id,
+                            request.interval_ms,
+                            request.next_due_unix_ms,
+                            request.enabled,
+                            request.payload,
+                            current.revision_id + 1,
+                            updated_by,
+                            unix_millis())
+}
+
+fn validate_schedule_scope(app_name: String, channel: String, schedule_id: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  validate_schedule_id(schedule_id)?
+  return Ok(true)
+}
+
+fn write_schedule_definition_tx(tx: Transaction,
+                                app_name: String,
+                                channel: String,
+                                schedule_id: String,
+                                request: SchedulePutRequest,
+                                updated_by: String) -> Result<ScheduleDefinition, String> {
+  let lookup = schedule_definition_lookup_tx(tx, app_name, channel, schedule_id)?
+  if lookup.found {
+    let updated = updated_schedule_definition(lookup.definition, request, updated_by)
+    tx.execute(update_schedule_definition_sql(), schedule_definition_update_params(updated))?
+    return Ok(updated)
+  }
+  let created = created_schedule_definition(app_name, channel, schedule_id, request, updated_by)
+  tx.execute(insert_schedule_definition_sql(), schedule_definition_params(created))?
+  return Ok(created)
+}
+
+fn validate_write_schedule_definition_call(app_name: String,
+                                           channel: String,
+                                           schedule_id: String,
+                                           request: SchedulePutRequest,
+                                           updated_by: String) -> Result<Bool, String> {
+  validate_schedule_scope(app_name, channel, schedule_id)?
+  validate_schedule_put_request(request)?
+  validate_actor_segment(updated_by)?
+  return Ok(true)
+}
+
+fn write_schedule_definition_committed(app_name: String,
+                                       channel: String,
+                                       schedule_id: String,
+                                       request: SchedulePutRequest,
+                                       updated_by: String) -> Result<ScheduleDefinition, String> {
+  let tx = open_schedule_tx()?
+  let definition = write_schedule_definition_tx(tx, app_name, channel, schedule_id, request, updated_by)?
+  tx.commit()?
+  return Ok(definition)
+}
+
+fn write_schedule_definition(app_name: String,
+                             channel: String,
+                             schedule_id: String,
+                             request: SchedulePutRequest,
+                             updated_by: String) -> Result<ScheduleDefinition, String> {
+  validate_write_schedule_definition_call(app_name, channel, schedule_id, request, updated_by)?
+  return write_schedule_definition_committed(app_name, channel, schedule_id, request, updated_by)
+}
+
+fn load_schedule_definition(app_name: String, channel: String, schedule_id: String) -> Result<ScheduleDefinition, String> {
+  validate_schedule_scope(app_name, channel, schedule_id)?
+  let tx = open_schedule_tx()?
+  let lookup = schedule_definition_lookup_tx(tx, app_name, channel, schedule_id)?
+  tx.commit()?
+  if !lookup.found {
+    return Err("schedule definition not found")
+  }
+  return Ok(lookup.definition)
+}
+
+fn due_schedule_params(now_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(now_unix_ms))
+  return array_build(builder)
+}
+
+fn schedule_event_id(definition: ScheduleDefinition) -> String {
+  let prefix = text_concat3("schedule-", definition.app, text_concat("-", definition.channel))
+  let scoped = text_concat3(prefix, "-", text_concat(definition.schedule_id, "-"))
+  return text_concat(scoped, int_text(definition.next_due_unix_ms))
+}
+
+fn next_due_after_tick(definition: ScheduleDefinition, now_unix_ms: Int) -> Int {
+  let next_due = definition.next_due_unix_ms + definition.interval_ms
+  while next_due <= now_unix_ms {
+    next_due += definition.interval_ms
+  }
+  return next_due
+}
+
+fn bumped_schedule_definition(definition: ScheduleDefinition, now_unix_ms: Int) -> ScheduleDefinition {
+  return ScheduleDefinition(definition.app,
+                            definition.channel,
+                            definition.schedule_id,
+                            definition.event_kind,
+                            definition.release_revision_id,
+                            definition.interval_ms,
+                            next_due_after_tick(definition, now_unix_ms),
+                            definition.enabled,
+                            definition.payload,
+                            definition.revision_id,
+                            definition.updated_by,
+                            definition.updated_unix_ms)
+}
+
+fn tick_one_schedule_tx(tx: Transaction,
+                        definition: ScheduleDefinition,
+                        now_unix_ms: Int,
+                        actor: String) -> Result<TickedSchedule, String> {
+  let event_id = schedule_event_id(definition)
+  let request = WorkflowEventSubmitRequest(event_id,
+                                           definition.event_kind,
+                                           definition.release_revision_id,
+                                           definition.payload)
+  let outcome = submit_workflow_event_tx(tx, definition.app, definition.channel, request, actor)?
+  let bumped = bumped_schedule_definition(definition, now_unix_ms)
+  tx.execute(update_schedule_definition_sql(), schedule_definition_update_params(bumped))?
+  let run = workflow_run_from_json(get_value(outcome, "run")?)?
+  return Ok(TickedSchedule(definition.schedule_id,
+                           get_string(outcome, "kind")?,
+                           run.run_id,
+                           event_id,
+                           bumped.next_due_unix_ms))
+}
+
+fn ticked_schedule_array_append(builder: JsonArrayBuilder, value: TickedSchedule) -> JsonArrayBuilder {
+  return array_push(builder, value.as_json())
+}
+
+fn tick_due_schedule_row(tx: Transaction,
+                         rows: ResultSet,
+                         index: Int,
+                         now_unix_ms: Int,
+                         actor: String,
+                         builder: JsonArrayBuilder) -> Result<JsonArrayBuilder, String> {
+  let definition = schedule_definition_from_row(rows.row(index)?)?
+  let ticked = tick_one_schedule_tx(tx, definition, now_unix_ms, actor)?
+  return Ok(ticked_schedule_array_append(builder, ticked))
+}
+
+fn tick_due_schedule_rows(tx: Transaction,
+                          rows: ResultSet,
+                          count: Int,
+                          now_unix_ms: Int,
+                          actor: String) -> Result<Json, String> {
+  let builder = array_builder()
+  let index = 0
+  while index < count {
+    builder = tick_due_schedule_row(tx, rows, index, now_unix_ms, actor, builder)?
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn tick_due_schedules_tx(tx: Transaction, now_unix_ms: Int, actor: String) -> Result<ScheduleTickEnvelope, String> {
+  let rows = tx.query(due_schedules_sql(), due_schedule_params(now_unix_ms))?
+  let count = rows.len()?
+  let triggered = tick_due_schedule_rows(tx, rows, count, now_unix_ms, actor)?
+  return Ok(ScheduleTickEnvelope(count, triggered, "", 0))
+}
+
+fn tick_schedules(request: ScheduleTickRequest, actor: String) -> Result<ScheduleTickEnvelope, String> {
+  validate_schedule_tick_request(request)?
+  validate_actor_segment(actor)?
+  let tx = open_schedule_tx()?
+  let envelope = tick_due_schedules_tx(tx, request.now_unix_ms, actor)?
+  tx.commit()?
+  return Ok(envelope)
+}

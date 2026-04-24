@@ -1,0 +1,60 @@
+module host_bridge
+import std::json
+import std::result
+
+fn command_schema() -> String {
+  return "thin-host-bridge.command.v1"
+}
+
+fn event_schema() -> String {
+  return "thin-host-bridge.event.v1"
+}
+
+fn snapshot_schema() -> String {
+  return "thin-host-bridge.snapshot.v1"
+}
+
+fn encode_command_text(kind: String) -> String {
+  return stringify(object2("schema", string_value(command_schema()), "kind", string_value(kind)))
+}
+
+fn decode_command_kind(text: String) -> Result<String, String> {
+  match parse(text) {
+    Ok(value) => {
+      match get_string(value, "schema") {
+        Ok(schema) => {
+          if schema != command_schema() {
+            return Err("invalid thin-host command schema")
+          }
+          return get_string(value, "kind")
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn encode_event_text(kind: String, payload: Json, terminal: Bool) -> String {
+  return stringify(object4("schema",
+                           string_value(event_schema()),
+                           "kind",
+                           string_value(kind),
+                           "payload",
+                           payload,
+                           "terminal",
+                           bool_value(terminal)))
+}
+
+fn encode_snapshot_text(screen: String, payload: Json) -> String {
+  return stringify(object3("schema",
+                           string_value(snapshot_schema()),
+                           "screen",
+                           string_value(screen),
+                           "payload",
+                           payload))
+}

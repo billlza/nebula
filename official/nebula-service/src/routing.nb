@@ -1,0 +1,257 @@
+module routing
+import context
+import std::http
+import std::result
+import std::task
+
+async fn dispatch_ctx1(ctx: RequestContext,
+                       request: Request,
+                       first_method: Method,
+                       first_path: String,
+                       first_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       fallback: Response) -> Response {
+  if path_matches(first_path, request) {
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch_ctx1_result(ctx: RequestContext,
+                              request: Request,
+                              first_method: Method,
+                              first_path: String,
+                              first_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              fallback: Response) -> Result<Response, String> {
+  if path_matches(first_path, request) {
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}
+
+async fn dispatch_ctx2(ctx: RequestContext,
+                       request: Request,
+                       first_method: Method,
+                       first_path: String,
+                       first_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       second_method: Method,
+                       second_path: String,
+                       second_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       fallback: Response) -> Response {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(ctx, request)
+    }
+  }
+  if path_hit {
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch_ctx2_result(ctx: RequestContext,
+                              request: Request,
+                              first_method: Method,
+                              first_path: String,
+                              first_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              second_method: Method,
+                              second_path: String,
+                              second_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              fallback: Response) -> Result<Response, String> {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(ctx, request)
+    }
+  }
+  if path_hit {
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}
+
+async fn dispatch_ctx3(ctx: RequestContext,
+                       request: Request,
+                       first_method: Method,
+                       first_path: String,
+                       first_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       second_method: Method,
+                       second_path: String,
+                       second_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       third_method: Method,
+                       third_path: String,
+                       third_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       fallback: Response) -> Response {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(ctx, request)
+    }
+  }
+  if path_matches(third_path, request) {
+    path_hit = true
+    if method_matches(third_method, request.method) {
+      return await third_handler(ctx, request)
+    }
+  }
+  if path_hit {
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch_ctx3_result(ctx: RequestContext,
+                              request: Request,
+                              first_method: Method,
+                              first_path: String,
+                              first_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              second_method: Method,
+                              second_path: String,
+                              second_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              third_method: Method,
+                              third_path: String,
+                              third_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              fallback: Response) -> Result<Response, String> {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(ctx, request)
+    }
+  }
+  if path_matches(third_path, request) {
+    path_hit = true
+    if method_matches(third_method, request.method) {
+      return await third_handler(ctx, request)
+    }
+  }
+  if path_hit {
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}
+
+async fn dispatch_ctx4(ctx: RequestContext,
+                       request: Request,
+                       first_method: Method,
+                       first_path: String,
+                       first_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       second_method: Method,
+                       second_path: String,
+                       second_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       third_method: Method,
+                       third_path: String,
+                       third_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       fourth_method: Method,
+                       fourth_path: String,
+                       fourth_handler: Fn(RequestContext, Request) -> Future<Response>,
+                       fallback: Response) -> Response {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(ctx, request)
+    }
+  }
+  if path_matches(third_path, request) {
+    path_hit = true
+    if method_matches(third_method, request.method) {
+      return await third_handler(ctx, request)
+    }
+  }
+  if path_matches(fourth_path, request) {
+    path_hit = true
+    if method_matches(fourth_method, request.method) {
+      return await fourth_handler(ctx, request)
+    }
+  }
+  if path_hit {
+    return method_not_allowed_text("method not allowed")
+  }
+  return fallback
+}
+
+async fn dispatch_ctx4_result(ctx: RequestContext,
+                              request: Request,
+                              first_method: Method,
+                              first_path: String,
+                              first_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              second_method: Method,
+                              second_path: String,
+                              second_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              third_method: Method,
+                              third_path: String,
+                              third_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              fourth_method: Method,
+                              fourth_path: String,
+                              fourth_handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>,
+                              fallback: Response) -> Result<Response, String> {
+  let path_hit = false
+  if path_matches(first_path, request) {
+    path_hit = true
+    if method_matches(first_method, request.method) {
+      return await first_handler(ctx, request)
+    }
+  }
+  if path_matches(second_path, request) {
+    path_hit = true
+    if method_matches(second_method, request.method) {
+      return await second_handler(ctx, request)
+    }
+  }
+  if path_matches(third_path, request) {
+    path_hit = true
+    if method_matches(third_method, request.method) {
+      return await third_handler(ctx, request)
+    }
+  }
+  if path_matches(fourth_path, request) {
+    path_hit = true
+    if method_matches(fourth_method, request.method) {
+      return await fourth_handler(ctx, request)
+    }
+  }
+  if path_hit {
+    return Ok(method_not_allowed_text("method not allowed"))
+  }
+  return Ok(fallback)
+}

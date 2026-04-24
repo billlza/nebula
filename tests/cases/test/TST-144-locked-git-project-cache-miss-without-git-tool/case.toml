@@ -1,0 +1,17 @@
+id = "TST-144-locked-git-project-cache-miss-without-git-tool"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport os\nimport shutil\nimport subprocess\nroot = Path('work/git_rehydrate_no_tool')\ndep = root / 'dep'\napp = root / 'app'\n(dep / 'src').mkdir(parents=True, exist_ok=True)\ndep.joinpath('nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\ndep.joinpath('src/lib.nb').write_text('module lib\\n\\nfn lib_value() -> Int {\\n  return 7\\n}\\n', encoding='utf-8')\nsubprocess.run(['git', 'init', dep], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nsubprocess.run(['git', '-C', str(dep), 'config', 'user.email', 'tests@example.com'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'config', 'user.name', 'Nebula Tests'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'add', '.'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'commit', '-m', 'init'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nsubprocess.run([os.environ['NEBULA_BINARY'], 'new', str(app)], check=True, stdout=subprocess.DEVNULL)\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  print(lib_value())\\n}\\n', encoding='utf-8')\nsubprocess.run([os.environ['NEBULA_BINARY'], 'add', str(app), 'dep', '--git', str(dep.resolve()), '--rev', 'HEAD'], check=True, stdout=subprocess.DEVNULL)\nsubprocess.run([os.environ['NEBULA_BINARY'], 'fetch', str(app)], check=True, stdout=subprocess.DEVNULL)\nshutil.rmtree(app / '.nebula' / 'git')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "PATH='' \"$NEBULA_BINARY\" check work/git_rehydrate_no_tool/app > work/git-rehydrate-no-tool.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-DEP-GIT-TOOL' work/git-rehydrate-no-tool.out && ! grep -F 'NBL-CLI-LOCK-STALE' work/git-rehydrate-no-tool.out"
+expect_rc = 0

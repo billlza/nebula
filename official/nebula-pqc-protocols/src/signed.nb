@@ -1,0 +1,102 @@
+module signed
+import crypto::hash
+import crypto::pqc.sign
+import std::bytes
+import std::json
+import std::result
+
+struct SignedBody {
+  body_sha3_256_hex: String
+  signature_hex: String
+}
+
+fn signed_body(body_sha3_256_hex: String, signature_hex: String) -> SignedBody {
+  return SignedBody(body_sha3_256_hex, signature_hex)
+}
+
+fn sign_body(secret_key: MlDsa65SecretKey, body: Bytes) -> Result<SignedBody, String> {
+  let body_sha3_256_hex = hex(sha3_256(body))
+  match sign(secret_key, body) {
+    Ok(signature) => {
+      return Ok(signed_body(body_sha3_256_hex, hex(signature.to_bytes())))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn SignedBody_body_sha3_256_hex(self: SignedBody) -> String {
+  return self.body_sha3_256_hex
+}
+
+fn SignedBody_signature_hex(self: SignedBody) -> String {
+  return self.signature_hex
+}
+
+fn SignedBody_as_json(self: SignedBody) -> Json {
+  return object2(
+    "body_sha3_256",
+    string_value(self.body_sha3_256_hex),
+    "signature_hex",
+    string_value(self.signature_hex)
+  )
+}
+
+fn signed_body_from_json(value: Json) -> Result<SignedBody, String> {
+  match get_string(value, "body_sha3_256") {
+    Ok(body_sha3_256_hex) => {
+      match get_string(value, "signature_hex") {
+        Ok(signature_hex) => {
+          return Ok(signed_body(body_sha3_256_hex, signature_hex))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn signed_body_from_json_text(text: String) -> Result<SignedBody, String> {
+  match parse(text) {
+    Ok(value) => {
+      return signed_body_from_json(value)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn verify_body(public_key: MlDsa65PublicKey, body: Bytes, signature: MlDsa65Signature) -> Bool {
+  return verify(public_key, body, signature)
+}
+
+fn verify_body_bytes(public_key: MlDsa65PublicKey, body: Bytes, signature_bytes: Bytes) -> Result<Bool, String> {
+  match ml_dsa_65_signature_from_bytes(signature_bytes) {
+    Ok(signature) => {
+      return Ok(verify(public_key, body, signature))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn verify_signed_body(public_key: MlDsa65PublicKey, body: Bytes, signed_body: SignedBody) -> Result<Bool, String> {
+  if signed_body.body_sha3_256_hex != hex(sha3_256(body)) {
+    return Ok(false)
+  }
+  match from_hex(signed_body.signature_hex) {
+    Ok(signature_bytes) => {
+      return verify_body_bytes(public_key, body, signature_bytes)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}

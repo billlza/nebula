@@ -1,0 +1,123 @@
+module pqc.kem
+import std::bytes
+import std::result
+
+struct MlKem768KeyPair {}
+
+struct MlKem768PublicKey {}
+
+struct MlKem768SecretKey {}
+
+struct MlKem768Ciphertext {}
+
+struct MlKem768SharedSecret {}
+
+struct MlKem768Encapsulation {}
+
+extern fn __nebula_crypto_ml_kem_768_keypair() -> Result<MlKem768KeyPair, String>
+extern fn __nebula_crypto_ml_kem_768_keypair_to_bytes(self: MlKem768KeyPair) -> Bytes
+extern fn __nebula_crypto_ml_kem_768_keypair_from_bytes(bytes: Bytes) -> Result<MlKem768KeyPair, String>
+extern fn __nebula_crypto_ml_kem_768_keypair_public_key(self: MlKem768KeyPair) -> MlKem768PublicKey
+extern fn __nebula_crypto_ml_kem_768_keypair_secret_key(self: MlKem768KeyPair) -> MlKem768SecretKey
+
+extern fn __nebula_crypto_ml_kem_768_public_key_to_bytes(self: MlKem768PublicKey) -> Bytes
+extern fn __nebula_crypto_ml_kem_768_public_key_from_bytes(bytes: Bytes) -> Result<MlKem768PublicKey, String>
+
+extern fn __nebula_crypto_ml_kem_768_secret_key_to_bytes(self: MlKem768SecretKey) -> Bytes
+extern fn __nebula_crypto_ml_kem_768_secret_key_from_bytes(bytes: Bytes) -> Result<MlKem768SecretKey, String>
+
+extern fn __nebula_crypto_ml_kem_768_ciphertext_to_bytes(self: MlKem768Ciphertext) -> Bytes
+extern fn __nebula_crypto_ml_kem_768_ciphertext_from_bytes(bytes: Bytes) -> Result<MlKem768Ciphertext, String>
+
+extern fn __nebula_crypto_ml_kem_768_shared_secret_to_bytes(self: MlKem768SharedSecret) -> Bytes
+extern fn __nebula_crypto_ml_kem_768_shared_secret_from_bytes(bytes: Bytes) -> Result<MlKem768SharedSecret, String>
+extern fn __nebula_crypto_ml_kem_768_shared_secret_equal(self: MlKem768SharedSecret, other: MlKem768SharedSecret) -> Bool
+
+extern fn __nebula_crypto_ml_kem_768_encapsulate(public_key: MlKem768PublicKey) -> Result<MlKem768Encapsulation, String>
+extern fn __nebula_crypto_ml_kem_768_encapsulation_to_bytes(self: MlKem768Encapsulation) -> Bytes
+extern fn __nebula_crypto_ml_kem_768_encapsulation_from_bytes(bytes: Bytes) -> Result<MlKem768Encapsulation, String>
+extern fn __nebula_crypto_ml_kem_768_encapsulation_ciphertext(self: MlKem768Encapsulation) -> MlKem768Ciphertext
+extern fn __nebula_crypto_ml_kem_768_encapsulation_shared_secret(self: MlKem768Encapsulation) -> MlKem768SharedSecret
+
+extern fn __nebula_crypto_ml_kem_768_decapsulate(secret_key: MlKem768SecretKey,
+                                                 ciphertext: MlKem768Ciphertext) -> Result<MlKem768SharedSecret, String>
+
+fn ml_kem_768_keypair() -> Result<MlKem768KeyPair, String> {
+  return __nebula_crypto_ml_kem_768_keypair()
+}
+
+fn MlKem768KeyPair_to_bytes(self: MlKem768KeyPair) -> Bytes {
+  return __nebula_crypto_ml_kem_768_keypair_to_bytes(self)
+}
+
+fn ml_kem_768_keypair_from_bytes(bytes: Bytes) -> Result<MlKem768KeyPair, String> {
+  return __nebula_crypto_ml_kem_768_keypair_from_bytes(bytes)
+}
+
+fn MlKem768KeyPair_public_key(self: MlKem768KeyPair) -> MlKem768PublicKey {
+  return __nebula_crypto_ml_kem_768_keypair_public_key(self)
+}
+
+fn MlKem768KeyPair_secret_key(self: MlKem768KeyPair) -> MlKem768SecretKey {
+  return __nebula_crypto_ml_kem_768_keypair_secret_key(self)
+}
+
+fn MlKem768PublicKey_to_bytes(self: MlKem768PublicKey) -> Bytes {
+  return __nebula_crypto_ml_kem_768_public_key_to_bytes(self)
+}
+
+fn ml_kem_768_public_key_from_bytes(bytes: Bytes) -> Result<MlKem768PublicKey, String> {
+  return __nebula_crypto_ml_kem_768_public_key_from_bytes(bytes)
+}
+
+fn MlKem768SecretKey_to_bytes(self: MlKem768SecretKey) -> Bytes {
+  return __nebula_crypto_ml_kem_768_secret_key_to_bytes(self)
+}
+
+fn ml_kem_768_secret_key_from_bytes(bytes: Bytes) -> Result<MlKem768SecretKey, String> {
+  return __nebula_crypto_ml_kem_768_secret_key_from_bytes(bytes)
+}
+
+fn MlKem768Ciphertext_to_bytes(self: MlKem768Ciphertext) -> Bytes {
+  return __nebula_crypto_ml_kem_768_ciphertext_to_bytes(self)
+}
+
+fn ml_kem_768_ciphertext_from_bytes(bytes: Bytes) -> Result<MlKem768Ciphertext, String> {
+  return __nebula_crypto_ml_kem_768_ciphertext_from_bytes(bytes)
+}
+
+fn MlKem768SharedSecret_to_bytes(self: MlKem768SharedSecret) -> Bytes {
+  return __nebula_crypto_ml_kem_768_shared_secret_to_bytes(self)
+}
+
+fn ml_kem_768_shared_secret_from_bytes(bytes: Bytes) -> Result<MlKem768SharedSecret, String> {
+  return __nebula_crypto_ml_kem_768_shared_secret_from_bytes(bytes)
+}
+
+fn MlKem768SharedSecret_equal(self: MlKem768SharedSecret, other: MlKem768SharedSecret) -> Bool {
+  return __nebula_crypto_ml_kem_768_shared_secret_equal(self, other)
+}
+
+fn encapsulate(public_key: MlKem768PublicKey) -> Result<MlKem768Encapsulation, String> {
+  return __nebula_crypto_ml_kem_768_encapsulate(public_key)
+}
+
+fn MlKem768Encapsulation_to_bytes(self: MlKem768Encapsulation) -> Bytes {
+  return __nebula_crypto_ml_kem_768_encapsulation_to_bytes(self)
+}
+
+fn ml_kem_768_encapsulation_from_bytes(bytes: Bytes) -> Result<MlKem768Encapsulation, String> {
+  return __nebula_crypto_ml_kem_768_encapsulation_from_bytes(bytes)
+}
+
+fn MlKem768Encapsulation_ciphertext(self: MlKem768Encapsulation) -> MlKem768Ciphertext {
+  return __nebula_crypto_ml_kem_768_encapsulation_ciphertext(self)
+}
+
+fn MlKem768Encapsulation_shared_secret(self: MlKem768Encapsulation) -> MlKem768SharedSecret {
+  return __nebula_crypto_ml_kem_768_encapsulation_shared_secret(self)
+}
+
+fn decapsulate(secret_key: MlKem768SecretKey, ciphertext: MlKem768Ciphertext) -> Result<MlKem768SharedSecret, String> {
+  return __nebula_crypto_ml_kem_768_decapsulate(secret_key, ciphertext)
+}

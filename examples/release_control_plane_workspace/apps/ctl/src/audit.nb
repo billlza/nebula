@@ -1,0 +1,109 @@
+module audit
+import args
+import client
+import core::contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn audit_path(app_name: String, channel: String) -> String {
+  return text_concat3("/v1/releases/", app_name, text_concat("/", text_concat(channel, "/audit")))
+}
+
+fn print_audit_event(event: AuditEvent) -> Void {
+  let line = text_concat("event_id=", int_text(event.event_id))
+  line = text_concat(line, text_concat(" kind=", event.event_kind))
+  line = text_concat(line, text_concat(" actor=", event.actor))
+  line = text_concat(line, text_concat(" release_revision_id=", int_text(event.release_revision_id)))
+  line = text_concat(line, text_concat(" apply_run_id=", int_text(event.apply_run_id)))
+  line = text_concat(line, text_concat(" unix_ms=", int_text(event.unix_ms)))
+  line = text_concat(line, text_concat(" message=", event.message))
+  print(line)
+}
+
+fn decode_audit_event(event_json: Json) -> Result<AuditEvent, String> {
+  let event = audit_event_from_json(event_json)?
+  validate_audit_event(event)?
+  return Ok(event)
+}
+
+fn emit_audit_events(events: Json) -> Result<Bool, String> {
+  let count = array_len(events)?
+  if count == 0 {
+    print("events=0")
+    return Ok(true)
+  }
+  let index = 0
+  while index < count {
+    let event_json = array_get(events, index)?
+    let event = decode_audit_event(event_json)?
+    print_audit_event(event)
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn emit_audit(envelope: AuditListEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match emit_audit_events(envelope.events) {
+    Ok(_) => {
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn parse_audit_reply(reply: JsonResponse) -> Result<AuditListEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = audit_list_envelope_from_json(reply.payload)?
+  validate_audit_list_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn print_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+async fn run_audit_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand != "list" {
+    print("unknown audit subcommand")
+    return 2
+  }
+  match validate_app_segment(parsed.app_name) {
+    Ok(_) => {}
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+  match validate_channel_segment(parsed.channel) {
+    Ok(_) => {}
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+  match await get_json(base_url, audit_path(parsed.app_name, parsed.channel), options) {
+    Ok(reply) => {
+      match parse_audit_reply(reply) {
+        Ok(envelope) => {
+          return emit_audit(envelope, parsed.json_mode)
+        }
+        Err(msg) => {
+          return print_error_exit(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}

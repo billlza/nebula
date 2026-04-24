@@ -1,0 +1,168 @@
+id = "TST-246-release-control-plane-secret-file-auth-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    build_service_binary,
+    copy_example,
+    fetch_workspace,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/release_control_plane_secret_file_auth')
+state_dir = root / 'state'
+secrets_dir = root / 'secrets'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+secrets_dir.mkdir(parents=True, exist_ok=True)
+reader_file = secrets_dir / 'reader.token'
+writer_file = secrets_dir / 'writer.token'
+admin_file = secrets_dir / 'admin.token'
+worker_file = secrets_dir / 'worker.token'
+reader_file.write_text('reader-token\\n', encoding='utf-8')
+writer_file.write_text('writer-token\\n', encoding='utf-8')
+admin_file.write_text('admin-token\\n', encoding='utf-8')
+worker_file.write_text('worker-token\\n', encoding='utf-8')
+
+proc, stderr_lines, port = start_service(binary, root, {
+    'APP_STATE_DIR': str(state_dir),
+    'APP_AUTH_REQUIRED': '1',
+    'APP_READ_TOKEN_FILE': str(reader_file),
+    'APP_WRITE_TOKEN_FILE': str(writer_file),
+    'APP_ADMIN_TOKEN_FILE': str(admin_file),
+    'APP_WORKER_TOKEN_FILE': str(worker_file),
+})
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+    prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+    whoami = run_ctl(binary, root, 'auth', 'whoami', '--json', '--url', base_url, '--token', 'admin-token', out_dir=ctl_out_dir, no_build=True)
+    require_success(whoami, 'auth whoami with mounted admin secret')
+    payload = json.loads(whoami.stdout)
+    if payload.get('actor') != 'admin' or payload.get('role') != 'admin':
+        raise SystemExit(f'unexpected whoami payload: {payload!r}')
+    admin_file.write_text('rotated-admin-token\\n', encoding='utf-8')
+    snapshot_old = run_ctl(binary, root, 'auth', 'whoami', '--json', '--url', base_url, '--token', 'admin-token', out_dir=ctl_out_dir, no_build=True)
+    require_success(snapshot_old, 'startup snapshot old token should remain valid')
+    snapshot_new = run_ctl(binary, root, 'auth', 'whoami', '--url', base_url, '--token', 'rotated-admin-token', out_dir=ctl_out_dir, no_build=True)
+    if snapshot_new.returncode == 0 or 'status=401 error=unauthorized' not in snapshot_new.stdout:
+        raise SystemExit('rotated mounted secret unexpectedly changed auth behavior for the running process')
+
+    config_put = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'true', '--description', 'worker token lane', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(config_put, 'writer config put for worker auth flow')
+    config_payload = json.loads(config_put.stdout)
+    if config_payload.get('entry', {}).get('revision_id') != 1:
+        raise SystemExit(f'unexpected config payload for worker auth flow: {config_payload!r}')
+
+    release_put = run_ctl(binary, root, 'release', 'put', '--app', 'control-plane', '--channel', 'prod', '--version', '2026.04.21', '--config-revision', '1', '--description', 'worker token lane', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(release_put, 'writer release put for worker auth flow')
+
+    approval_decide = run_ctl(binary, root, 'approval', 'decide', '--app', 'control-plane', '--channel', 'prod', '--if-match', '1', '--decision', 'approved', '--reason', 'worker auth lane approved', '--url', base_url, '--token', 'admin-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(approval_decide, 'admin approval decide for worker auth flow')
+
+    release_apply = run_ctl(binary, root, 'release', 'apply', '--app', 'control-plane', '--channel', 'prod', '--if-match', '1', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(release_apply, 'writer release apply for worker auth flow')
+
+    worker_claim = run_ctl(binary, root, 'worker', 'claim', '--worker-id', 'ops-worker', '--task-kind', 'apply_release', '--url', base_url, '--token', 'worker-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(worker_claim, 'worker claim with mounted worker token')
+    worker_claim_payload = json.loads(worker_claim.stdout)
+    lease = worker_claim_payload.get('lease', {})
+    lease_id = lease.get('lease_id')
+    if worker_claim_payload.get('outcome') != 'claimed' or lease_id == '':
+        raise SystemExit(f'unexpected worker claim payload: {worker_claim_payload!r}')
+
+    worker_heartbeat = run_ctl(binary, root, 'worker', 'heartbeat', '--worker-id', 'ops-worker', '--lease-id', lease_id, '--url', base_url, '--token', 'worker-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(worker_heartbeat, 'worker heartbeat with mounted worker token')
+
+    admin_worker_claim = run_ctl(binary, root, 'worker', 'claim', '--worker-id', 'admin-runner', '--task-kind', 'apply_release', '--url', base_url, '--token', 'admin-token', out_dir=ctl_out_dir, no_build=True)
+    if admin_worker_claim.returncode == 0 or 'required role: worker' not in admin_worker_claim.stdout:
+        raise SystemExit('admin token unexpectedly satisfied the worker route')
+
+    worker_mutation = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'false', '--if-match', '1', '--url', base_url, '--token', 'worker-token', out_dir=ctl_out_dir, no_build=True)
+    if worker_mutation.returncode == 0 or 'required role: writer' not in worker_mutation.stdout:
+        raise SystemExit('worker token unexpectedly satisfied the writer mutation route')
+
+    worker_file.write_text('rotated-worker-token\\n', encoding='utf-8')
+    worker_snapshot_old = run_ctl(binary, root, 'worker', 'heartbeat', '--worker-id', 'ops-worker', '--lease-id', lease_id, '--url', base_url, '--token', 'worker-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(worker_snapshot_old, 'startup snapshot old worker token should remain valid')
+    worker_snapshot_new = run_ctl(binary, root, 'worker', 'heartbeat', '--worker-id', 'ops-worker', '--lease-id', lease_id, '--url', base_url, '--token', 'rotated-worker-token', out_dir=ctl_out_dir, no_build=True)
+    if worker_snapshot_new.returncode == 0 or 'status=401 error=unauthorized' not in worker_snapshot_new.stdout:
+        raise SystemExit('rotated worker mounted secret unexpectedly changed auth behavior for the running process')
+finally:
+    terminate_process(proc)
+
+service_binary = build_service_binary(binary, root)
+conflict = subprocess.run(
+    [str(service_binary)],
+    capture_output=True,
+    text=True,
+    timeout=20,
+    env={
+        **os.environ,
+        'APP_STATE_DIR': str(state_dir),
+        'APP_AUTH_REQUIRED': '1',
+        'APP_READ_TOKEN': 'reader-token',
+        'APP_READ_TOKEN_FILE': str(reader_file),
+        'APP_WRITE_TOKEN_FILE': str(writer_file),
+        'APP_ADMIN_TOKEN_FILE': str(admin_file),
+        'NEBULA_BIND_HOST': '127.0.0.1',
+        'NEBULA_PORT': '0',
+    },
+)
+combined = conflict.stdout + conflict.stderr
+if conflict.returncode == 0:
+    raise SystemExit('expected service startup with conflicting APP_READ_TOKEN/APP_READ_TOKEN_FILE to fail')
+if 'APP_READ_TOKEN and APP_READ_TOKEN_FILE must not both be set' not in combined:
+    print(conflict.stdout, end='')
+    print(conflict.stderr, end='')
+    raise SystemExit('missing conflict diagnostic for APP_READ_TOKEN/APP_READ_TOKEN_FILE')
+
+worker_conflict = subprocess.run(
+    [str(service_binary)],
+    capture_output=True,
+    text=True,
+    timeout=20,
+    env={
+        **os.environ,
+        'APP_STATE_DIR': str(state_dir),
+        'APP_AUTH_REQUIRED': '1',
+        'APP_READ_TOKEN_FILE': str(reader_file),
+        'APP_WRITE_TOKEN_FILE': str(writer_file),
+        'APP_ADMIN_TOKEN_FILE': str(admin_file),
+        'APP_WORKER_TOKEN': 'worker-token',
+        'APP_WORKER_TOKEN_FILE': str(worker_file),
+        'NEBULA_BIND_HOST': '127.0.0.1',
+        'NEBULA_PORT': '0',
+    },
+)
+worker_combined = worker_conflict.stdout + worker_conflict.stderr
+if worker_conflict.returncode == 0:
+    raise SystemExit('expected service startup with conflicting APP_WORKER_TOKEN/APP_WORKER_TOKEN_FILE to fail')
+if 'APP_WORKER_TOKEN and APP_WORKER_TOKEN_FILE must not both be set' not in worker_combined:
+    print(worker_conflict.stdout, end='')
+    print(worker_conflict.stderr, end='')
+    raise SystemExit('missing conflict diagnostic for APP_WORKER_TOKEN/APP_WORKER_TOKEN_FILE')
+
+print('release-control-plane-secret-file-auth-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-secret-file-auth-ok"]

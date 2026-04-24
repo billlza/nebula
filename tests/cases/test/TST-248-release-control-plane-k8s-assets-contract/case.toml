@@ -1,0 +1,66 @@
+id = "TST-248-release-control-plane-k8s-assets-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+root = repo_root / 'examples' / 'release_control_plane_workspace' / 'deploy' / 'k8s'
+statefulset = (root / 'statefulset.yaml').read_text(encoding='utf-8')
+service = (root / 'service.yaml').read_text(encoding='utf-8')
+ingress = (root / 'ingress-nginx.yaml').read_text(encoding='utf-8')
+configmap = (root / 'configmap.yaml').read_text(encoding='utf-8')
+secret = (root / 'secret.example.yaml').read_text(encoding='utf-8')
+readme = (root / 'README.md').read_text(encoding='utf-8')
+
+for fragment in [
+    'kind: StatefulSet',
+    'replicas: 1',
+    'mountPath: /var/lib/release-control-plane',
+    'mountPath: /run/release-control-plane-secrets',
+    'claimName: release-control-plane-state',
+    'secretName: release-control-plane-auth',
+]:
+    if fragment not in statefulset:
+        raise SystemExit(f'statefulset.yaml missing fragment: {fragment!r}')
+for fragment in [
+    'APP_READ_TOKEN_FILE',
+    'APP_WRITE_TOKEN_FILE',
+    'APP_ADMIN_TOKEN_FILE',
+    'APP_WORKER_TOKEN_FILE',
+    'APP_POSTGRES_DSN_FILE',
+]:
+    if fragment not in configmap:
+        raise SystemExit(f'configmap.yaml missing fragment: {fragment!r}')
+for forbidden in ['APP_READ_TOKEN:', 'APP_WRITE_TOKEN:', 'APP_ADMIN_TOKEN:']:
+    if forbidden in configmap:
+        raise SystemExit(f'configmap.yaml should not define raw token envs: {forbidden!r}')
+for fragment in ['read.token:', 'write.token:', 'admin.token:', 'worker.token:', 'postgres.dsn:']:
+    if fragment not in secret:
+        raise SystemExit(f'secret.example.yaml missing fragment: {fragment!r}')
+for fragment in ['kind: Service', 'type: ClusterIP', 'targetPort: 40480']:
+    if fragment not in service:
+        raise SystemExit(f'service.yaml missing fragment: {fragment!r}')
+for fragment in ['kind: Ingress', 'kubernetes.io/ingress.class: nginx', 'secretName: release-control-plane-ingress-tls']:
+    if fragment not in ingress:
+        raise SystemExit(f'ingress-nginx.yaml missing fragment: {fragment!r}')
+for fragment in [
+    '## Apply Order',
+    'kubectl apply -f deploy/k8s/namespace.yaml',
+    'kubectl -n release-control-plane rollout status statefulset/release-control-plane',
+    '## Rollout And Secret Rotation',
+    'kubectl -n release-control-plane rollout restart statefulset/release-control-plane',
+    'single-replica because it persists SQLite on a single PVC',
+    'APP_POSTGRES_DSN_FILE',
+]:
+    if fragment not in readme:
+        raise SystemExit(f'k8s/README.md missing fragment: {fragment!r}')
+print('release-control-plane-k8s-assets-ok')
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-k8s-assets-ok"]

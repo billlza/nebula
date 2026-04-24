@@ -1,0 +1,71 @@
+id = "TST-269-release-control-plane-data-plane-restart-migrations-smoke"
+suite = "test"
+description = "release control plane split migration slices remain restart-safe for SQLite and optional live Postgres data planes"
+
+[[steps]]
+kind = "shell"
+timeout = 240
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/release_control_plane_data_plane_restart_migrations")
+state_dir = root / "state"
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+
+def assert_restart_ok(name, env):
+    first, first_lines, first_port = start_service(binary, root, env)
+    try:
+        wait_until_health_ok(first, first_lines, first_port)
+    finally:
+        terminate_process(first)
+    second, second_lines, second_port = start_service(binary, root, env)
+    try:
+        wait_until_health_ok(second, second_lines, second_port)
+    finally:
+        terminate_process(second)
+    print(f"{name}-restart-ok")
+
+assert_restart_ok("sqlite", {
+    "APP_STATE_DIR": str(state_dir / "sqlite"),
+})
+
+dsn = os.environ.get("NEBULA_TEST_POSTGRES_DSN", "")
+if not dsn:
+    print("postgres-restart-live-skip")
+    print("release-control-plane-data-plane-restart-migrations-ok")
+    raise SystemExit(0)
+
+dsn_file = root / "postgres.dsn"
+dsn_file.write_text(dsn, encoding="utf-8")
+assert_restart_ok("postgres", {
+    "APP_STATE_DIR": str(state_dir / "postgres"),
+    "APP_DATA_BACKEND": "postgres",
+    "APP_POSTGRES_PREVIEW": "1",
+    "APP_POSTGRES_DSN_FILE": str(dsn_file),
+    "APP_AUTH_REQUIRED": "1",
+    "APP_ADMIN_TOKEN": "admin-restart-token",
+    "APP_WRITE_TOKEN": "writer-restart-token",
+    "APP_READ_TOKEN": "reader-restart-token",
+    "APP_WORKER_TOKEN": "worker-restart-token",
+})
+print("release-control-plane-data-plane-restart-migrations-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-data-plane-restart-migrations-ok"]

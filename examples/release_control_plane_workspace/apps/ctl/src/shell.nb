@@ -1,0 +1,579 @@
+module shell
+import args
+import client
+import core::validate
+import core::workflow_contracts
+import core::workflow_validate
+import errors
+import std::bytes
+import std::fs
+import std::json
+import std::process
+import std::result
+
+struct ShellCliArgs {
+  group: String
+  action: String
+  file: String
+  worker_id: String
+  allowlist_file: String
+  work_dir: String
+}
+
+struct ShellParseProgress {
+  parsed: ShellCliArgs
+  next_index: Int
+}
+
+struct ShellAllowlistEntry {
+  id: String
+  program: String
+  args: Json
+  timeout_ms: Int
+  max_stdout_bytes: Int
+  max_stderr_bytes: Int
+  allow_event_args: Bool
+}
+
+fn default_shell_args() -> ShellCliArgs {
+  return ShellCliArgs("", "", "", "", "", "")
+}
+
+fn rebuild_shell_args(group: String,
+                      action: String,
+                      file: String,
+                      worker_id: String,
+                      allowlist_file: String,
+                      work_dir: String) -> ShellCliArgs {
+  return ShellCliArgs(group, action, file, worker_id, allowlist_file, work_dir)
+}
+
+fn with_shell_group(parsed: ShellCliArgs, value: String) -> ShellCliArgs {
+  return rebuild_shell_args(value, parsed.action, parsed.file, parsed.worker_id, parsed.allowlist_file, parsed.work_dir)
+}
+
+fn with_shell_action(parsed: ShellCliArgs, value: String) -> ShellCliArgs {
+  return rebuild_shell_args(parsed.group, value, parsed.file, parsed.worker_id, parsed.allowlist_file, parsed.work_dir)
+}
+
+fn with_shell_file(parsed: ShellCliArgs, value: String) -> ShellCliArgs {
+  return rebuild_shell_args(parsed.group, parsed.action, value, parsed.worker_id, parsed.allowlist_file, parsed.work_dir)
+}
+
+fn with_shell_worker_id(parsed: ShellCliArgs, value: String) -> ShellCliArgs {
+  return rebuild_shell_args(parsed.group, parsed.action, parsed.file, value, parsed.allowlist_file, parsed.work_dir)
+}
+
+fn with_shell_allowlist_file(parsed: ShellCliArgs, value: String) -> ShellCliArgs {
+  return rebuild_shell_args(parsed.group, parsed.action, parsed.file, parsed.worker_id, value, parsed.work_dir)
+}
+
+fn with_shell_work_dir(parsed: ShellCliArgs, value: String) -> ShellCliArgs {
+  return rebuild_shell_args(parsed.group, parsed.action, parsed.file, parsed.worker_id, parsed.allowlist_file, value)
+}
+
+fn shell_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn shell_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn shell_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn shell_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= shell_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return shell_arg_text(argv_json, index + 1)
+}
+
+fn shell_progress(parsed: ShellCliArgs, next_index: Int) -> ShellParseProgress {
+  return ShellParseProgress(parsed, next_index)
+}
+
+fn parse_shell_flag(argv_json: Json,
+                    parsed: ShellCliArgs,
+                    index: Int,
+                    arg: String) -> Result<ShellParseProgress, String> {
+  let value = shell_next_value(argv_json, index, arg)?
+  if arg == "--file" {
+    return Ok(shell_progress(with_shell_file(parsed, value), index + 2))
+  }
+  if arg == "--worker-id" {
+    return Ok(shell_progress(with_shell_worker_id(parsed, value), index + 2))
+  }
+  if arg == "--allowlist-file" {
+    return Ok(shell_progress(with_shell_allowlist_file(parsed, value), index + 2))
+  }
+  if arg == "--work-dir" {
+    return Ok(shell_progress(with_shell_work_dir(parsed, value), index + 2))
+  }
+  return Err("unexpected shell argument")
+}
+
+fn parse_shell_token(argv_json: Json,
+                     state: ShellCliArgs,
+                     index: Int,
+                     arg: String) -> Result<ShellParseProgress, String> {
+  if state.group == "" {
+    return Ok(shell_progress(with_shell_group(state, arg), index + 1))
+  }
+  if state.action == "" {
+    return Ok(shell_progress(with_shell_action(state, arg), index + 1))
+  }
+  return parse_shell_flag(argv_json, state, index, arg)
+}
+
+fn parse_shell_cli_args(parsed: ParsedArgs) -> Result<ShellCliArgs, String> {
+  let argv_json = shell_argv(parsed)
+  let count = shell_arg_count(argv_json)?
+  let index = 0
+  let state = default_shell_args()
+  while index < count {
+    let arg = shell_arg_text(argv_json, index)?
+    let progress = parse_shell_token(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn finalize_shell_allowlist_args(args: ShellCliArgs) -> Result<ShellCliArgs, String> {
+  if args.action != "validate" {
+    return Err("unknown shell allowlist subcommand")
+  }
+  if args.file == "" {
+    return Err("--file is required")
+  }
+  if args.worker_id != "" || args.allowlist_file != "" || args.work_dir != "" {
+    return Err("--worker-id/--allowlist-file/--work-dir are not allowed for shell allowlist validate")
+  }
+  return Ok(args)
+}
+
+fn finalize_shell_worker_args(args: ShellCliArgs) -> Result<ShellCliArgs, String> {
+  if args.action != "run-once" {
+    return Err("unknown shell worker subcommand")
+  }
+  if args.worker_id == "" || args.allowlist_file == "" || args.work_dir == "" {
+    return Err("--worker-id, --allowlist-file, and --work-dir are required")
+  }
+  if args.file != "" {
+    return Err("--file is not allowed for shell worker run-once")
+  }
+  return Ok(args)
+}
+
+fn finalize_shell_args(args: ShellCliArgs) -> Result<ShellCliArgs, String> {
+  if args.group == "" || args.action == "" {
+    return Err("missing shell subcommand")
+  }
+  if args.group == "allowlist" {
+    return finalize_shell_allowlist_args(args)
+  }
+  if args.group == "worker" {
+    return finalize_shell_worker_args(args)
+  }
+  return Err("unknown shell command group")
+}
+
+fn read_allowlist(path: String) -> Result<Json, String> {
+  return parse(read_string(path)?)
+}
+
+fn shell_allowlist_entry_from_json(value: Json) -> Result<ShellAllowlistEntry, String> {
+  return Ok(ShellAllowlistEntry(get_string(value, "id")?,
+                                get_string(value, "program")?,
+                                get_value(value, "args")?,
+                                get_int(value, "timeout_ms")?,
+                                get_int(value, "max_stdout_bytes")?,
+                                get_int(value, "max_stderr_bytes")?,
+                                get_bool(value, "allow_event_args")?))
+}
+
+fn validate_string_array(values: Json, label: String) -> Result<Bool, String> {
+  let count = array_len(values)?
+  let index = 0
+  while index < count {
+    as_string(array_get(values, index)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_shell_allowlist_entry(entry: ShellAllowlistEntry) -> Result<Bool, String> {
+  validate_actor_segment(entry.id)?
+  if entry.program == "" {
+    return Err("shell allowlist program must be non-empty")
+  }
+  validate_string_array(entry.args, "args")?
+  if entry.timeout_ms <= 0 {
+    return Err("shell allowlist timeout_ms must be positive")
+  }
+  if entry.max_stdout_bytes < 0 || entry.max_stderr_bytes < 0 {
+    return Err("shell allowlist output caps must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_shell_allowlist_commands(commands: Json) -> Result<Bool, String> {
+  let count = array_len(commands)?
+  if count <= 0 {
+    return Err("shell allowlist commands must not be empty")
+  }
+  let index = 0
+  while index < count {
+    validate_shell_allowlist_entry(shell_allowlist_entry_from_json(array_get(commands, index)?)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_shell_allowlist(value: Json) -> Result<Bool, String> {
+  return validate_shell_allowlist_commands(get_value(value, "commands")?)
+}
+
+fn find_shell_allowlist_entry(value: Json, command_id: String) -> Result<ShellAllowlistEntry, String> {
+  let commands = get_value(value, "commands")?
+  let count = array_len(commands)?
+  let index = 0
+  while index < count {
+    let entry = shell_allowlist_entry_from_json(array_get(commands, index)?)?
+    if entry.id == command_id {
+      return Ok(entry)
+    }
+    index += 1
+  }
+  return Err(text_concat("shell command is not allowlisted: ", command_id))
+}
+
+fn append_json_string_array(builder: JsonArrayBuilder, values: Json) -> Result<JsonArrayBuilder, String> {
+  let count = array_len(values)?
+  let index = 0
+  while index < count {
+    builder = array_push(builder, string_value(as_string(array_get(values, index)?)?))
+    index += 1
+  }
+  return Ok(builder)
+}
+
+fn shell_event_command(lease: WorkerLease) -> Result<Json, String> {
+  return get_value(lease.payload, "shell_command")
+}
+
+fn shell_event_args(shell_command: Json) -> Result<Json, String> {
+  return get_value(shell_command, "args")
+}
+
+fn shell_process_args(entry: ShellAllowlistEntry, event_args: Json) -> Result<Json, String> {
+  let builder = array_builder()
+  builder = append_json_string_array(builder, entry.args)?
+  if array_len(event_args)? > 0 {
+    if !entry.allow_event_args {
+      return Err("shell command does not allow event args")
+    }
+    builder = append_json_string_array(builder, event_args)?
+  }
+  return Ok(array_build(builder))
+}
+
+fn shell_task_result_payload(output: ProcessOutput) -> Json {
+  return object6("kind",
+                 string_value("shell_task_result"),
+                 "exit_code",
+                 int_value(output.exit_code),
+                 "signal",
+                 int_value(output.signal),
+                 "timed_out",
+                 bool_value(output.timed_out),
+                 "stdout",
+                 string_value(to_string(output.stdout)),
+                 "stderr",
+                 string_value(to_string(output.stderr)))
+}
+
+fn shell_task_error_payload(message: String) -> Json {
+  return object2("kind", string_value("shell_task_error"), "message", string_value(message))
+}
+
+fn shell_task_succeeded(output: ProcessOutput) -> Bool {
+  return output.exit_code == 0 && output.signal == 0 && !output.timed_out
+}
+
+fn worker_complete_path(lease_id: String) -> String {
+  return text_concat("/v1/workers/leases/", text_concat(lease_id, "/complete"))
+}
+
+async fn complete_shell_lease(base_url: String,
+                              options: ClientOptions,
+                              worker_id: String,
+                              lease: WorkerLease,
+                              status: String,
+                              message: String,
+                              payload: Json) -> Result<WorkerCompleteEnvelope, String> {
+  let request = WorkerCompleteRequest(worker_id, status, message, payload)
+  match await post_json(base_url, worker_complete_path(lease.lease_id), request.as_json(), options) {
+    Ok(reply) => {
+      if reply.status != 200 {
+        return Err(reply_error_text(reply))
+      }
+      let envelope = worker_complete_envelope_from_json(reply.payload)?
+      validate_worker_complete_envelope(envelope)?
+      return Ok(envelope)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn complete_shell_error(base_url: String,
+                              options: ClientOptions,
+                              worker_id: String,
+                              lease: WorkerLease,
+                              message: String) -> Result<WorkerCompleteEnvelope, String> {
+  return await complete_shell_lease(base_url, options, worker_id, lease, "failed", message, shell_task_error_payload(message))
+}
+
+fn shell_process_command(entry: ShellAllowlistEntry, event_args: Json, work_dir: String) -> Result<ProcessCommand, String> {
+  return Ok(command(entry.program,
+                    shell_process_args(entry, event_args)?,
+                    work_dir,
+                    empty_env(),
+                    true,
+                    from_string(""),
+                    entry.timeout_ms,
+                    entry.max_stdout_bytes,
+                    entry.max_stderr_bytes))
+}
+
+async fn run_shell_process_for_lease(base_url: String,
+                                     options: ClientOptions,
+                                     worker_id: String,
+                                     allowlist: Json,
+                                     work_dir: String,
+                                     lease: WorkerLease) -> Result<WorkerCompleteEnvelope, String> {
+  match shell_process_command_for_lease(allowlist, work_dir, lease) {
+    Ok(command_value) => {
+      return await run_shell_process_command(base_url, options, worker_id, lease, command_value)
+    }
+    Err(msg) => {
+      return await complete_shell_error(base_url, options, worker_id, lease, msg)
+    }
+  }
+}
+
+fn shell_process_command_for_lease(allowlist: Json,
+                                   work_dir: String,
+                                   lease: WorkerLease) -> Result<ProcessCommand, String> {
+  let shell_command = shell_event_command(lease)?
+  let entry = find_shell_allowlist_entry(allowlist, get_string(shell_command, "command_id")?)?
+  return shell_process_command(entry, shell_event_args(shell_command)?, work_dir)
+}
+
+async fn run_shell_process_command(base_url: String,
+                                   options: ClientOptions,
+                                   worker_id: String,
+                                   lease: WorkerLease,
+                                   command_value: ProcessCommand) -> Result<WorkerCompleteEnvelope, String> {
+  match run(command_value) {
+    Ok(output) => {
+      let status = "failed"
+      let message = "shell command failed"
+      if shell_task_succeeded(output) {
+        status = "succeeded"
+        message = "shell command succeeded"
+      }
+      return await complete_shell_lease(base_url, options, worker_id, lease, status, message, shell_task_result_payload(output))
+    }
+    Err(msg) => {
+      return await complete_shell_error(base_url, options, worker_id, lease, msg)
+    }
+  }
+}
+
+fn worker_claim_path() -> String {
+  return "/v1/workers/claim"
+}
+
+async fn claim_shell_lease(base_url: String,
+                           options: ClientOptions,
+                           worker_id: String) -> Result<WorkerClaimEnvelope, String> {
+  let request = WorkerClaimRequest(worker_id, "shell_command")
+  match await post_json(base_url, worker_claim_path(), request.as_json(), options) {
+    Ok(reply) => {
+      if reply.status != 200 {
+        return Err(reply_error_text(reply))
+      }
+      let envelope = worker_claim_envelope_from_json(reply.payload)?
+      validate_worker_claim_envelope(envelope)?
+      return Ok(envelope)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn validate_work_dir(path: String) -> Result<Bool, String> {
+  if path == "" {
+    return Err("--work-dir is required")
+  }
+  match is_dir(path) {
+    Ok(value) => {
+      if value {
+        return Ok(true)
+      }
+      return Err(text_concat("shell work-dir is not a directory: ", path))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn emit_shell_validate(path: String, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(object2("status", string_value("ok"), "file", string_value(path))))
+    return 0
+  }
+  print(text_concat("allowlist_ok=", path))
+  return 0
+}
+
+fn emit_shell_worker_idle(json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(object1("outcome", string_value("idle"))))
+    return 0
+  }
+  print("outcome=idle")
+  return 0
+}
+
+fn emit_shell_worker_complete(envelope: WorkerCompleteEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("run_id=", int_text(envelope.run.run_id)))
+  print(text_concat("status=", envelope.run.status))
+  return 0
+}
+
+fn run_shell_allowlist_validate(args: ShellCliArgs, json_mode: Bool) -> Int {
+  match read_allowlist(args.file) {
+    Ok(value) => {
+      match validate_shell_allowlist(value) {
+        Ok(_) => {
+          return emit_shell_validate(args.file, json_mode)
+        }
+        Err(msg) => {
+          print(msg)
+          return 1
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn read_valid_allowlist(path: String) -> Result<Json, String> {
+  let allowlist = read_allowlist(path)?
+  validate_shell_allowlist(allowlist)?
+  return Ok(allowlist)
+}
+
+async fn run_claimed_shell_lease(base_url: String,
+                                 options: ClientOptions,
+                                 args: ShellCliArgs,
+                                 json_mode: Bool,
+                                 allowlist: Json,
+                                 claimed: WorkerClaimEnvelope) -> Int {
+  if claimed.outcome == "idle" {
+    return emit_shell_worker_idle(json_mode)
+  }
+  match await run_shell_process_for_lease(base_url, options, args.worker_id, allowlist, args.work_dir, claimed.lease) {
+    Ok(completed) => {
+      return emit_shell_worker_complete(completed, json_mode)
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn run_shell_worker_with_allowlist(base_url: String,
+                                         options: ClientOptions,
+                                         args: ShellCliArgs,
+                                         json_mode: Bool,
+                                         allowlist: Json) -> Int {
+  match await claim_shell_lease(base_url, options, args.worker_id) {
+    Ok(claimed) => {
+      return await run_claimed_shell_lease(base_url, options, args, json_mode, allowlist, claimed)
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn run_shell_worker_once(base_url: String,
+                               options: ClientOptions,
+                               args: ShellCliArgs,
+                               json_mode: Bool) -> Int {
+  match validate_work_dir(args.work_dir) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  match read_valid_allowlist(args.allowlist_file) {
+    Ok(allowlist) => {
+      return await run_shell_worker_with_allowlist(base_url, options, args, json_mode, allowlist)
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn run_shell_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match parse_shell_cli_args(parsed) {
+    Ok(raw_args) => {
+      return await run_shell_command_args(base_url, options, parsed.json_mode, raw_args)
+    }
+    Err(msg) => {
+      print(msg)
+      return 2
+    }
+  }
+}
+
+async fn run_shell_command_args(base_url: String,
+                                options: ClientOptions,
+                                json_mode: Bool,
+                                raw_args: ShellCliArgs) -> Int {
+  match finalize_shell_args(raw_args) {
+    Ok(args) => {
+      if args.group == "allowlist" {
+        return run_shell_allowlist_validate(args, json_mode)
+      }
+      return await run_shell_worker_once(base_url, options, args, json_mode)
+    }
+    Err(msg) => {
+      print(msg)
+      return 2
+    }
+  }
+}

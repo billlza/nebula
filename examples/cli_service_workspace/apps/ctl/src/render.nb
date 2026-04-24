@@ -1,0 +1,99 @@
+module render
+import core::contracts
+import core::validate
+import std::json
+
+struct StatusSummary {
+  base_url: String
+  health_status: Int
+  health_state: String
+  ready_status: Int
+  ready_state: String
+  ok: Bool
+  info: ServiceInfo
+}
+
+fn StatusSummary_as_json(self: StatusSummary) -> Json {
+  return object7(
+    "base_url",
+    string_value(self.base_url),
+    "health_status",
+    int_value(self.health_status),
+    "health_state",
+    string_value(self.health_state),
+    "ready_status",
+    int_value(self.ready_status),
+    "ready_state",
+    string_value(self.ready_state),
+    "ok",
+    bool_value(self.ok),
+    "info",
+    self.info.as_json()
+  )
+}
+
+fn print_service_info_text(info: ServiceInfo) -> Void {
+  print(text_concat("service=", info.service))
+  print(text_concat("version=", info.version))
+  print(text_concat("profile=", info.profile))
+  print(text_concat("request_id=", info.request_id))
+  print(text_concat("unix_ms=", int_text(info.unix_ms)))
+}
+
+fn print_echo_response_text(response: EchoResponse) -> Void {
+  print(text_concat("message=", response.message))
+  print(text_concat("service=", response.service))
+  print(text_concat("request_id=", response.request_id))
+}
+
+fn print_status_text(summary: StatusSummary) -> Void {
+  print(text_concat("base_url=", summary.base_url))
+  print(text_concat("health=", int_text(summary.health_status)))
+  print(text_concat("ready=", int_text(summary.ready_status)))
+  print(text_concat("service=", summary.info.service))
+  print(text_concat("version=", summary.info.version))
+  if summary.ok {
+    print("status=ok")
+  } else {
+    print("status=not-ready")
+  }
+}
+
+fn emit_status(summary: StatusSummary, json_mode: Bool) -> Void {
+  if json_mode {
+    print(stringify(summary.as_json()))
+  } else {
+    print_status_text(summary)
+  }
+}
+
+fn emit_service_info(info: ServiceInfo, json_mode: Bool) -> Void {
+  if json_mode {
+    print(stringify(info.as_json()))
+  } else {
+    print_service_info_text(info)
+  }
+}
+
+fn emit_echo_response(response: EchoResponse, json_mode: Bool) -> Void {
+  if json_mode {
+    print(stringify(response.as_json()))
+  } else {
+    print_echo_response_text(response)
+  }
+}
+
+fn emit_config_validate(normalized: String, json_mode: Bool) -> Void {
+  if json_mode {
+    print(stringify(object1("base_url", string_value(normalized))))
+  } else {
+    print(text_concat("base_url=", normalized))
+  }
+}
+
+fn exit_code_from_status(summary: StatusSummary) -> Int {
+  if summary.ok {
+    return 0
+  }
+  return 1
+}

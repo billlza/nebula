@@ -1,0 +1,131 @@
+id = "TST-251-example-release-control-plane-workspace-config-auth-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_config_auth')
+state_dir = root / 'state'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(
+    binary,
+    root,
+    {
+        'APP_STATE_DIR': str(state_dir),
+        'APP_AUTH_REQUIRED': '1',
+        'APP_READ_TOKEN': 'reader-token',
+        'APP_WRITE_TOKEN': 'writer-token',
+        'APP_ADMIN_TOKEN': 'admin-token',
+    },
+)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+
+    prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    writer_put = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'true', '--description', 'secured flag', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(writer_put, 'writer config put')
+    writer_payload = json.loads(writer_put.stdout)
+    current_revision_id = writer_payload.get('entry', {}).get('revision_id')
+    if writer_payload.get('entry', {}).get('meta', {}).get('updated_by') != 'writer' or current_revision_id != 1:
+        print_completed(writer_put)
+        raise SystemExit(f'expected writer actor in config entry payload: {writer_payload!r}')
+
+    reader_get = run_ctl(binary, root, 'config', 'get', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--url', base_url, '--token', 'reader-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(reader_get, 'reader config get')
+
+    reader_snapshot = run_ctl(binary, root, 'config', 'snapshot', '--app', 'control-plane', '--channel', 'prod', '--config-revision', str(current_revision_id), '--url', base_url, '--token', 'reader-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(reader_snapshot, 'reader config snapshot')
+    reader_snapshot_payload = json.loads(reader_snapshot.stdout)
+    if reader_snapshot_payload.get('snapshot_revision_id') != current_revision_id:
+        print_completed(reader_snapshot)
+        raise SystemExit(f'unexpected reader snapshot payload: {reader_snapshot_payload!r}')
+
+    reader_put = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'false', '--if-match', str(current_revision_id), '--url', base_url, '--token', 'reader-token', out_dir=ctl_out_dir, no_build=True)
+    if reader_put.returncode != 1 or 'required role: writer' not in reader_put.stdout:
+        print_completed(reader_put)
+        raise SystemExit(f'expected reader config put to fail with forbidden, got rc={reader_put.returncode}')
+
+    writer_delete = run_ctl(binary, root, 'config', 'delete', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--if-match', str(current_revision_id), '--url', base_url, '--token', 'writer-token', out_dir=ctl_out_dir, no_build=True)
+    if writer_delete.returncode != 1 or 'required role: admin' not in writer_delete.stdout:
+        print_completed(writer_delete)
+        raise SystemExit(f'expected writer config delete to fail with forbidden, got rc={writer_delete.returncode}')
+
+    admin_delete = run_ctl(binary, root, 'config', 'delete', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--if-match', str(current_revision_id), '--url', base_url, '--token', 'admin-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(admin_delete, 'admin config delete')
+    delete_payload = json.loads(admin_delete.stdout)
+    if delete_payload.get('deleted_revision_id') != 2:
+        print_completed(admin_delete)
+        raise SystemExit(f'expected deleted revision id 2, got {delete_payload!r}')
+
+    history = run_ctl(binary, root, 'config', 'history', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--url', base_url, '--token', 'reader-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(history, 'config history after auth flow')
+    history_payload = json.loads(history.stdout)
+    revisions = history_payload.get('revisions', [])
+    if len(revisions) != 2 or revisions[0].get('value', {}).get('updated_by') != 'admin' or revisions[1].get('value', {}).get('updated_by') != 'writer':
+        print_completed(history)
+        raise SystemExit(f'unexpected config history actor trail: {history_payload!r}')
+
+    audit_result = run_ctl(binary, root, 'audit', 'list', '--app', 'control-plane', '--channel', 'prod', '--url', base_url, '--token', 'reader-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(audit_result, 'config audit after auth flow')
+    audit_payload = json.loads(audit_result.stdout)
+    actors = [item.get('meta', {}).get('actor') for item in audit_payload.get('events', [])]
+    if actors != ['writer', 'admin']:
+        print_completed(audit_result)
+        raise SystemExit(f'unexpected config audit actor trail: {audit_payload!r}')
+
+    release_put = run_ctl(binary, root, 'release', 'put', '--app', 'control-plane', '--channel', 'prod', '--version', '2026.04.21', '--config-revision', '1', '--description', 'auth workflow lane', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(release_put, 'writer release put for workflow auth flow')
+    release_payload = json.loads(release_put.stdout)
+    if release_payload.get('entry', {}).get('revision_id') != 1:
+        print_completed(release_put)
+        raise SystemExit(f'unexpected release payload for workflow auth flow: {release_payload!r}')
+
+    reader_workflow_submit = run_ctl(binary, root, 'workflow', 'event', 'submit', '--app', 'control-plane', '--channel', 'prod', '--event-id', 'reader-event', '--event-kind', 'release_apply_requested', '--release-revision', '1', '--url', base_url, '--token', 'reader-token', out_dir=ctl_out_dir, no_build=True)
+    if reader_workflow_submit.returncode != 1 or 'required role: writer' not in reader_workflow_submit.stdout:
+        print_completed(reader_workflow_submit)
+        raise SystemExit(f'expected reader workflow event submit to fail with forbidden, got rc={reader_workflow_submit.returncode}')
+
+    writer_workflow_submit = run_ctl(binary, root, 'workflow', 'event', 'submit', '--app', 'control-plane', '--channel', 'prod', '--event-id', 'writer-event', '--event-kind', 'release_apply_requested', '--release-revision', '1', '--url', base_url, '--token', 'writer-token', '--json', out_dir=ctl_out_dir, no_build=True)
+    require_success(writer_workflow_submit, 'writer workflow event submit')
+    writer_workflow_payload = json.loads(writer_workflow_submit.stdout)
+    if writer_workflow_payload.get('outcome') != 'created':
+        print_completed(writer_workflow_submit)
+        raise SystemExit(f'unexpected writer workflow event payload: {writer_workflow_payload!r}')
+
+    admin_worker_claim = run_ctl(binary, root, 'worker', 'claim', '--worker-id', 'admin-runner', '--task-kind', 'apply_release', '--url', base_url, '--token', 'admin-token', out_dir=ctl_out_dir, no_build=True)
+    if admin_worker_claim.returncode != 1 or 'required role: worker' not in admin_worker_claim.stdout:
+        print_completed(admin_worker_claim)
+        raise SystemExit(f'expected admin worker claim to fail with forbidden, got rc={admin_worker_claim.returncode}')
+
+    print('example-release-control-plane-workspace-config-auth-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-config-auth-ok"]

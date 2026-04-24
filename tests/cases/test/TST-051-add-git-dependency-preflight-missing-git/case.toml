@@ -1,0 +1,27 @@
+id = "TST-051-add-git-dependency-preflight-missing-git"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/add_git_missing_tool"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY new work/add_git_missing_tool >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cp work/add_git_missing_tool/nebula.toml work/add_git_missing_tool/original.toml"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "PATH='' \"$NEBULA_BINARY\" add work/add_git_missing_tool dep --git work/does-not-matter --rev HEAD > work/add-git-missing-tool.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-CLI-DEP-GIT-TOOL' work/add-git-missing-tool.out && cmp -s work/add_git_missing_tool/original.toml work/add_git_missing_tool/nebula.toml"
+expect_rc = 0

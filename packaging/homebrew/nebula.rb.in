@@ -4,6 +4,8 @@ class Nebula < Formula
   version "@VERSION@"
   license "Apache-2.0"
 
+  depends_on "llvm"
+
   if OS.mac? && Hardware::CPU.intel?
     url "@DARWIN_X86_64_URL@"
     sha256 "@DARWIN_X86_64_SHA256@"
@@ -14,13 +16,25 @@ class Nebula < Formula
     url "@LINUX_X86_64_URL@"
     sha256 "@LINUX_X86_64_SHA256@"
   else
-    odie "Nebula 1.0.0 supports Homebrew installs on macOS (Intel/Apple Silicon) and Linux x86_64 only."
+    odie "Nebula @VERSION@ supports Homebrew installs on macOS (Intel/Apple Silicon) and Linux x86_64 only."
   end
 
   def install
-    bin.install Dir["bin/*"]
-    include.install Dir["include/*"] if Dir.exist?("include")
-    share.install Dir["share/*"] if Dir.exist?("share")
+    libexec.install Dir["bin", "include", "share"]
+    (bin/"nebula").write <<~EOS
+      #!/bin/sh
+      : "${CXX:=#{Formula["llvm"].opt_bin}/clang++}"
+      export CXX
+      exec "#{libexec}/bin/nebula" "$@"
+    EOS
+    chmod 0755, bin/"nebula"
+  end
+
+  def caveats
+    <<~EOS
+      Nebula uses #{Formula["llvm"].opt_bin}/clang++ by default when launched via Homebrew.
+      Override with CXX=/path/to/clang++ if you need a different host compiler.
+    EOS
   end
 
   test do

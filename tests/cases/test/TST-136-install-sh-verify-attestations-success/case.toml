@@ -1,0 +1,22 @@
+id = "TST-136-install-sh-verify-attestations-success"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport hashlib\nimport os\nimport platform\nimport subprocess\nfrom pathlib import Path\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nsystem = platform.system()\nif system.startswith('MSYS') or system.startswith('MINGW') or system == 'Windows':\n    Path('work/install-attest-success-skip.txt').write_text('skip\\n', encoding='utf-8')\n    raise SystemExit(0)\nroot = Path('work/install_attest_success')\nroot.mkdir(parents=True, exist_ok=True)\nmachine = platform.machine().lower()\nif system == 'Darwin' and machine in ('arm64', 'aarch64'):\n    target = 'darwin-arm64'\nelif system == 'Darwin' and machine == 'x86_64':\n    target = 'darwin-x86_64'\nelif system == 'Linux' and machine == 'x86_64':\n    target = 'linux-x86_64'\nelse:\n    raise SystemExit(f'unsupported host for install attestation test: {system}/{machine}')\nsubprocess.run([\n    'python3', str(repo_root / 'scripts' / 'package_release.py'),\n    '--binary', os.environ['NEBULA_BINARY'],\n    '--target', target,\n    '--output-dir', str(root),\n], check=True)\nasset = next(root.glob('nebula-v*.tar.gz'))\nh = hashlib.sha256()\nwith asset.open('rb') as fh:\n    for chunk in iter(lambda: fh.read(1024 * 1024), b''):\n        h.update(chunk)\n(root / 'SHA256SUMS.txt').write_text(f'{h.hexdigest()}  {asset.name}\\n', encoding='utf-8')\nstem = asset.name[:-7]\n(root / 'SHA256SUMS.txt.intoto.jsonl').write_text('{}\\n', encoding='utf-8')\n(root / f'{stem}.provenance.intoto.jsonl').write_text('{}\\n', encoding='utf-8')\n(root / f'{stem}.sbom.intoto.jsonl').write_text('{}\\n', encoding='utf-8')\n(root / 'VERSION.txt').write_text((repo_root / 'VERSION').read_text(encoding='utf-8').strip() + '\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "if [ -f work/install-attest-success-skip.txt ]; then exit 0; fi\nmkdir -p work/fake-gh-success\ncat > work/fake-gh-success/gh <<'EOF'\n#!/usr/bin/env bash\nprintf 'gh %s\\n' \"$*\" >> \"$NEBULA_TEST_GH_LOG\"\nexit 0\nEOF\nchmod +x work/fake-gh-success/gh"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "if [ -f work/install-attest-success-skip.txt ]; then exit 0; fi\nversion=$(cat work/install_attest_success/VERSION.txt)\nNEBULA_TEST_GH_LOG=\"$PWD/work/install-attest-success-gh.log\" PATH=\"$PWD/work/fake-gh-success:$PATH\" bash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --verify-attestations --version \"$version\" --prefix \"$PWD/work/install-attest-success-prefix\" --base-url \"$PWD/work/install_attest_success\" > work/install-attest-success.out 2>&1"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "if [ -f work/install-attest-success-skip.txt ]; then exit 0; fi\ngrep -F 'Verified checksum, provenance, and SBOM attestations with gh before installation.' work/install-attest-success.out && grep -F 'SHA256SUMS.txt --repo billlza/nebula --signer-workflow billlza/nebula/.github/workflows/release.yml --bundle' work/install-attest-success-gh.log && grep -F '.provenance.intoto.jsonl' work/install-attest-success-gh.log && grep -F '.sbom.intoto.jsonl --predicate-type https://spdx.dev/Document/v2.3' work/install-attest-success-gh.log && test -x work/install-attest-success-prefix/bin/nebula"
+expect_rc = 0

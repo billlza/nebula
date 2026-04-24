@@ -1,0 +1,251 @@
+module preview
+import auth
+import core::policy
+import core::validate
+import db_postgres::postgres
+import service::context
+import service::errors
+import std::env
+import std::http
+import std::result
+
+fn preview_env_enabled(name: String) -> Result<Bool, String> {
+  let raw = get_or_default(name, "")
+  if raw == "" || raw == "0" || raw == "false" || raw == "FALSE" || raw == "no" || raw == "off" {
+    return Ok(false)
+  }
+  if raw == "1" || raw == "true" || raw == "TRUE" || raw == "yes" || raw == "on" {
+    return Ok(true)
+  }
+  return Err(text_concat(name, " must be true/false or 1/0"))
+}
+
+fn preview_auth_required(feature: String, enabled: Bool) -> Result<Bool, String> {
+  if !enabled {
+    return Ok(true)
+  }
+  if auth_enabled() {
+    return Ok(true)
+  }
+  return Err(text_concat(feature, " preview requires APP_AUTH_REQUIRED=1"))
+}
+
+fn preview_required_env(feature: String, enabled: Bool, name: String) -> Result<Bool, String> {
+  if !enabled {
+    return Ok(true)
+  }
+  if get_or_default(name, "") != "" {
+    return Ok(true)
+  }
+  return Err(text_concat3(feature, " preview requires ", name))
+}
+
+fn preview_required_secret(feature: String,
+                           enabled: Bool,
+                           value_name: String,
+                           file_name: String) -> Result<Bool, String> {
+  if !enabled {
+    return Ok(true)
+  }
+  if get_or_default(value_name, "") != "" || get_or_default(file_name, "") != "" {
+    return Ok(true)
+  }
+  return Err(text_concat3(feature, " preview requires ", text_concat3(value_name, " or ", file_name)))
+}
+
+fn validate_external_broker_url(enabled: Bool) -> Result<Bool, String> {
+  if !enabled {
+    return Ok(true)
+  }
+  normalize_base_url(get_or_default("APP_EXTERNAL_BROKER_URL", ""))?
+  return Ok(true)
+}
+
+fn configured_data_backend() -> Result<String, String> {
+  let backend = get_or_default("APP_DATA_BACKEND", "sqlite")
+  if backend == "" || backend == "sqlite" {
+    return Ok("sqlite")
+  }
+  if backend == "postgres" {
+    return Ok("postgres")
+  }
+  return Err("APP_DATA_BACKEND must be sqlite or postgres")
+}
+
+fn postgres_backend_required() -> Result<Bool, String> {
+  return Ok(configured_data_backend()? == "postgres")
+}
+
+fn validate_preview_flag(feature: String, name: String) -> Result<Bool, String> {
+  let enabled = preview_env_enabled(name)?
+  return preview_auth_required(feature, enabled)
+}
+
+fn capability_preview_flag(capability: String) -> Result<String, String> {
+  if capability == "cron_schedule" {
+    return Ok("APP_SCHEDULES_PREVIEW")
+  }
+  if capability == "external_broker" {
+    return Ok("APP_EXTERNAL_BROKER_PREVIEW")
+  }
+  if capability == "postgres" {
+    return Ok("APP_POSTGRES_PREVIEW")
+  }
+  if capability == "jwt_resource_server_auth" {
+    return Ok("APP_AUTH_JWT_PREVIEW")
+  }
+  if capability == "free_form_shell_command_tasks" {
+    return Ok("APP_SHELL_TASKS_PREVIEW")
+  }
+  if capability == "public_webhook_integrations" {
+    return Ok("APP_PUBLIC_WEBHOOKS_PREVIEW")
+  }
+  if capability == "distributed_deploy_orchestration" {
+    return Ok("APP_DISTRIBUTED_DEPLOY_PREVIEW")
+  }
+  if capability == "dag_workflows" {
+    return Ok("")
+  }
+  return Err(text_concat("unsupported capability preview gate: ", capability))
+}
+
+fn capability_preview_disabled(ctx: RequestContext,
+                               code: String,
+                               capability: String,
+                               flag_name: String) -> Response {
+  return for_request(403,
+                     ctx,
+                     code,
+                     text_concat3(capability, " preview requires ", text_concat(flag_name, "=1")))
+}
+
+fn capability_preview_invalid(ctx: RequestContext, code: String, msg: String) -> Response {
+  return for_request(500, ctx, code, msg)
+}
+
+fn ensure_capability_preview(ctx: RequestContext,
+                             disabled_code: String,
+                             invalid_code: String,
+                             capability: String) -> Result<Bool, Response> {
+  match capability_preview_flag(capability) {
+    Ok(flag_name) => {
+      if flag_name == "" {
+        return Ok(true)
+      }
+      match preview_env_enabled(flag_name) {
+        Ok(enabled) => {
+          if enabled {
+            return Ok(true)
+          }
+          return Err(capability_preview_disabled(ctx, disabled_code, capability, flag_name))
+        }
+        Err(msg) => {
+          return Err(capability_preview_invalid(ctx, invalid_code, msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(capability_preview_invalid(ctx, invalid_code, msg))
+    }
+  }
+}
+
+fn ensure_permission_capability(ctx: RequestContext,
+                                disabled_code: String,
+                                invalid_code: String,
+                                permission: String) -> Result<Bool, Response> {
+  match permission_capability(permission) {
+    Ok(capability) => {
+      if capability == "" {
+        return Ok(true)
+      }
+      return ensure_capability_preview(ctx, disabled_code, invalid_code, capability)
+    }
+    Err(msg) => {
+      return Err(capability_preview_invalid(ctx, invalid_code, msg))
+    }
+  }
+}
+
+fn validate_external_broker_preview() -> Result<Bool, String> {
+  let enabled = preview_env_enabled("APP_EXTERNAL_BROKER_PREVIEW")?
+  preview_auth_required("external_broker", enabled)?
+  preview_required_env("external_broker", enabled, "APP_EXTERNAL_BROKER_URL")?
+  validate_external_broker_url(enabled)?
+  return preview_required_secret("external_broker", enabled, "APP_WORKER_TOKEN", "APP_WORKER_TOKEN_FILE")
+}
+
+fn require_postgres_preview_flag(data_backend_required: Bool, preview_enabled: Bool) -> Result<Bool, String> {
+  if data_backend_required && !preview_enabled {
+    return Err("APP_DATA_BACKEND=postgres requires APP_POSTGRES_PREVIEW=1")
+  }
+  return Ok(true)
+}
+
+fn validate_postgres_runtime(required: Bool) -> Result<Bool, String> {
+  if !required {
+    return Ok(true)
+  }
+  match probe_runtime() {
+    Ok(_) => {
+      return Ok(true)
+    }
+    Err(msg) => {
+      return Err(text_concat("postgres preview requires libpq runtime: ", msg))
+    }
+  }
+}
+
+fn validate_postgres_preview() -> Result<Bool, String> {
+  let enabled = preview_env_enabled("APP_POSTGRES_PREVIEW")?
+  let data_backend_required = postgres_backend_required()?
+  let required = data_backend_required || enabled
+  require_postgres_preview_flag(data_backend_required, enabled)?
+  preview_auth_required("postgres", required)?
+  preview_required_secret("postgres", required, "APP_POSTGRES_DSN", "APP_POSTGRES_DSN_FILE")?
+  return validate_postgres_runtime(required)
+}
+
+fn validate_shell_tasks_preview() -> Result<Bool, String> {
+  let enabled = preview_env_enabled("APP_SHELL_TASKS_PREVIEW")?
+  preview_auth_required("free_form_shell_command_tasks", enabled)?
+  preview_required_env("free_form_shell_command_tasks", enabled, "APP_SHELL_TASK_ALLOWLIST")?
+  return preview_required_env("free_form_shell_command_tasks", enabled, "APP_SHELL_TASK_WORK_DIR")
+}
+
+fn validate_public_webhooks_preview() -> Result<Bool, String> {
+  let enabled = preview_env_enabled("APP_PUBLIC_WEBHOOKS_PREVIEW")?
+  preview_auth_required("public_webhook_integrations", enabled)?
+  return preview_required_secret("public_webhook_integrations", enabled, "APP_PUBLIC_WEBHOOK_SECRET", "APP_PUBLIC_WEBHOOK_SECRET_FILE")
+}
+
+fn validate_distributed_deploy_preview() -> Result<Bool, String> {
+  let enabled = preview_env_enabled("APP_DISTRIBUTED_DEPLOY_PREVIEW")?
+  preview_auth_required("distributed_deploy_orchestration", enabled)?
+  return preview_required_env("distributed_deploy_orchestration", enabled, "APP_DEPLOY_TARGET_ALLOWLIST")
+}
+
+fn validate_workflow_preview_configuration() -> Result<Bool, String> {
+  validate_preview_flag("cron_schedule", "APP_SCHEDULES_PREVIEW")?
+  return Ok(true)
+}
+
+fn validate_integration_preview_configuration() -> Result<Bool, String> {
+  validate_external_broker_preview()?
+  validate_postgres_preview()?
+  return Ok(true)
+}
+
+fn validate_risky_execution_preview_configuration() -> Result<Bool, String> {
+  validate_shell_tasks_preview()?
+  validate_public_webhooks_preview()?
+  validate_distributed_deploy_preview()?
+  return Ok(true)
+}
+
+fn validate_preview_configuration() -> Result<Bool, String> {
+  validate_workflow_preview_configuration()?
+  validate_integration_preview_configuration()?
+  validate_risky_execution_preview_configuration()?
+  return Ok(true)
+}

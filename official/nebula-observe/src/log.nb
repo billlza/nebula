@@ -1,0 +1,373 @@
+module log
+import std::json
+import std::log
+import std::time
+
+fn classification(reason: String, detail: String) -> Json {
+  return object2(
+    "reason",
+    string_value(reason),
+    "detail",
+    string_value(detail)
+  )
+}
+
+fn lifecycle_listener_stopped_classification(reason: String) -> Json {
+  if reason == "limit_reached" {
+    return classification("policy", "limit_reached")
+  }
+  return classification("shutdown", reason)
+}
+
+fn info_event(service: String, event: String, message: String) -> Void {
+  info(stringify(object4(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event(service: String, event: String, message: String) -> Void {
+  error(stringify(object4(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event_request(service: String, event: String, message: String, request_id: Int) -> Void {
+  error(stringify(object5(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event_request_classified(service: String,
+                                  event: String,
+                                  message: String,
+                                  request_id: Int,
+                                  event_classification: Json) -> Void {
+  error(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "classification",
+    event_classification,
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event_request_with_text(service: String,
+                                 event: String,
+                                 message: String,
+                                 request_id: Int,
+                                 request_id_text: String) -> Void {
+  error(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event_request_with_text_classified(service: String,
+                                            event: String,
+                                            message: String,
+                                            request_id: Int,
+                                            request_id_text: String,
+                                            event_classification: Json) -> Void {
+  error(stringify(object7(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "classification",
+    event_classification,
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event_request_with_details(service: String,
+                                    event: String,
+                                    message: String,
+                                    request_id: Int,
+                                    request_id_text: String,
+                                    details: Json) -> Void {
+  error(stringify(object7(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "details",
+    details,
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn error_event_request_with_details_classified(service: String,
+                                               event: String,
+                                               message: String,
+                                               request_id: Int,
+                                               request_id_text: String,
+                                               event_classification: Json,
+                                               details: Json) -> Void {
+  error(stringify(object8(
+    "service",
+    string_value(service),
+    "event",
+    string_value(event),
+    "message",
+    string_value(message),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "classification",
+    event_classification,
+    "details",
+    details,
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn request_started_classified(service: String,
+                              request_id: Int,
+                              path: String,
+                              event_classification: Json) -> Void {
+  info(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value("request_started"),
+    "request_id",
+    int_value(request_id),
+    "path",
+    string_value(path),
+    "classification",
+    event_classification,
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn request_started(service: String, request_id: Int, path: String) -> Void {
+  request_started_classified(service,
+                             request_id,
+                             path,
+                             classification("request_start", "peer_request_ready"))
+}
+
+fn request_started_with_text_classified(service: String,
+                                        request_id: Int,
+                                        request_id_text: String,
+                                        path: String,
+                                        event_classification: Json) -> Void {
+  info(stringify(object7(
+    "service",
+    string_value(service),
+    "event",
+    string_value("request_started"),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "path",
+    string_value(path),
+    "classification",
+    event_classification,
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn request_started_with_text(service: String,
+                             request_id: Int,
+                             request_id_text: String,
+                             path: String) -> Void {
+  request_started_with_text_classified(service,
+                                       request_id,
+                                       request_id_text,
+                                       path,
+                                       classification("request_start", "peer_request_ready"))
+}
+
+fn request_finished_classified(service: String,
+                               request_id: Int,
+                               status: Int,
+                               duration_ms: Int,
+                               event_classification: Json) -> Void {
+  info(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value("request_finished"),
+    "request_id",
+    int_value(request_id),
+    "status",
+    int_value(status),
+    "duration_ms",
+    int_value(duration_ms),
+    "classification",
+    event_classification
+  )))
+}
+
+fn request_finished(service: String, request_id: Int, status: Int, duration_ms: Int) -> Void {
+  request_finished_classified(service,
+                              request_id,
+                              status,
+                              duration_ms,
+                              classification("response_complete", "response_written"))
+}
+
+fn request_finished_with_text_classified(service: String,
+                                         request_id: Int,
+                                         request_id_text: String,
+                                         status: Int,
+                                         duration_ms: Int,
+                                         event_classification: Json) -> Void {
+  info(stringify(object7(
+    "service",
+    string_value(service),
+    "event",
+    string_value("request_finished"),
+    "request_id",
+    int_value(request_id),
+    "request_id_text",
+    string_value(request_id_text),
+    "status",
+    int_value(status),
+    "duration_ms",
+    int_value(duration_ms),
+    "classification",
+    event_classification
+  )))
+}
+
+fn request_finished_with_text(service: String,
+                              request_id: Int,
+                              request_id_text: String,
+                              status: Int,
+                              duration_ms: Int) -> Void {
+  request_finished_with_text_classified(service,
+                                        request_id,
+                                        request_id_text,
+                                        status,
+                                        duration_ms,
+                                        classification("response_complete", "response_written"))
+}
+
+fn lifecycle_listener_bound(service: String, bind_host: String, port: Int, message: String) -> Void {
+  info(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value("listener_bound"),
+    "message",
+    string_value(message),
+    "bind_host",
+    string_value(bind_host),
+    "port",
+    int_value(port),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn lifecycle_drain_requested(service: String, path: String) -> Void {
+  info(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value("drain_requested"),
+    "path",
+    string_value(path),
+    "message",
+    string_value("service entering draining mode"),
+    "classification",
+    classification("shutdown", "drain_requested"),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn lifecycle_shutdown_requested(service: String, path: String) -> Void {
+  info(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value("shutdown_requested"),
+    "path",
+    string_value(path),
+    "message",
+    string_value("service entering shutdown mode"),
+    "classification",
+    classification("shutdown", "shutdown_requested"),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn lifecycle_listener_stopped(service: String, reason: String, served_requests: Int) -> Void {
+  info(stringify(object6(
+    "service",
+    string_value(service),
+    "event",
+    string_value("listener_stopped"),
+    "reason",
+    string_value(reason),
+    "served_requests",
+    int_value(served_requests),
+    "classification",
+    lifecycle_listener_stopped_classification(reason),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}

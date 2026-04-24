@@ -1,0 +1,63 @@
+module main
+import std::json
+
+fn payload() -> Json {
+  return object5(
+    "user",
+    string_value("nebula"),
+    "count",
+    int_value(7),
+    "ok",
+    bool_value(true),
+    "zone",
+    string_value("prod-cn"),
+    "kind",
+    string_value("api")
+  )
+}
+
+@bench
+fn bench_json_payload_roundtrip() -> Void {
+  let text = stringify(payload())
+  match parse(text) {
+    Ok(parsed) => {
+      match get_string(parsed, "user") {
+        Ok(user) => {
+          if user == "nebula" {
+          } else {
+            expect_eq(1, 0)
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+      match get_int(parsed, "count") {
+        Ok(count) => {
+          expect_eq(count, 7)
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+      match get_bool(parsed, "ok") {
+        Ok(ok) => {
+          if ok {
+          } else {
+            expect_eq(1, 0)
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("bench-json-payload-roundtrip")
+}

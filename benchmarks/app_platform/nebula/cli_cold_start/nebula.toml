@@ -1,0 +1,11 @@
+schema_version = 1
+
+[package]
+name = "app-platform-cli-cold-start"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+ctlapp = { path = "../../../../examples/release_control_plane_workspace/apps/ctl" }
+core = { path = "../../../../examples/release_control_plane_workspace/packages/core" }

@@ -1,0 +1,108 @@
+module sqlite_backend
+import db_sqlite::sqlite
+import std::json
+import std::result
+
+struct SqliteConnection {
+  value: Connection
+}
+
+struct SqliteTransaction {
+  value: Transaction
+}
+
+struct SqliteResultSet {
+  value: ResultSet
+}
+
+struct SqliteRow {
+  value: Row
+}
+
+fn sqlite_open(path: String) -> Result<SqliteConnection, String> {
+  return Ok(SqliteConnection(open(path)?))
+}
+
+fn sqlite_migration(version: Int, name: String, sql: String) -> Json {
+  return migration(version, name, sql)
+}
+
+fn sqlite_no_params() -> Json {
+  return no_params()
+}
+
+fn SqliteConnection_close(self: SqliteConnection) -> Result<Void, String> {
+  return self.value.close()
+}
+
+fn SqliteConnection_begin_transaction(self: SqliteConnection) -> Result<SqliteTransaction, String> {
+  return Ok(SqliteTransaction(self.value.begin_transaction()?))
+}
+
+fn SqliteConnection_execute(self: SqliteConnection, sql: String, params: Json) -> Result<Int, String> {
+  return self.value.execute(sql, params)
+}
+
+fn SqliteConnection_execute0(self: SqliteConnection, sql: String) -> Result<Int, String> {
+  return self.value.execute0(sql)
+}
+
+fn SqliteConnection_query(self: SqliteConnection, sql: String, params: Json) -> Result<SqliteResultSet, String> {
+  return Ok(SqliteResultSet(self.value.query(sql, params)?))
+}
+
+fn SqliteConnection_query0(self: SqliteConnection, sql: String) -> Result<SqliteResultSet, String> {
+  return Ok(SqliteResultSet(self.value.query0(sql)?))
+}
+
+fn SqliteConnection_run_migrations(self: SqliteConnection, migrations: Json) -> Result<Int, String> {
+  return self.value.run_migrations(migrations)
+}
+
+fn SqliteTransaction_execute(self: SqliteTransaction, sql: String, params: Json) -> Result<Int, String> {
+  return self.value.execute(sql, params)
+}
+
+fn SqliteTransaction_execute0(self: SqliteTransaction, sql: String) -> Result<Int, String> {
+  return self.value.execute0(sql)
+}
+
+fn SqliteTransaction_query(self: SqliteTransaction, sql: String, params: Json) -> Result<SqliteResultSet, String> {
+  return Ok(SqliteResultSet(self.value.query(sql, params)?))
+}
+
+fn SqliteTransaction_query0(self: SqliteTransaction, sql: String) -> Result<SqliteResultSet, String> {
+  return Ok(SqliteResultSet(self.value.query0(sql)?))
+}
+
+fn SqliteTransaction_commit(self: SqliteTransaction) -> Result<Void, String> {
+  return self.value.commit()
+}
+
+fn SqliteTransaction_rollback(self: SqliteTransaction) -> Result<Void, String> {
+  return self.value.rollback()
+}
+
+fn SqliteResultSet_len(self: SqliteResultSet) -> Result<Int, String> {
+  return self.value.len()
+}
+
+fn SqliteResultSet_row(self: SqliteResultSet, index: Int) -> Result<SqliteRow, String> {
+  return Ok(SqliteRow(self.value.row(index)?))
+}
+
+fn SqliteRow_get_string(self: SqliteRow, column: String) -> Result<String, String> {
+  return self.value.get_string(column)
+}
+
+fn SqliteRow_get_int(self: SqliteRow, column: String) -> Result<Int, String> {
+  return self.value.get_int(column)
+}
+
+fn SqliteRow_get_bool(self: SqliteRow, column: String) -> Result<Bool, String> {
+  return self.value.get_bool(column)
+}
+
+fn SqliteRow_get_json(self: SqliteRow, column: String) -> Result<Json, String> {
+  return self.value.get_json(column)
+}

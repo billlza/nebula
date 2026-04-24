@@ -1,0 +1,81 @@
+module headers
+import std::bytes
+import std::http
+import std::json
+
+struct RequestHeaderPolicy {
+  request_id_header_name: String
+  trust_request_id_header: Bool
+  max_request_id_bytes: Int
+}
+
+struct RequestIdentity {
+  request_id_text: String
+  request_id_from_header: Bool
+}
+
+fn request_header_policy(request_id_header_name: String,
+                         trust_request_id_header: Bool,
+                         max_request_id_bytes: Int) -> RequestHeaderPolicy {
+  return RequestHeaderPolicy(request_id_header_name, trust_request_id_header, max_request_id_bytes)
+}
+
+fn default_request_header_policy() -> RequestHeaderPolicy {
+  return request_header_policy("X-Request-Id", true, 128)
+}
+
+fn local_request_id_only() -> RequestHeaderPolicy {
+  let base = default_request_header_policy()
+  return request_header_policy(base.request_id_header_name, false, base.max_request_id_bytes)
+}
+
+fn with_request_id_header(base: RequestHeaderPolicy, header_name: String) -> RequestHeaderPolicy {
+  return request_header_policy(header_name, base.trust_request_id_header, base.max_request_id_bytes)
+}
+
+fn with_trusted_request_id(base: RequestHeaderPolicy, trust: Bool) -> RequestHeaderPolicy {
+  return request_header_policy(base.request_id_header_name, trust, base.max_request_id_bytes)
+}
+
+fn with_request_id_max_bytes(base: RequestHeaderPolicy, max_request_id_bytes: Int) -> RequestHeaderPolicy {
+  return request_header_policy(base.request_id_header_name, base.trust_request_id_header, max_request_id_bytes)
+}
+
+fn RequestHeaderPolicy_as_json(self: RequestHeaderPolicy) -> Json {
+  return object3(
+    "request_id_header_name",
+    string_value(self.request_id_header_name),
+    "trust_request_id_header",
+    bool_value(self.trust_request_id_header),
+    "max_request_id_bytes",
+    int_value(self.max_request_id_bytes)
+  )
+}
+
+fn local_request_id_text(local_request_id: Int) -> String {
+  return stringify(int_value(local_request_id))
+}
+
+fn resolve_request_identity(self: RequestHeaderPolicy,
+                            request: Request,
+                            local_request_id: Int) -> RequestIdentity {
+  let fallback = local_request_id_text(local_request_id)
+  if !self.trust_request_id_header || self.request_id_header_name == "" {
+    return RequestIdentity(fallback, false)
+  }
+  match header_value_unique(request, self.request_id_header_name) {
+    Ok(value) => {
+      if value == "" {
+        return RequestIdentity(fallback, false)
+      }
+      let value_bytes = from_string(value)
+      if len(value_bytes) > self.max_request_id_bytes {
+        return RequestIdentity(fallback, false)
+      }
+      return RequestIdentity(value, true)
+    }
+    Err(_) => {
+      return RequestIdentity(fallback, false)
+    }
+  }
+}

@@ -1,0 +1,26 @@
+module main
+import server
+import std::net
+import std::result
+import std::task
+import std::time
+
+async fn main() -> Void {
+  match ipv4("127.0.0.1", 40482) {
+    Ok(addr) => {
+      match await bind(addr) {
+        Ok(listener) => {
+          let task = spawn(serve_once(listener))
+          await join(task)
+          listener.close()
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

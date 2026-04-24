@@ -1,0 +1,21 @@
+id = "TST-160-std-fs-invalid-utf8-rejected"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "mkdir -p work/fs_invalid_utf8/src && python3 - <<'PY'\nfrom pathlib import Path\nPath('work/fs_invalid_utf8/bad.bin').write_bytes(b'\\xff\\xfehello')\nPY"
+expect_rc = 0
+must_exist = ["work/fs_invalid_utf8/bad.bin"]
+
+[[steps]]
+kind = "shell"
+run = "cat > work/fs_invalid_utf8/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"fs-invalid-utf8\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\nEOF\ncat > work/fs_invalid_utf8/src/main.nb <<'EOF'\nmodule main\nimport std::fs\n\nfn main() -> Int {\n  match read_string(\"work/fs_invalid_utf8/bad.bin\") {\n    Ok(_) => {\n      print(\"utf8-bad\")\n      return 1\n    }\n    Err(msg) => {\n      print(msg)\n      print(\"utf8-ok\")\n      return 0\n    }\n  }\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/fs_invalid_utf8"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["utf8-ok", "file is not valid UTF-8"]

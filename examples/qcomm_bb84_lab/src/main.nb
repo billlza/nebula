@@ -1,0 +1,16 @@
+module main
+import qcomm::bb84
+import std::bytes
+import std::json
+
+fn main() -> Void {
+  let cfg = with_intercept_resend_ppm(with_sample_reveal(default_config(128), 16), 120000)
+  match simulate_seeded(cfg, from_string("bb84-lab-seed")) {
+    Ok(report) => {
+      print(stringify(report.as_json()))
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

@@ -1,0 +1,12 @@
+schema_version = 1
+
+[package]
+name = "app-platform-service-json-db-crud"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+core = { path = "../../../../examples/cli_service_workspace/packages/core" }
+db_sqlite = { path = "../../../../official/nebula-db-sqlite" }
+service = { path = "../../../../official/nebula-service" }

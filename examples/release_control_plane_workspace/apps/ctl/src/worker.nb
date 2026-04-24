@@ -1,0 +1,415 @@
+module worker
+import args
+import client
+import core::validate
+import core::workflow_contracts
+import core::workflow_validate
+import errors
+import std::json
+import std::result
+
+struct WorkerCliArgs {
+  subcommand: String
+  worker_id_text: String
+  task_kind_text: String
+  lease_id_text: String
+  status_text: String
+  message_text: String
+}
+
+struct WorkerParseProgress {
+  parsed: WorkerCliArgs
+  next_index: Int
+}
+
+fn default_worker_args() -> WorkerCliArgs {
+  return WorkerCliArgs("", "", "", "", "", "")
+}
+
+fn rebuild_worker_args(subcommand: String,
+                       worker_id_text: String,
+                       task_kind_text: String,
+                       lease_id_text: String,
+                       status_text: String,
+                       message_text: String) -> WorkerCliArgs {
+  return WorkerCliArgs(subcommand, worker_id_text, task_kind_text, lease_id_text, status_text, message_text)
+}
+
+fn with_worker_subcommand(parsed: WorkerCliArgs, value: String) -> WorkerCliArgs {
+  return rebuild_worker_args(value,
+                             parsed.worker_id_text,
+                             parsed.task_kind_text,
+                             parsed.lease_id_text,
+                             parsed.status_text,
+                             parsed.message_text)
+}
+
+fn with_worker_id(parsed: WorkerCliArgs, value: String) -> WorkerCliArgs {
+  return rebuild_worker_args(parsed.subcommand,
+                             value,
+                             parsed.task_kind_text,
+                             parsed.lease_id_text,
+                             parsed.status_text,
+                             parsed.message_text)
+}
+
+fn with_task_kind(parsed: WorkerCliArgs, value: String) -> WorkerCliArgs {
+  return rebuild_worker_args(parsed.subcommand,
+                             parsed.worker_id_text,
+                             value,
+                             parsed.lease_id_text,
+                             parsed.status_text,
+                             parsed.message_text)
+}
+
+fn with_lease_id(parsed: WorkerCliArgs, value: String) -> WorkerCliArgs {
+  return rebuild_worker_args(parsed.subcommand,
+                             parsed.worker_id_text,
+                             parsed.task_kind_text,
+                             value,
+                             parsed.status_text,
+                             parsed.message_text)
+}
+
+fn with_status(parsed: WorkerCliArgs, value: String) -> WorkerCliArgs {
+  return rebuild_worker_args(parsed.subcommand,
+                             parsed.worker_id_text,
+                             parsed.task_kind_text,
+                             parsed.lease_id_text,
+                             value,
+                             parsed.message_text)
+}
+
+fn with_message(parsed: WorkerCliArgs, value: String) -> WorkerCliArgs {
+  return rebuild_worker_args(parsed.subcommand,
+                             parsed.worker_id_text,
+                             parsed.task_kind_text,
+                             parsed.lease_id_text,
+                             parsed.status_text,
+                             value)
+}
+
+fn worker_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn worker_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn worker_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn worker_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= worker_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return worker_arg_text(argv_json, index + 1)
+}
+
+fn worker_progress(parsed: WorkerCliArgs, next_index: Int) -> WorkerParseProgress {
+  return WorkerParseProgress(parsed, next_index)
+}
+
+fn parse_worker_flag(argv_json: Json,
+                     parsed: WorkerCliArgs,
+                     index: Int,
+                     arg: String) -> Result<WorkerParseProgress, String> {
+  let value = worker_next_value(argv_json, index, arg)?
+  if arg == "--worker-id" {
+    return Ok(worker_progress(with_worker_id(parsed, value), index + 2))
+  }
+  if arg == "--task-kind" {
+    return Ok(worker_progress(with_task_kind(parsed, value), index + 2))
+  }
+  if arg == "--lease-id" {
+    return Ok(worker_progress(with_lease_id(parsed, value), index + 2))
+  }
+  if arg == "--status" {
+    return Ok(worker_progress(with_status(parsed, value), index + 2))
+  }
+  if arg == "--message" {
+    return Ok(worker_progress(with_message(parsed, value), index + 2))
+  }
+  return Err("unexpected worker argument")
+}
+
+fn parse_worker_cli_args(parsed: ParsedArgs) -> Result<WorkerCliArgs, String> {
+  let argv_json = worker_argv(parsed)
+  let count = worker_arg_count(argv_json)?
+  let index = 0
+  let state = default_worker_args()
+  while index < count {
+    let arg = worker_arg_text(argv_json, index)?
+    if state.subcommand == "" {
+      state = with_worker_subcommand(state, arg)
+      index += 1
+      continue
+    }
+    let progress = parse_worker_flag(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn finalize_worker_args(args: WorkerCliArgs) -> Result<WorkerCliArgs, String> {
+  if args.subcommand == "" {
+    return Err("missing worker subcommand")
+  }
+  if args.subcommand == "claim" {
+    if args.worker_id_text == "" {
+      return Err("--worker-id is required")
+    }
+    if args.lease_id_text != "" || args.status_text != "" || args.message_text != "" {
+      return Err("--lease-id/--status/--message are not allowed for worker claim")
+    }
+    return Ok(args)
+  }
+  if args.subcommand == "heartbeat" {
+    if args.worker_id_text == "" || args.lease_id_text == "" {
+      return Err("--worker-id and --lease-id are required")
+    }
+    if args.task_kind_text != "" || args.status_text != "" || args.message_text != "" {
+      return Err("--task-kind/--status/--message are not allowed for worker heartbeat")
+    }
+    return Ok(args)
+  }
+  if args.subcommand == "complete" {
+    if args.worker_id_text == "" || args.lease_id_text == "" || args.status_text == "" {
+      return Err("--worker-id, --lease-id, and --status are required")
+    }
+    if args.task_kind_text != "" {
+      return Err("--task-kind is not allowed for worker complete")
+    }
+    return Ok(args)
+  }
+  return Err("unknown worker subcommand")
+}
+
+fn worker_claim_path() -> String {
+  return "/v1/workers/claim"
+}
+
+fn worker_heartbeat_path(lease_id: String) -> String {
+  return text_concat("/v1/workers/leases/", text_concat(lease_id, "/heartbeat"))
+}
+
+fn worker_complete_path(lease_id: String) -> String {
+  return text_concat("/v1/workers/leases/", text_concat(lease_id, "/complete"))
+}
+
+fn build_worker_claim_request(args: WorkerCliArgs) -> Result<WorkerClaimRequest, String> {
+  let request = WorkerClaimRequest(args.worker_id_text, args.task_kind_text)
+  validate_worker_claim_request(request)?
+  return Ok(request)
+}
+
+fn build_worker_heartbeat_request(args: WorkerCliArgs) -> Result<WorkerHeartbeatRequest, String> {
+  let request = WorkerHeartbeatRequest(args.worker_id_text)
+  validate_worker_heartbeat_request(request)?
+  return Ok(request)
+}
+
+fn build_worker_complete_request(args: WorkerCliArgs) -> Result<WorkerCompleteRequest, String> {
+  let request = WorkerCompleteRequest(args.worker_id_text, args.status_text, args.message_text, null_value())
+  validate_worker_complete_request(request)?
+  return Ok(request)
+}
+
+fn parse_worker_claim_reply(reply: JsonResponse) -> Result<WorkerClaimEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = worker_claim_envelope_from_json(reply.payload)?
+  validate_worker_claim_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_worker_heartbeat_reply(reply: JsonResponse) -> Result<WorkerHeartbeatEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = worker_heartbeat_envelope_from_json(reply.payload)?
+  validate_worker_heartbeat_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_worker_complete_reply(reply: JsonResponse) -> Result<WorkerCompleteEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = worker_complete_envelope_from_json(reply.payload)?
+  validate_worker_complete_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn emit_worker_claim(envelope: WorkerClaimEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("outcome=", envelope.outcome))
+  if envelope.outcome == "claimed" {
+    print(text_concat("lease_id=", envelope.lease.lease_id))
+    print(text_concat("run_id=", int_text(envelope.lease.run_id)))
+    print(text_concat("task_kind=", envelope.lease.task_kind))
+    print(text_concat("lease_expires_unix_ms=", int_text(envelope.lease.lease_expires_unix_ms)))
+  }
+  return 0
+}
+
+fn emit_worker_heartbeat(envelope: WorkerHeartbeatEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("lease_id=", envelope.lease.lease_id))
+  print(text_concat("run_id=", int_text(envelope.lease.run_id)))
+  print(text_concat("lease_expires_unix_ms=", int_text(envelope.lease.lease_expires_unix_ms)))
+  return 0
+}
+
+fn emit_worker_complete(envelope: WorkerCompleteEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("run_id=", int_text(envelope.run.run_id)))
+  print(text_concat("status=", envelope.run.status))
+  print(text_concat("result_message=", envelope.run.result_message))
+  return 0
+}
+
+fn worker_usage_error(msg: String) -> Int {
+  print(msg)
+  return 2
+}
+
+fn worker_runtime_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn finalized_worker_args(parsed: ParsedArgs) -> Result<WorkerCliArgs, Int> {
+  match parse_worker_cli_args(parsed) {
+    Ok(value) => {
+      match finalize_worker_args(value) {
+        Ok(finalized) => {
+          return Ok(finalized)
+        }
+        Err(msg) => {
+          return Err(worker_usage_error(msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(worker_usage_error(msg))
+    }
+  }
+}
+
+async fn run_worker_claim_subcommand(base_url: String,
+                                     options: ClientOptions,
+                                     args: WorkerCliArgs,
+                                     json_mode: Bool) -> Int {
+  let request = build_worker_claim_request(args)
+  match request {
+    Ok(value) => {
+      match await post_json(base_url, worker_claim_path(), value.as_json(), options) {
+        Ok(reply) => {
+          match parse_worker_claim_reply(reply) {
+            Ok(envelope) => {
+              return emit_worker_claim(envelope, json_mode)
+            }
+            Err(msg) => {
+              return worker_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return worker_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return worker_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_worker_heartbeat_subcommand(base_url: String,
+                                         options: ClientOptions,
+                                         args: WorkerCliArgs,
+                                         json_mode: Bool) -> Int {
+  let request = build_worker_heartbeat_request(args)
+  match request {
+    Ok(value) => {
+      match await post_json(base_url, worker_heartbeat_path(args.lease_id_text), value.as_json(), options) {
+        Ok(reply) => {
+          match parse_worker_heartbeat_reply(reply) {
+            Ok(envelope) => {
+              return emit_worker_heartbeat(envelope, json_mode)
+            }
+            Err(msg) => {
+              return worker_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return worker_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return worker_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_worker_complete_subcommand(base_url: String,
+                                        options: ClientOptions,
+                                        args: WorkerCliArgs,
+                                        json_mode: Bool) -> Int {
+  let request = build_worker_complete_request(args)
+  match request {
+    Ok(value) => {
+      match await post_json(base_url, worker_complete_path(args.lease_id_text), value.as_json(), options) {
+        Ok(reply) => {
+          match parse_worker_complete_reply(reply) {
+            Ok(envelope) => {
+              return emit_worker_complete(envelope, json_mode)
+            }
+            Err(msg) => {
+              return worker_runtime_error(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return worker_runtime_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return worker_runtime_error(msg)
+    }
+  }
+}
+
+async fn run_worker_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match finalized_worker_args(parsed) {
+    Ok(args) => {
+      if args.subcommand == "claim" {
+        return await run_worker_claim_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      if args.subcommand == "heartbeat" {
+        return await run_worker_heartbeat_subcommand(base_url, options, args, parsed.json_mode)
+      }
+      return await run_worker_complete_subcommand(base_url, options, args, parsed.json_mode)
+    }
+    Err(exit_code) => {
+      return exit_code
+    }
+  }
+}

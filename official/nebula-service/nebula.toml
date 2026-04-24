@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+name = "nebula-service"
+version = "0.1.0"
+entry = "src/lib.nb"
+src_dir = "src"
+
+[dependencies]
+observe = { path = "../nebula-observe" }
+tlss = { path = "../nebula-tls-server" }
+
+[native]
+cxx_sources = ["native/bridge.cpp"]

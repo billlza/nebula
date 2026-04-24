@@ -1,0 +1,10 @@
+schema_version = 1
+
+[package]
+name = "thin-host-counter-core"
+version = "0.1.0"
+entry = "src/counter_core.nb"
+src_dir = "src"
+
+[dependencies]
+bridge = { path = "../bridge" }

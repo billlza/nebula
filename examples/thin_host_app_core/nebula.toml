@@ -1,0 +1,12 @@
+schema_version = 1
+
+[package]
+name = "thin-host-app-core"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+host_cxx = ["host.cpp"]
+
+[dependencies]
+bridge = { path = "packages/bridge" }
+counter = { path = "packages/counter_core" }

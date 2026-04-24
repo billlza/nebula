@@ -1,0 +1,94 @@
+id = "TST-266-release-control-plane-postgres-preview-preflight"
+suite = "test"
+description = "release control plane Postgres preview preflight checks DSN and official libpq runtime probe"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from release_control_plane_workspace import build_service_binary, copy_example, fetch_workspace
+from service_probe import wait_for_listener_bound
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/release_control_plane_postgres_preview_preflight")
+state_dir = root / "state"
+admin_token = "admin-postgres-token"
+writer_token = "writer-postgres-token"
+reader_token = "reader-postgres-token"
+worker_token = "worker-postgres-token"
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+service_binary = build_service_binary(binary, root)
+
+base_env = {
+    **os.environ,
+    "NEBULA_BIND_HOST": "127.0.0.1",
+    "NEBULA_PORT": "0",
+    "APP_AUTH_REQUIRED": "1",
+    "APP_ADMIN_TOKEN": admin_token,
+    "APP_WRITE_TOKEN": writer_token,
+    "APP_READ_TOKEN": reader_token,
+    "APP_WORKER_TOKEN": worker_token,
+}
+
+missing_dsn_env = {
+    **base_env,
+    "APP_STATE_DIR": str(state_dir / "missing-dsn"),
+    "APP_POSTGRES_PREVIEW": "1",
+}
+missing_dsn = subprocess.run([str(service_binary)], capture_output=True, text=True, env=missing_dsn_env, timeout=10)
+if missing_dsn.returncode == 0:
+    raise SystemExit("postgres preview unexpectedly started without APP_POSTGRES_DSN")
+if "startup preflight failed: postgres preview requires APP_POSTGRES_DSN or APP_POSTGRES_DSN_FILE" not in missing_dsn.stdout:
+    print(missing_dsn.stdout, end="")
+    print(missing_dsn.stderr, end="")
+    raise SystemExit("missing postgres DSN diagnostic")
+
+runtime_env = {
+    **base_env,
+    "APP_STATE_DIR": str(state_dir / "runtime-probe"),
+    "APP_POSTGRES_PREVIEW": "1",
+    "APP_POSTGRES_DSN": "postgresql://127.0.0.1:1/nebula_preview",
+}
+proc = subprocess.Popen([str(service_binary)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=runtime_env)
+stderr_chunks = []
+try:
+    deadline = time.time() + 3
+    while time.time() < deadline and proc.poll() is None:
+        time.sleep(0.05)
+    if proc.poll() is not None:
+        stdout, stderr = proc.communicate(timeout=5)
+        text = stdout + stderr
+        if "startup preflight failed: postgres preview requires libpq runtime: libpq dynamic library is unavailable; install PostgreSQL client libraries" in text:
+            print("postgres-preview-libpq-missing-ok")
+        elif "startup preflight failed: postgres preview requires libpq runtime: libpq dynamic library is missing required symbols" in text:
+            print("postgres-preview-libpq-symbols-missing-ok")
+        else:
+            print(text, end="")
+            raise SystemExit("postgres preview runtime probe failed with an unexpected diagnostic")
+    else:
+        wait_for_listener_bound(proc, stderr_chunks, timeout=10)
+        print("postgres-preview-libpq-probe-ok")
+finally:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+print("release-control-plane-postgres-preview-preflight-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-postgres-preview-preflight-ok"]

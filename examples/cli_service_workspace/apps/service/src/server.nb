@@ -1,0 +1,162 @@
+module server
+import config
+import core::app
+import core::contracts
+import core::validate
+import service::context
+import service::errors
+import service::health
+import service::middleware
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+
+fn app_profile() -> String {
+  return "linux-backend-ga"
+}
+
+fn route_info_path() -> String {
+  return "/v1/info"
+}
+
+fn route_echo_path() -> String {
+  return "/v1/echo"
+}
+
+fn method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn is_builtin_route(request: Request) -> Bool {
+  return path_matches("/healthz", request) ||
+         path_matches("/readyz", request) ||
+         path_matches(route_info_path(), request) ||
+         path_matches(route_whoami_path(), request) ||
+         path_matches(route_echo_path(), request)
+}
+
+fn is_config_route(request: Request) -> Bool {
+  return path_matches(config_history_pattern(), request) ||
+         path_matches(config_item_pattern(), request) ||
+         path_matches(config_list_pattern(), request)
+}
+
+async fn handle_builtin_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches("/healthz", request) {
+    if method_matches(Get, request.method) {
+      return await handle_health_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches("/readyz", request) {
+    if method_matches(Get, request.method) {
+      return await handle_ready_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches(route_info_path(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_info_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches(route_whoami_path(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_whoami_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if method_matches(Post, request.method) {
+    return await handle_echo_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_config_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(config_history_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_config_history_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches(config_item_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_config_get_route(ctx, request)
+    }
+    if method_matches(Put, request.method) {
+      return await handle_config_put_route(ctx, request)
+    }
+    if method_matches(Delete, request.method) {
+      return await handle_config_delete_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_config_list_route(ctx, request)
+  }
+  return method_not_allowed()
+}
+
+async fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if is_builtin_route(request) {
+    return await handle_builtin_route(ctx, request)
+  }
+  if is_config_route(request) {
+    return await handle_config_route(ctx, request)
+  }
+  return Ok(not_found_text("not found"))
+}
+
+async fn handle_health_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(live_response_with_context(ctx))
+}
+
+async fn handle_ready_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if ctx.is_draining() {
+    return Ok(draining_response_with_context(ctx))
+  }
+  return Ok(ready_response_with_context(ctx))
+}
+
+async fn handle_info_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let info = ServiceInfo(
+    service_name(),
+    service_version(),
+    app_profile(),
+    ctx.request_id_text,
+    unix_millis()
+  )
+  return Ok(ok_json(info.as_json()))
+}
+
+async fn handle_echo_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_echo_route_inner)
+}
+
+async fn handle_echo_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      match echo_request_from_json(payload) {
+        Ok(echo_request) => {
+          match validate_echo_request(echo_request) {
+            Ok(_) => {
+              let echo_response = EchoResponse(echo_request.message, service_name(), ctx.request_id_text)
+              return Ok(ok_json(echo_response.as_json()))
+            }
+            Err(msg) => {
+              return Ok(for_request(400, ctx, "invalid_message", msg))
+            }
+          }
+        }
+        Err(msg) => {
+          return Ok(for_request(400, ctx, "invalid_request", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Ok(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}

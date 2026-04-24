@@ -1,0 +1,123 @@
+schema_version = 2
+root_package = "@workspace:cli_service_workspace"
+root_manifest_hash = "566d35eeb495b87"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "@workspace:cli_service_workspace"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = ""
+src_dir = ""
+source_kind = "workspace"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "566d35eeb495b87"
+source_fingerprint = "449d849321e2630a"
+integrity_fingerprint = "e16caeca9a61f13c"
+is_root = 1
+dependencies = ["cli-service-skeleton-ctl=cli-service-skeleton-ctl", "cli-service-skeleton-service=cli-service-skeleton-service", "ctl-service-core=ctl-service-core"]
+
+[[package]]
+name = "cli-service-skeleton-ctl"
+version = "0.1.0"
+root = "apps/ctl"
+manifest = "apps/ctl/nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "d0a3eda2ae627eeb"
+source_fingerprint = "8c5f747a5c194ca1"
+integrity_fingerprint = "be7776941177f9b3"
+is_root = 0
+dependencies = ["core=ctl-service-core", "tls=nebula-tls"]
+
+[[package]]
+name = "cli-service-skeleton-service"
+version = "0.1.0"
+root = "apps/service"
+manifest = "apps/service/nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "b529b994424ae698"
+source_fingerprint = "4937f2751435b5d8"
+integrity_fingerprint = "badb944157e3c246"
+is_root = 0
+host_cxx = ["host.cpp"]
+dependencies = ["core=ctl-service-core", "observe=nebula-observe", "service=nebula-service"]
+
+[[package]]
+name = "ctl-service-core"
+version = "0.1.0"
+root = "packages/core"
+manifest = "packages/core/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "packages/core"
+resolved_rev = ""
+manifest_hash = "9f19d84552a18b14"
+source_fingerprint = "7e26841a15934ad3"
+integrity_fingerprint = "a90435f52261fe2b"
+is_root = 0
+host_cxx = ["host.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-observe"
+version = "0.1.0"
+root = "../../official/nebula-observe"
+manifest = "../../official/nebula-observe/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "installed"
+source_hint = "nebula-observe"
+resolved_rev = ""
+manifest_hash = "9a8a10871f57579b"
+source_fingerprint = "82386d9652a04ae1"
+integrity_fingerprint = "1eee1f6ff6e1cf6d"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "nebula-service"
+version = "0.1.0"
+root = "../../official/nebula-service"
+manifest = "../../official/nebula-service/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "installed"
+source_hint = "nebula-service"
+resolved_rev = ""
+manifest_hash = "def52b3f6d4e5a03"
+source_fingerprint = "6bf6dc45a96369a9"
+integrity_fingerprint = "4a8d1be5f75dc04e"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = ["observe=nebula-observe"]
+
+[[package]]
+name = "nebula-tls"
+version = "0.1.0"
+root = "../../official/nebula-tls"
+manifest = "../../official/nebula-tls/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-tls"
+resolved_rev = ""
+manifest_hash = "7b14a5853429670d"
+source_fingerprint = "85b12447ae1d325b"
+integrity_fingerprint = "3a0c02a7325918b3"
+is_root = 0
+native_c_sources = ["native/vendor/mbedtls/library/aes.c", "native/vendor/mbedtls/library/asn1parse.c", "native/vendor/mbedtls/library/asn1write.c", "native/vendor/mbedtls/library/base64.c", "native/vendor/mbedtls/library/bignum.c", "native/vendor/mbedtls/library/bignum_core.c", "native/vendor/mbedtls/library/bignum_mod.c", "native/vendor/mbedtls/library/bignum_mod_raw.c", "native/vendor/mbedtls/library/cipher.c", "native/vendor/mbedtls/library/cipher_wrap.c", "native/vendor/mbedtls/library/constant_time.c", "native/vendor/mbedtls/library/ctr_drbg.c", "native/vendor/mbedtls/library/ecdh.c", "native/vendor/mbedtls/library/ecdsa.c", "native/vendor/mbedtls/library/ecp.c", "native/vendor/mbedtls/library/ecp_curves.c", "native/vendor/mbedtls/library/ecp_curves_new.c", "native/vendor/mbedtls/library/entropy.c", "native/vendor/mbedtls/library/entropy_poll.c", "native/vendor/mbedtls/library/error.c", "native/vendor/mbedtls/library/gcm.c", "native/vendor/mbedtls/library/md.c", "native/vendor/mbedtls/library/oid.c", "native/vendor/mbedtls/library/pem.c", "native/vendor/mbedtls/library/pk.c", "native/vendor/mbedtls/library/pk_ecc.c", "native/vendor/mbedtls/library/pk_wrap.c", "native/vendor/mbedtls/library/pkparse.c", "native/vendor/mbedtls/library/platform.c", "native/vendor/mbedtls/library/platform_util.c", "native/vendor/mbedtls/library/rsa.c", "native/vendor/mbedtls/library/rsa_alt_helpers.c", "native/vendor/mbedtls/library/sha1.c", "native/vendor/mbedtls/library/sha256.c", "native/vendor/mbedtls/library/sha512.c", "native/vendor/mbedtls/library/ssl_ciphersuites.c", "native/vendor/mbedtls/library/ssl_client.c", "native/vendor/mbedtls/library/ssl_msg.c", "native/vendor/mbedtls/library/ssl_tls.c", "native/vendor/mbedtls/library/ssl_tls12_client.c", "native/vendor/mbedtls/library/x509.c", "native/vendor/mbedtls/library/x509_crt.c"]
+native_cxx_sources = ["native/bridge.cpp"]
+native_include_dirs = ["native/include", "native/vendor/mbedtls/include", "native/vendor/mbedtls/library"]
+dependencies = []

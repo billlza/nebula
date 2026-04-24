@@ -1,0 +1,187 @@
+id = "TST-250-example-release-control-plane-workspace-config-catalog-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_config_catalog')
+state_dir = root / 'state'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+
+    prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    empty_list = run_ctl(binary, root, 'config', 'list', '--app', 'control-plane', '--channel', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(empty_list, 'empty config list')
+    empty_payload = json.loads(empty_list.stdout)
+    if empty_payload.get('app') != 'control-plane' or empty_payload.get('channel') != 'prod' or empty_payload.get('snapshot_revision_id') != 0 or empty_payload.get('entries') != []:
+        print_completed(empty_list)
+        raise SystemExit(f'unexpected empty config list payload: {empty_payload!r}')
+
+    put_result = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'true', '--description', 'feature gate', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(put_result, 'config put json')
+    put_payload = json.loads(put_result.stdout)
+    entry = put_payload.get('entry', {})
+    initial_revision_id = entry.get('revision_id')
+    if initial_revision_id != 1:
+        print_completed(put_result)
+        raise SystemExit(f'unexpected initial config revision id: {put_payload!r}')
+
+    database_file = state_dir / 'release-control-plane.db'
+    if not database_file.exists():
+        raise SystemExit(f'expected control-plane database file missing: {database_file}')
+
+    get_result = run_ctl(binary, root, 'config', 'get', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(get_result, 'config get json')
+    get_payload = json.loads(get_result.stdout)
+    entry = get_payload.get('entry', {})
+    if entry.get('app') != 'control-plane' or entry.get('channel') != 'prod' or entry.get('key') != 'feature.flag':
+        print_completed(get_result)
+        raise SystemExit(f'config get identity mismatch: {get_payload!r}')
+    if entry.get('description') != 'feature gate' or entry.get('value', {}).get('kind') != 'bool' or entry.get('value', {}).get('bool_value') is not True or entry.get('revision_id') != initial_revision_id:
+        print_completed(get_result)
+        raise SystemExit(f'config get payload mismatch: {get_payload!r}')
+
+    list_after_create = run_ctl(binary, root, 'config', 'list', '--app', 'control-plane', '--channel', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(list_after_create, 'config list after create')
+    list_after_create_payload = json.loads(list_after_create.stdout)
+    if list_after_create_payload.get('snapshot_revision_id') != initial_revision_id:
+        print_completed(list_after_create)
+        raise SystemExit(f'config list snapshot revision mismatch after create: {list_after_create_payload!r}')
+
+    snapshot_after_create = run_ctl(binary, root, 'config', 'snapshot', '--app', 'control-plane', '--channel', 'prod', '--config-revision', str(initial_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(snapshot_after_create, 'config snapshot after create')
+    snapshot_after_create_payload = json.loads(snapshot_after_create.stdout)
+    if snapshot_after_create_payload.get('snapshot_revision_id') != initial_revision_id or [entry.get('key') for entry in snapshot_after_create_payload.get('entries', [])] != ['feature.flag']:
+        print_completed(snapshot_after_create)
+        raise SystemExit(f'config snapshot payload mismatch after create: {snapshot_after_create_payload!r}')
+
+    missing_precondition = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'false', '--description', 'feature gate updated', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_precondition.returncode != 1 or 'status=428 error=config_precondition_required' not in missing_precondition.stdout:
+        print_completed(missing_precondition)
+        raise SystemExit(f'expected config put without --if-match to fail with precondition required, got rc={missing_precondition.returncode}')
+
+    stale_precondition = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'false', '--description', 'feature gate updated', '--if-match', '0', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if stale_precondition.returncode != 1 or 'status=412 error=config_revision_mismatch' not in stale_precondition.stdout:
+        print_completed(stale_precondition)
+        raise SystemExit(f'expected stale config put to fail with revision mismatch, got rc={stale_precondition.returncode}')
+
+    update_result = run_ctl(binary, root, 'config', 'put', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--bool', 'false', '--description', 'feature gate updated', '--if-match', str(initial_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(update_result, 'config update json')
+    update_payload = json.loads(update_result.stdout)
+    updated_entry = update_payload.get('entry', {})
+    updated_revision_id = updated_entry.get('revision_id')
+    if updated_revision_id != 2 or updated_entry.get('value', {}).get('bool_value') is not False:
+        print_completed(update_result)
+        raise SystemExit(f'config update payload mismatch: {update_payload!r}')
+
+    list_after_update = run_ctl(binary, root, 'config', 'list', '--app', 'control-plane', '--channel', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(list_after_update, 'config list after update')
+    list_after_update_payload = json.loads(list_after_update.stdout)
+    if list_after_update_payload.get('snapshot_revision_id') != updated_revision_id:
+        print_completed(list_after_update)
+        raise SystemExit(f'config list snapshot revision mismatch after update: {list_after_update_payload!r}')
+
+    snapshot_after_update = run_ctl(binary, root, 'config', 'snapshot', '--app', 'control-plane', '--channel', 'prod', '--config-revision', str(updated_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(snapshot_after_update, 'config snapshot after update')
+    snapshot_after_update_payload = json.loads(snapshot_after_update.stdout)
+    snapshot_entries = snapshot_after_update_payload.get('entries', [])
+    if snapshot_after_update_payload.get('snapshot_revision_id') != updated_revision_id or len(snapshot_entries) != 1 or snapshot_entries[0].get('value', {}).get('bool_value') is not False:
+        print_completed(snapshot_after_update)
+        raise SystemExit(f'config snapshot payload mismatch after update: {snapshot_after_update_payload!r}')
+
+    history_result = run_ctl(binary, root, 'config', 'history', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(history_result, 'config history json')
+    history_payload = json.loads(history_result.stdout)
+    revisions = history_payload.get('revisions', [])
+    if len(revisions) != 2 or [item.get('revision_id') for item in revisions] != [2, 1] or [item.get('action') for item in revisions] != ['put', 'put']:
+        print_completed(history_result)
+        raise SystemExit(f'config history payload mismatch after update: {history_payload!r}')
+
+    stale_delete = run_ctl(binary, root, 'config', 'delete', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--if-match', str(initial_revision_id), '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if stale_delete.returncode != 1 or 'status=412 error=config_revision_mismatch' not in stale_delete.stdout:
+        print_completed(stale_delete)
+        raise SystemExit(f'expected stale config delete to fail with revision mismatch, got rc={stale_delete.returncode}')
+
+    delete_result = run_ctl(binary, root, 'config', 'delete', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--if-match', str(updated_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(delete_result, 'config delete json')
+    delete_payload = json.loads(delete_result.stdout)
+    deleted_revision_id = delete_payload.get('deleted_revision_id')
+    if deleted_revision_id != 3:
+        print_completed(delete_result)
+        raise SystemExit(f'config delete payload drifted: {delete_payload!r}')
+
+    missing_get = run_ctl(binary, root, 'config', 'get', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_get.returncode != 1 or 'config entry not found:' not in missing_get.stdout:
+        print_completed(missing_get)
+        raise SystemExit(f'expected missing config get to fail with not-found message, got rc={missing_get.returncode}')
+
+    history_after_delete = run_ctl(binary, root, 'config', 'history', '--app', 'control-plane', '--channel', 'prod', '--key', 'feature.flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(history_after_delete, 'config history after delete')
+    history_after_delete_payload = json.loads(history_after_delete.stdout)
+    revisions = history_after_delete_payload.get('revisions', [])
+    if len(revisions) != 3 or [item.get('revision_id') for item in revisions] != [3, 2, 1] or [item.get('action') for item in revisions] != ['delete', 'put', 'put']:
+        print_completed(history_after_delete)
+        raise SystemExit(f'config history payload mismatch after delete: {history_after_delete_payload!r}')
+
+    list_after_delete = run_ctl(binary, root, 'config', 'list', '--app', 'control-plane', '--channel', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(list_after_delete, 'config list after delete')
+    list_after_delete_payload = json.loads(list_after_delete.stdout)
+    if list_after_delete_payload.get('snapshot_revision_id') != deleted_revision_id or list_after_delete_payload.get('entries') != []:
+        print_completed(list_after_delete)
+        raise SystemExit(f'config list snapshot revision mismatch after delete: {list_after_delete_payload!r}')
+
+    snapshot_after_delete = run_ctl(binary, root, 'config', 'snapshot', '--app', 'control-plane', '--channel', 'prod', '--config-revision', str(deleted_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(snapshot_after_delete, 'config snapshot after delete')
+    snapshot_after_delete_payload = json.loads(snapshot_after_delete.stdout)
+    if snapshot_after_delete_payload.get('snapshot_revision_id') != deleted_revision_id or snapshot_after_delete_payload.get('entries') != []:
+        print_completed(snapshot_after_delete)
+        raise SystemExit(f'config snapshot payload mismatch after delete: {snapshot_after_delete_payload!r}')
+
+    missing_snapshot = run_ctl(binary, root, 'config', 'snapshot', '--app', 'control-plane', '--channel', 'prod', '--config-revision', '999', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_snapshot.returncode != 1 or 'config snapshot not found:' not in missing_snapshot.stdout:
+        print_completed(missing_snapshot)
+        raise SystemExit(f'expected missing config snapshot to fail with not-found message, got rc={missing_snapshot.returncode}')
+
+    audit_result = run_ctl(binary, root, 'audit', 'list', '--app', 'control-plane', '--channel', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(audit_result, 'config audit list')
+    audit_payload = json.loads(audit_result.stdout)
+    events = audit_payload.get('events', [])
+    event_kinds = [item.get('event_kind') for item in events]
+    if event_kinds != ['config_upserted', 'config_upserted', 'config_deleted']:
+        print_completed(audit_result)
+        raise SystemExit(f'unexpected config audit events: {audit_payload!r}')
+
+    print('example-release-control-plane-workspace-config-catalog-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-config-catalog-ok"]

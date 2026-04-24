@@ -1,0 +1,22 @@
+id = "TST-206-hosted-registry-missing-python-diagnostic"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/registry_python_missing"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY new work/registry_python_missing >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "PATH='' PYTHON='' \"$NEBULA_BINARY\" publish work/registry_python_missing --registry-url http://127.0.0.1:1 > work/registry-python-missing.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'hosted registry --registry-url workflows require Python 3.11+ on PATH' work/registry-python-missing.out"
+expect_rc = 0

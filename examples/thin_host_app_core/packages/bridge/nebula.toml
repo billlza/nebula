@@ -1,0 +1,7 @@
+schema_version = 1
+
+[package]
+name = "thin-host-bridge"
+version = "0.1.0"
+entry = "src/host_bridge.nb"
+src_dir = "src"

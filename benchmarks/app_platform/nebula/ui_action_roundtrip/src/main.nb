@@ -1,0 +1,46 @@
+module main
+import std::json
+import std::result
+import ui::ui
+
+struct DashboardState {
+  title: String
+  ready: Bool
+}
+
+ui Dashboard(state: DashboardState) {
+  view Window(title = state.title) {
+    view Column(spacing = 12) {
+      view Text(text = state.title)
+      view Button(text = "Refresh", action = "targets.refresh")
+    }
+  }
+}
+
+fn button_action(tree: Json) -> Result<String, String> {
+  let window_children = get_value(tree, "children")?
+  let column = array_get(window_children, 0)?
+  let column_children = get_value(column, "children")?
+  let button = array_get(column_children, 1)?
+  let props = get_value(button, "props")?
+  return get_string(props, "action")
+}
+
+@bench
+fn bench_ui_action_roundtrip() -> Void {
+  let state = DashboardState("Local Ops", true)
+  match button_action(Dashboard(state)) {
+    Ok(action) => {
+      if action != "targets.refresh" {
+        expect_eq(1, 0)
+      }
+    }
+    Err(_) => {
+      expect_eq(1, 0)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-ui-action-roundtrip")
+}

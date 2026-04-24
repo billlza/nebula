@@ -1,0 +1,126 @@
+module postgres
+import std::json
+import std::result
+
+struct Connection {}
+
+struct Transaction {}
+
+struct ResultSet {}
+
+struct Row {}
+
+extern fn __nebula_postgres_probe_runtime() -> Result<Bool, String>
+extern fn __nebula_postgres_connect(dsn: String) -> Result<Connection, String>
+extern fn __nebula_postgres_connection_close(self: Connection) -> Result<Void, String>
+extern fn __nebula_postgres_connection_begin_transaction(self: Connection) -> Result<Transaction, String>
+extern fn __nebula_postgres_connection_execute(self: Connection, sql: String, params: Json) -> Result<Int, String>
+extern fn __nebula_postgres_connection_query(self: Connection, sql: String, params: Json) -> Result<ResultSet, String>
+extern fn __nebula_postgres_connection_run_migrations(self: Connection, migrations: Json) -> Result<Int, String>
+extern fn __nebula_postgres_connection_migration_status(self: Connection, migrations: Json) -> Result<Json, String>
+extern fn __nebula_postgres_transaction_execute(self: Transaction, sql: String, params: Json) -> Result<Int, String>
+extern fn __nebula_postgres_transaction_query(self: Transaction, sql: String, params: Json) -> Result<ResultSet, String>
+extern fn __nebula_postgres_transaction_commit(self: Transaction) -> Result<Void, String>
+extern fn __nebula_postgres_transaction_rollback(self: Transaction) -> Result<Void, String>
+extern fn __nebula_postgres_result_set_len(self: ResultSet) -> Result<Int, String>
+extern fn __nebula_postgres_result_set_row(self: ResultSet, index: Int) -> Result<Row, String>
+extern fn __nebula_postgres_row_get_string(self: Row, column: String) -> Result<String, String>
+extern fn __nebula_postgres_row_get_int(self: Row, column: String) -> Result<Int, String>
+extern fn __nebula_postgres_row_get_bool(self: Row, column: String) -> Result<Bool, String>
+extern fn __nebula_postgres_row_get_json(self: Row, column: String) -> Result<Json, String>
+
+fn no_params() -> Json {
+  return array_build(array_builder())
+}
+
+fn migration(version: Int, name: String, sql: String) -> Json {
+  return object3("version", int_value(version), "name", string_value(name), "sql", string_value(sql))
+}
+
+fn probe_runtime() -> Result<Bool, String> {
+  return __nebula_postgres_probe_runtime()
+}
+
+fn connect(dsn: String) -> Result<Connection, String> {
+  return __nebula_postgres_connect(dsn)
+}
+
+fn Connection_close(self: Connection) -> Result<Void, String> {
+  return __nebula_postgres_connection_close(self)
+}
+
+fn Connection_begin_transaction(self: Connection) -> Result<Transaction, String> {
+  return __nebula_postgres_connection_begin_transaction(self)
+}
+
+fn Connection_execute(self: Connection, sql: String, params: Json) -> Result<Int, String> {
+  return __nebula_postgres_connection_execute(self, sql, params)
+}
+
+fn Connection_execute0(self: Connection, sql: String) -> Result<Int, String> {
+  return self.execute(sql, no_params())
+}
+
+fn Connection_query(self: Connection, sql: String, params: Json) -> Result<ResultSet, String> {
+  return __nebula_postgres_connection_query(self, sql, params)
+}
+
+fn Connection_query0(self: Connection, sql: String) -> Result<ResultSet, String> {
+  return self.query(sql, no_params())
+}
+
+fn Connection_run_migrations(self: Connection, migrations: Json) -> Result<Int, String> {
+  return __nebula_postgres_connection_run_migrations(self, migrations)
+}
+
+fn Connection_migration_status(self: Connection, migrations: Json) -> Result<Json, String> {
+  return __nebula_postgres_connection_migration_status(self, migrations)
+}
+
+fn Transaction_execute(self: Transaction, sql: String, params: Json) -> Result<Int, String> {
+  return __nebula_postgres_transaction_execute(self, sql, params)
+}
+
+fn Transaction_execute0(self: Transaction, sql: String) -> Result<Int, String> {
+  return self.execute(sql, no_params())
+}
+
+fn Transaction_query(self: Transaction, sql: String, params: Json) -> Result<ResultSet, String> {
+  return __nebula_postgres_transaction_query(self, sql, params)
+}
+
+fn Transaction_query0(self: Transaction, sql: String) -> Result<ResultSet, String> {
+  return self.query(sql, no_params())
+}
+
+fn Transaction_commit(self: Transaction) -> Result<Void, String> {
+  return __nebula_postgres_transaction_commit(self)
+}
+
+fn Transaction_rollback(self: Transaction) -> Result<Void, String> {
+  return __nebula_postgres_transaction_rollback(self)
+}
+
+fn ResultSet_len(self: ResultSet) -> Result<Int, String> {
+  return __nebula_postgres_result_set_len(self)
+}
+
+fn ResultSet_row(self: ResultSet, index: Int) -> Result<Row, String> {
+  return __nebula_postgres_result_set_row(self, index)
+}
+
+fn Row_get_string(self: Row, column: String) -> Result<String, String> {
+  return __nebula_postgres_row_get_string(self, column)
+}
+
+fn Row_get_int(self: Row, column: String) -> Result<Int, String> {
+  return __nebula_postgres_row_get_int(self, column)
+}
+
+fn Row_get_bool(self: Row, column: String) -> Result<Bool, String> {
+  return __nebula_postgres_row_get_bool(self, column)
+}
+
+fn Row_get_json(self: Row, column: String) -> Result<Json, String> {
+  return __nebula_postgres_row_get_json(self, column)
+}

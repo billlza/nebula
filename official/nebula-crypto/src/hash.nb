@@ -1,0 +1,29 @@
+module hash
+import std::bytes
+import std::result
+
+extern fn __nebula_crypto_blake3(data: Bytes) -> Bytes
+extern fn __nebula_crypto_sha3_256(data: Bytes) -> Bytes
+extern fn __nebula_crypto_sha3_512(data: Bytes) -> Bytes
+extern fn __nebula_crypto_hex(data: Bytes) -> String
+extern fn __nebula_crypto_from_hex(text: String) -> Result<Bytes, String>
+
+fn blake3(data: Bytes) -> Bytes {
+  return __nebula_crypto_blake3(data)
+}
+
+fn sha3_256(data: Bytes) -> Bytes {
+  return __nebula_crypto_sha3_256(data)
+}
+
+fn sha3_512(data: Bytes) -> Bytes {
+  return __nebula_crypto_sha3_512(data)
+}
+
+fn hex(data: Bytes) -> String {
+  return __nebula_crypto_hex(data)
+}
+
+fn from_hex(text: String) -> Result<Bytes, String> {
+  return __nebula_crypto_from_hex(text)
+}

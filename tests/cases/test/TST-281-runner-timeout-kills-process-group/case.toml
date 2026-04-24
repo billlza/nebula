@@ -1,0 +1,42 @@
+id = "TST-281-runner-timeout-kills-process-group"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+timeout = 1
+expect_rc = 124
+run = '''
+python3 - <<'PY'
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+marker = Path('work/timeout-leak-marker.txt')
+marker.parent.mkdir(parents=True, exist_ok=True)
+if marker.exists():
+    marker.unlink()
+
+script = "import time; from pathlib import Path; time.sleep(3); Path('work/timeout-leak-marker.txt').write_text('leaked', encoding='utf-8')"
+subprocess.Popen([sys.executable, '-c', script])
+print('timeout-cleanup-child-started', flush=True)
+time.sleep(30)
+PY
+'''
+expect_stdout_contains = ["[nebula-test-timeout] command timed out after 1s"]
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import time
+from pathlib import Path
+
+marker = Path('work/timeout-leak-marker.txt')
+time.sleep(4)
+if marker.exists():
+    raise SystemExit('timeout child survived process-group termination')
+print('timeout-cleanup-ok')
+PY
+'''
+expect_stdout_contains = ["timeout-cleanup-ok"]

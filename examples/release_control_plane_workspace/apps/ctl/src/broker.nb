@@ -1,0 +1,506 @@
+module broker
+import args
+import client
+import core::broker_contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+struct BrokerCliArgs {
+  area: String
+  action: String
+  worker_id_text: String
+  topic_text: String
+  now_unix_ms_text: String
+  message_id_text: String
+  lease_id_text: String
+  status_text: String
+  result_message_text: String
+  next_attempt_unix_ms_text: String
+}
+
+struct BrokerParseProgress {
+  parsed: BrokerCliArgs
+  next_index: Int
+}
+
+fn default_broker_args() -> BrokerCliArgs {
+  return BrokerCliArgs("", "", "", "", "", "", "", "", "", "")
+}
+
+fn rebuild_broker_args(area: String,
+                       action: String,
+                       worker_id_text: String,
+                       topic_text: String,
+                       now_unix_ms_text: String,
+                       message_id_text: String,
+                       lease_id_text: String,
+                       status_text: String,
+                       result_message_text: String,
+                       next_attempt_unix_ms_text: String) -> BrokerCliArgs {
+  return BrokerCliArgs(area,
+                       action,
+                       worker_id_text,
+                       topic_text,
+                       now_unix_ms_text,
+                       message_id_text,
+                       lease_id_text,
+                       status_text,
+                       result_message_text,
+                       next_attempt_unix_ms_text)
+}
+
+fn broker_with_area(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(value, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_action(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, value, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_worker_id(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, value, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_topic(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, value,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_now_unix_ms(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             value, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_message_id(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, value, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_lease_id(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, value,
+                             parsed.status_text, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_status(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             value, parsed.result_message_text, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_message(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, value, parsed.next_attempt_unix_ms_text)
+}
+
+fn broker_with_next_attempt_unix_ms(parsed: BrokerCliArgs, value: String) -> BrokerCliArgs {
+  return rebuild_broker_args(parsed.area, parsed.action, parsed.worker_id_text, parsed.topic_text,
+                             parsed.now_unix_ms_text, parsed.message_id_text, parsed.lease_id_text,
+                             parsed.status_text, parsed.result_message_text, value)
+}
+
+fn broker_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn broker_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn broker_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn broker_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= broker_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return broker_arg_text(argv_json, index + 1)
+}
+
+fn broker_progress(parsed: BrokerCliArgs, next_index: Int) -> BrokerParseProgress {
+  return BrokerParseProgress(parsed, next_index)
+}
+
+fn parse_broker_flag(argv_json: Json,
+                     parsed: BrokerCliArgs,
+                     index: Int,
+                     arg: String) -> Result<BrokerParseProgress, String> {
+  let value = broker_next_value(argv_json, index, arg)?
+  if arg == "--worker-id" {
+    return Ok(broker_progress(broker_with_worker_id(parsed, value), index + 2))
+  }
+  if arg == "--topic" {
+    return Ok(broker_progress(broker_with_topic(parsed, value), index + 2))
+  }
+  if arg == "--now-unix-ms" {
+    return Ok(broker_progress(broker_with_now_unix_ms(parsed, value), index + 2))
+  }
+  if arg == "--message-id" {
+    return Ok(broker_progress(broker_with_message_id(parsed, value), index + 2))
+  }
+  if arg == "--lease-id" {
+    return Ok(broker_progress(broker_with_lease_id(parsed, value), index + 2))
+  }
+  if arg == "--status" {
+    return Ok(broker_progress(broker_with_status(parsed, value), index + 2))
+  }
+  if arg == "--message" {
+    return Ok(broker_progress(broker_with_message(parsed, value), index + 2))
+  }
+  if arg == "--next-attempt-unix-ms" {
+    return Ok(broker_progress(broker_with_next_attempt_unix_ms(parsed, value), index + 2))
+  }
+  return Err("unexpected broker argument")
+}
+
+fn parse_broker_positional(parsed: BrokerCliArgs, arg: String) -> Result<BrokerCliArgs, String> {
+  if parsed.area == "" {
+    return Ok(broker_with_area(parsed, arg))
+  }
+  if parsed.action == "" {
+    return Ok(broker_with_action(parsed, arg))
+  }
+  return Err("not a broker positional argument")
+}
+
+fn parse_broker_current_arg(argv_json: Json,
+                            state: BrokerCliArgs,
+                            index: Int,
+                            arg: String) -> Result<BrokerParseProgress, String> {
+  match parse_broker_positional(state, arg) {
+    Ok(next) => {
+      return Ok(broker_progress(next, index + 1))
+    }
+    Err(_) => {}
+  }
+  return parse_broker_flag(argv_json, state, index, arg)
+}
+
+fn parse_broker_cli_args(parsed: ParsedArgs) -> Result<BrokerCliArgs, String> {
+  let argv_json = broker_argv(parsed)
+  let count = broker_arg_count(argv_json)?
+  let index = 0
+  let state = default_broker_args()
+  while index < count {
+    let arg = broker_arg_text(argv_json, index)?
+    let progress = parse_broker_current_arg(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn reject_broker_flag(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed for this broker subcommand"))
+  }
+  return Ok(true)
+}
+
+fn require_broker_flag(value: String, label: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(label, " is required"))
+  }
+  return Ok(true)
+}
+
+fn reject_broker_claim_only_flags(args: BrokerCliArgs) -> Result<Bool, String> {
+  reject_broker_flag(args.message_id_text, "--message-id")?
+  reject_broker_flag(args.lease_id_text, "--lease-id")?
+  reject_broker_flag(args.status_text, "--status")?
+  reject_broker_flag(args.result_message_text, "--message")?
+  reject_broker_flag(args.next_attempt_unix_ms_text, "--next-attempt-unix-ms")?
+  return Ok(true)
+}
+
+fn reject_broker_complete_only_flags(args: BrokerCliArgs) -> Result<Bool, String> {
+  reject_broker_flag(args.topic_text, "--topic")?
+  reject_broker_flag(args.now_unix_ms_text, "--now-unix-ms")?
+  return Ok(true)
+}
+
+fn reject_broker_get_worker_flags(args: BrokerCliArgs) -> Result<Bool, String> {
+  reject_broker_flag(args.worker_id_text, "--worker-id")?
+  reject_broker_flag(args.topic_text, "--topic")?
+  reject_broker_flag(args.now_unix_ms_text, "--now-unix-ms")?
+  return Ok(true)
+}
+
+fn reject_broker_get_state_flags(args: BrokerCliArgs) -> Result<Bool, String> {
+  reject_broker_flag(args.lease_id_text, "--lease-id")?
+  reject_broker_flag(args.status_text, "--status")?
+  reject_broker_flag(args.result_message_text, "--message")?
+  reject_broker_flag(args.next_attempt_unix_ms_text, "--next-attempt-unix-ms")?
+  return Ok(true)
+}
+
+fn reject_broker_get_only_flags(args: BrokerCliArgs) -> Result<Bool, String> {
+  reject_broker_get_worker_flags(args)?
+  reject_broker_get_state_flags(args)?
+  return Ok(true)
+}
+
+fn finalize_broker_claim_args(args: BrokerCliArgs) -> Result<BrokerCliArgs, String> {
+  require_broker_flag(args.worker_id_text, "--worker-id")?
+  require_broker_flag(args.now_unix_ms_text, "--now-unix-ms")?
+  reject_broker_claim_only_flags(args)?
+  return Ok(args)
+}
+
+fn finalize_broker_complete_args(args: BrokerCliArgs) -> Result<BrokerCliArgs, String> {
+  require_broker_flag(args.worker_id_text, "--worker-id")?
+  require_broker_flag(args.message_id_text, "--message-id")?
+  require_broker_flag(args.lease_id_text, "--lease-id")?
+  require_broker_flag(args.status_text, "--status")?
+  reject_broker_complete_only_flags(args)?
+  return Ok(args)
+}
+
+fn finalize_broker_get_args(args: BrokerCliArgs) -> Result<BrokerCliArgs, String> {
+  require_broker_flag(args.message_id_text, "--message-id")?
+  reject_broker_get_only_flags(args)?
+  return Ok(args)
+}
+
+fn finalize_broker_args(args: BrokerCliArgs) -> Result<BrokerCliArgs, String> {
+  if args.area != "outbox" {
+    return Err("broker requires outbox")
+  }
+  if args.action == "claim" {
+    return finalize_broker_claim_args(args)
+  }
+  if args.action == "complete" {
+    return finalize_broker_complete_args(args)
+  }
+  if args.action == "get" {
+    return finalize_broker_get_args(args)
+  }
+  return Err("unknown broker outbox subcommand")
+}
+
+fn broker_non_negative_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value < 0 {
+    return Err(text_concat(label, " must be a non-negative integer"))
+  }
+  return Ok(value)
+}
+
+fn broker_positive_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value <= 0 {
+    return Err(text_concat(label, " must be a positive integer"))
+  }
+  return Ok(value)
+}
+
+fn broker_outbox_claim_path() -> String {
+  return "/v1/broker/outbox/claim"
+}
+
+fn broker_outbox_message_path(message_id: Int) -> String {
+  return text_concat("/v1/broker/outbox/", int_text(message_id))
+}
+
+fn broker_outbox_complete_path(message_id: Int) -> String {
+  return text_concat(broker_outbox_message_path(message_id), "/complete")
+}
+
+fn broker_claim_request(args: BrokerCliArgs) -> Result<BrokerOutboxClaimRequest, String> {
+  let request = BrokerOutboxClaimRequest(args.worker_id_text,
+                                         args.topic_text,
+                                         broker_non_negative_int(args.now_unix_ms_text, "--now-unix-ms")?)
+  validate_broker_outbox_claim_request(request)?
+  return Ok(request)
+}
+
+fn broker_complete_next_attempt(args: BrokerCliArgs) -> Result<Int, String> {
+  if args.next_attempt_unix_ms_text == "" {
+    return Ok(0)
+  }
+  return broker_non_negative_int(args.next_attempt_unix_ms_text, "--next-attempt-unix-ms")
+}
+
+fn broker_complete_request(args: BrokerCliArgs) -> Result<BrokerOutboxCompleteRequest, String> {
+  let request = BrokerOutboxCompleteRequest(args.worker_id_text,
+                                            args.lease_id_text,
+                                            args.status_text,
+                                            args.result_message_text,
+                                            broker_complete_next_attempt(args)?)
+  validate_broker_outbox_complete_request(request)?
+  return Ok(request)
+}
+
+fn parse_broker_claim_reply(reply: JsonResponse) -> Result<BrokerOutboxClaimEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = broker_outbox_claim_envelope_from_json(reply.payload)?
+  validate_broker_outbox_claim_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_broker_message_reply(reply: JsonResponse) -> Result<BrokerOutboxMessageEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = broker_outbox_message_envelope_from_json(reply.payload)?
+  validate_broker_outbox_message_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn print_broker_message(message: BrokerOutboxMessage) -> Void {
+  print(text_concat("message_id=", int_text(message.message_id)))
+  print(text_concat("topic=", message.topic))
+  print(text_concat("key=", message.key))
+  print(text_concat("status=", message.status))
+  print(text_concat("attempt=", int_text(message.attempt)))
+  print(text_concat("lease_id=", message.lease_id))
+  print(text_concat("worker_id=", message.worker_id))
+}
+
+fn emit_broker_claim(envelope: BrokerOutboxClaimEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("outcome=", envelope.outcome))
+  if envelope.outcome == "claimed" {
+    print_broker_message(envelope.message)
+  }
+  return 0
+}
+
+fn emit_broker_message(envelope: BrokerOutboxMessageEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_broker_message(envelope.message)
+  return 0
+}
+
+fn broker_usage_error(msg: String) -> Int {
+  print(msg)
+  return 2
+}
+
+fn broker_runtime_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn finalized_broker_args(parsed: ParsedArgs) -> Result<BrokerCliArgs, Int> {
+  match parse_broker_cli_args(parsed) {
+    Ok(value) => {
+      match finalize_broker_args(value) {
+        Ok(finalized) => {
+          return Ok(finalized)
+        }
+        Err(msg) => {
+          return Err(broker_usage_error(msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(broker_usage_error(msg))
+    }
+  }
+}
+
+async fn run_broker_claim(base_url: String,
+                          options: ClientOptions,
+                          args: BrokerCliArgs,
+                          json_mode: Bool) -> Int {
+  match broker_claim_request(args) {
+    Ok(request) => {
+      match await post_json(base_url, broker_outbox_claim_path(), request.as_json(), options) {
+        Ok(reply) => {
+          match parse_broker_claim_reply(reply) {
+            Ok(envelope) => {
+              return emit_broker_claim(envelope, json_mode)
+            }
+            Err(msg) => { return broker_runtime_error(msg) }
+          }
+        }
+        Err(msg) => { return broker_runtime_error(msg) }
+      }
+    }
+    Err(msg) => { return broker_usage_error(msg) }
+  }
+}
+
+async fn run_broker_complete(base_url: String,
+                             options: ClientOptions,
+                             args: BrokerCliArgs,
+                             json_mode: Bool) -> Int {
+  match broker_positive_int(args.message_id_text, "--message-id") {
+    Ok(message_id) => {
+      match broker_complete_request(args) {
+        Ok(request) => {
+          match await post_json(base_url, broker_outbox_complete_path(message_id), request.as_json(), options) {
+            Ok(reply) => {
+              match parse_broker_message_reply(reply) {
+                Ok(envelope) => { return emit_broker_message(envelope, json_mode) }
+                Err(msg) => { return broker_runtime_error(msg) }
+              }
+            }
+            Err(msg) => { return broker_runtime_error(msg) }
+          }
+        }
+        Err(msg) => { return broker_usage_error(msg) }
+      }
+    }
+    Err(msg) => { return broker_usage_error(msg) }
+  }
+}
+
+async fn run_broker_get(base_url: String,
+                        options: ClientOptions,
+                        args: BrokerCliArgs,
+                        json_mode: Bool) -> Int {
+  match broker_positive_int(args.message_id_text, "--message-id") {
+    Ok(message_id) => {
+      match await get_json(base_url, broker_outbox_message_path(message_id), options) {
+        Ok(reply) => {
+          match parse_broker_message_reply(reply) {
+            Ok(envelope) => { return emit_broker_message(envelope, json_mode) }
+            Err(msg) => { return broker_runtime_error(msg) }
+          }
+        }
+        Err(msg) => { return broker_runtime_error(msg) }
+      }
+    }
+    Err(msg) => { return broker_usage_error(msg) }
+  }
+}
+
+async fn run_broker_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match finalized_broker_args(parsed) {
+    Ok(args) => {
+      if args.action == "claim" {
+        return await run_broker_claim(base_url, options, args, parsed.json_mode)
+      }
+      if args.action == "complete" {
+        return await run_broker_complete(base_url, options, args, parsed.json_mode)
+      }
+      return await run_broker_get(base_url, options, args, parsed.json_mode)
+    }
+    Err(exit_code) => {
+      return exit_code
+    }
+  }
+}

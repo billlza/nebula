@@ -1,0 +1,81 @@
+module runner
+import args
+import client
+import core::contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn runner_apply_once_path() -> String {
+  return "/v1/runner/apply-once"
+}
+
+fn empty_object() -> Result<Json, String> {
+  return parse("{}")
+}
+
+fn print_runner_text(envelope: ApplyRunnerOnceEnvelope) -> Void {
+  print(text_concat("outcome=", envelope.outcome))
+  print(text_concat("run_id=", int_text(envelope.run.run_id)))
+  print(text_concat("status=", envelope.run.status))
+  print(text_concat("app=", envelope.run.app))
+  print(text_concat("channel=", envelope.run.channel))
+  print(text_concat("release_revision_id=", int_text(envelope.run.release_revision_id)))
+  print(text_concat("runner_id=", envelope.run.runner_id))
+  print(text_concat("result_message=", envelope.run.result_message))
+}
+
+fn emit_runner(envelope: ApplyRunnerOnceEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_runner_text(envelope)
+  return 0
+}
+
+fn parse_runner_reply(reply: JsonResponse) -> Result<ApplyRunnerOnceEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = apply_runner_once_envelope_from_json(reply.payload)?
+  validate_apply_runner_once_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn print_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+async fn run_runner_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand != "apply-once" {
+    print("unknown runner subcommand")
+    return 2
+  }
+  let payload = string_value("")
+  match empty_object() {
+    Ok(value) => {
+      payload = value
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+  match await post_json(base_url, runner_apply_once_path(), payload, options) {
+    Ok(reply) => {
+      match parse_runner_reply(reply) {
+        Ok(envelope) => {
+          return emit_runner(envelope, parsed.json_mode)
+        }
+        Err(msg) => {
+          return print_error_exit(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}

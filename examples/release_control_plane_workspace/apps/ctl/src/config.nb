@@ -1,0 +1,482 @@
+module config
+import args
+import client
+import core::config_contracts
+import core::config_validate
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn config_list_path(app_name: String, channel: String) -> String {
+  return text_concat3("/v1/configs/", app_name, text_concat("/", channel))
+}
+
+fn config_item_path(app_name: String, channel: String, key: String) -> String {
+  return text_concat3(config_list_path(app_name, channel), "/", key)
+}
+
+fn config_history_path(app_name: String, channel: String, key: String) -> String {
+  return text_concat(config_item_path(app_name, channel, key), "/history")
+}
+
+fn config_snapshot_path(app_name: String, channel: String, snapshot_revision_id: Int) -> String {
+  return text_concat3(config_list_path(app_name, channel),
+                      "/snapshots/",
+                      int_text(snapshot_revision_id))
+}
+
+fn config_target(app_name: String, channel: String, key: String) -> String {
+  return text_concat3(app_name, "/", text_concat(channel, text_concat("/", key)))
+}
+
+fn revision_etag(revision_id: Int) -> String {
+  return stringify(string_value(int_text(revision_id)))
+}
+
+fn validate_entry_etag(etag: String, entry: ConfigEntry) -> Result<Bool, String> {
+  let expected = revision_etag(entry.revision_id)
+  if etag == "" {
+    return Err("missing ETag on config entry response")
+  }
+  if etag != expected {
+    let detail = text_concat("ETag/body revision mismatch: expected ", expected)
+    return Err(text_concat(detail, text_concat(" got ", etag)))
+  }
+  return Ok(true)
+}
+
+fn config_value_text(value: ConfigValue) -> String {
+  if value.kind == "string" {
+    return value.string_value
+  }
+  if value.kind == "bool" {
+    return bool_text(value.bool_value)
+  }
+  if value.kind == "int" {
+    return int_text(value.int_value)
+  }
+  return "invalid"
+}
+
+fn print_config_entry_identity(entry: ConfigEntry) -> Void {
+  print(text_concat("app=", entry.app))
+  print(text_concat("channel=", entry.channel))
+  print(text_concat("key=", entry.key))
+  print(text_concat("description=", entry.description))
+}
+
+fn print_config_entry_state(entry: ConfigEntry) -> Void {
+  print(text_concat("kind=", entry.value.kind))
+  print(text_concat("value=", config_value_text(entry.value)))
+  print(text_concat("revision_id=", int_text(entry.revision_id)))
+  print(text_concat("updated_by=", entry.updated_by))
+  print(text_concat("updated_unix_ms=", int_text(entry.updated_unix_ms)))
+}
+
+fn print_config_entry_details(entry: ConfigEntry) -> Void {
+  print_config_entry_identity(entry)
+  print_config_entry_state(entry)
+}
+
+fn print_config_list_entry(entry_json: Json) -> Result<Bool, String> {
+  let entry = config_entry_from_json(entry_json)?
+  validate_config_entry(entry)?
+  let line = text_concat3("key=", entry.key, text_concat(" kind=", entry.value.kind))
+  line = text_concat(line, text_concat(" value=", config_value_text(entry.value)))
+  line = text_concat(line, text_concat(" revision_id=", int_text(entry.revision_id)))
+  line = text_concat(line, text_concat(" updated_by=", entry.updated_by))
+  line = text_concat(line, text_concat(" updated_unix_ms=", int_text(entry.updated_unix_ms)))
+  print(line)
+  return Ok(true)
+}
+
+fn print_config_list_text(envelope: ConfigListEnvelope) -> Result<Bool, String> {
+  print(text_concat("snapshot_revision_id=", int_text(envelope.snapshot_revision_id)))
+  let count = array_len(envelope.entries)?
+  if count == 0 {
+    print("entries=0")
+    return Ok(true)
+  }
+  let index = 0
+  while index < count {
+    let entry_json = array_get(envelope.entries, index)?
+    print_config_list_entry(entry_json)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn print_config_revision_entry(revision_json: Json) -> Result<Bool, String> {
+  let revision = config_revision_from_json(revision_json)?
+  validate_config_revision(revision)?
+  let line = text_concat3("revision_id=", int_text(revision.revision_id), text_concat(" action=", revision.action))
+  line = text_concat(line, text_concat(" updated_by=", revision.updated_by))
+  line = text_concat(line, text_concat(" value=", config_value_text(revision.value)))
+  line = text_concat(line, text_concat(" updated_unix_ms=", int_text(revision.updated_unix_ms)))
+  print(line)
+  return Ok(true)
+}
+
+fn print_config_history_text(envelope: ConfigHistoryEnvelope) -> Result<Bool, String> {
+  let count = array_len(envelope.revisions)?
+  if count == 0 {
+    print("revisions=0")
+    return Ok(true)
+  }
+  let index = 0
+  while index < count {
+    let revision_json = array_get(envelope.revisions, index)?
+    print_config_revision_entry(revision_json)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn emit_config_entry_get(envelope: ConfigEntryEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_config_entry_details(envelope.entry)
+  return 0
+}
+
+fn emit_config_entry_put(envelope: ConfigEntryEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  let line = text_concat("upserted=", config_target(envelope.entry.app, envelope.entry.channel, envelope.entry.key))
+  print(text_concat(line, text_concat(" revision_id=", int_text(envelope.entry.revision_id))))
+  return 0
+}
+
+fn emit_config_delete(envelope: ConfigDeleteEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  let line = text_concat("deleted=", config_target(envelope.app, envelope.channel, envelope.key))
+  print(text_concat(line, text_concat(" deleted_revision_id=", int_text(envelope.deleted_revision_id))))
+  return 0
+}
+
+fn emit_config_list(envelope: ConfigListEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match print_config_list_text(envelope) {
+    Ok(_) => {
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn emit_config_history(envelope: ConfigHistoryEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  match print_config_history_text(envelope) {
+    Ok(_) => {
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+fn parse_bool_flag(text: String) -> Result<Bool, String> {
+  if text == "true" {
+    return Ok(true)
+  }
+  if text == "false" {
+    return Ok(false)
+  }
+  return Err("--bool requires true or false")
+}
+
+fn parse_int_flag(text: String) -> Result<Int, String> {
+  let value = parse(text)?
+  return as_int(value)
+}
+
+fn config_value_from_args(parsed: ParsedArgs) -> Result<ConfigValue, String> {
+  if parsed.value_kind == "string" {
+    return Ok(config_string_value(parsed.value_text))
+  }
+  if parsed.value_kind == "bool" {
+    let value = parse_bool_flag(parsed.value_text)?
+    return Ok(config_bool_value(value))
+  }
+  if parsed.value_kind == "int" {
+    let value = parse_int_flag(parsed.value_text)?
+    return Ok(config_int_value(value))
+  }
+  return Err("config put requires one of --string/--bool/--int")
+}
+
+fn validate_config_scope_args(parsed: ParsedArgs) -> Result<Bool, String> {
+  validate_app_segment(parsed.app_name)?
+  validate_channel_segment(parsed.channel)?
+  return Ok(true)
+}
+
+fn validate_config_identity_args(parsed: ParsedArgs) -> Result<Bool, String> {
+  validate_config_scope_args(parsed)?
+  validate_config_key_segment(parsed.key)?
+  return Ok(true)
+}
+
+fn parse_config_entry_envelope_reply(reply: JsonResponse) -> Result<ConfigEntryEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = config_entry_envelope_from_json(reply.payload)?
+  validate_config_entry_envelope(envelope)?
+  validate_entry_etag(reply.etag, envelope.entry)?
+  return Ok(envelope)
+}
+
+fn parse_config_list_envelope_reply(reply: JsonResponse) -> Result<ConfigListEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = config_list_envelope_from_json(reply.payload)?
+  validate_config_list_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_config_delete_envelope_reply(reply: JsonResponse) -> Result<ConfigDeleteEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = config_delete_envelope_from_json(reply.payload)?
+  validate_config_delete_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn parse_config_history_envelope_reply(reply: JsonResponse) -> Result<ConfigHistoryEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = config_history_envelope_from_json(reply.payload)?
+  validate_config_history_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn build_config_put_request(parsed: ParsedArgs) -> Result<ConfigPutRequest, String> {
+  validate_config_identity_args(parsed)?
+  let value = config_value_from_args(parsed)?
+  let request = ConfigPutRequest(parsed.description, value)
+  validate_config_put_request(request)?
+  return Ok(request)
+}
+
+fn if_match_header_value(parsed: ParsedArgs) -> Result<String, String> {
+  if parsed.if_match_text == "" {
+    return Ok("")
+  }
+  let parsed_revision = parse(parsed.if_match_text)?
+  let revision_id = as_int(parsed_revision)?
+  if revision_id < 0 {
+    return Err("--if-match must be a non-negative integer")
+  }
+  return Ok(revision_etag(revision_id))
+}
+
+fn config_snapshot_revision_id(parsed: ParsedArgs) -> Result<Int, String> {
+  validate_config_scope_args(parsed)?
+  let parsed_revision = parse(parsed.config_revision_text)?
+  let snapshot_revision_id = as_int(parsed_revision)?
+  if snapshot_revision_id < 0 {
+    return Err("--config-revision must be a non-negative integer")
+  }
+  return Ok(snapshot_revision_id)
+}
+
+async fn fetch_config_list(base_url: String,
+                           options: ClientOptions,
+                           parsed: ParsedArgs) -> Result<ConfigListEnvelope, String> {
+  validate_config_scope_args(parsed)?
+  match await get_json(base_url, config_list_path(parsed.app_name, parsed.channel), options) {
+    Ok(reply) => {
+      return parse_config_list_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_config_snapshot(base_url: String,
+                               options: ClientOptions,
+                               parsed: ParsedArgs) -> Result<ConfigListEnvelope, String> {
+  let snapshot_revision_id = config_snapshot_revision_id(parsed)?
+  match await get_json(base_url,
+                       config_snapshot_path(parsed.app_name, parsed.channel, snapshot_revision_id),
+                       options) {
+    Ok(reply) => {
+      return parse_config_list_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_config_entry(base_url: String,
+                            options: ClientOptions,
+                            parsed: ParsedArgs) -> Result<ConfigEntryEnvelope, String> {
+  validate_config_identity_args(parsed)?
+  match await get_json(base_url, config_item_path(parsed.app_name, parsed.channel, parsed.key), options) {
+    Ok(reply) => {
+      return parse_config_entry_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_config_history(base_url: String,
+                              options: ClientOptions,
+                              parsed: ParsedArgs) -> Result<ConfigHistoryEnvelope, String> {
+  validate_config_identity_args(parsed)?
+  match await get_json(base_url, config_history_path(parsed.app_name, parsed.channel, parsed.key), options) {
+    Ok(reply) => {
+      return parse_config_history_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn put_config_entry(base_url: String,
+                          options: ClientOptions,
+                          parsed: ParsedArgs) -> Result<ConfigEntryEnvelope, String> {
+  let request = build_config_put_request(parsed)?
+  let if_match_value = if_match_header_value(parsed)?
+  match await put_json(base_url,
+                       config_item_path(parsed.app_name, parsed.channel, parsed.key),
+                       request.as_json(),
+                       options,
+                       if_match_value) {
+    Ok(reply) => {
+      return parse_config_entry_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn delete_config_entry_request(base_url: String,
+                                     options: ClientOptions,
+                                     parsed: ParsedArgs) -> Result<ConfigDeleteEnvelope, String> {
+  validate_config_identity_args(parsed)?
+  let if_match_value = if_match_header_value(parsed)?
+  match await delete_json(base_url,
+                          config_item_path(parsed.app_name, parsed.channel, parsed.key),
+                          options,
+                          if_match_value) {
+    Ok(reply) => {
+      return parse_config_delete_envelope_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn print_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn emit_config_list_result(result: Result<ConfigListEnvelope, String>, json_mode: Bool) -> Int {
+  match result {
+    Ok(envelope) => {
+      return emit_config_list(envelope, json_mode)
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}
+
+fn emit_config_entry_get_result(result: Result<ConfigEntryEnvelope, String>, json_mode: Bool) -> Int {
+  match result {
+    Ok(envelope) => {
+      return emit_config_entry_get(envelope, json_mode)
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}
+
+fn emit_config_entry_put_result(result: Result<ConfigEntryEnvelope, String>, json_mode: Bool) -> Int {
+  match result {
+    Ok(envelope) => {
+      return emit_config_entry_put(envelope, json_mode)
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}
+
+fn emit_config_delete_result(result: Result<ConfigDeleteEnvelope, String>, json_mode: Bool) -> Int {
+  match result {
+    Ok(envelope) => {
+      return emit_config_delete(envelope, json_mode)
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}
+
+fn emit_config_history_result(result: Result<ConfigHistoryEnvelope, String>, json_mode: Bool) -> Int {
+  match result {
+    Ok(envelope) => {
+      return emit_config_history(envelope, json_mode)
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}
+
+async fn run_config_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand == "list" {
+    return emit_config_list_result(await fetch_config_list(base_url, options, parsed), parsed.json_mode)
+  }
+  if parsed.subcommand == "snapshot" {
+    return emit_config_list_result(await fetch_config_snapshot(base_url, options, parsed), parsed.json_mode)
+  }
+  if parsed.subcommand == "get" {
+    return emit_config_entry_get_result(await fetch_config_entry(base_url, options, parsed), parsed.json_mode)
+  }
+  if parsed.subcommand == "history" {
+    return emit_config_history_result(await fetch_config_history(base_url, options, parsed), parsed.json_mode)
+  }
+  if parsed.subcommand == "put" {
+    return emit_config_entry_put_result(await put_config_entry(base_url, options, parsed), parsed.json_mode)
+  }
+  if parsed.subcommand == "delete" {
+    return emit_config_delete_result(await delete_config_entry_request(base_url, options, parsed), parsed.json_mode)
+  }
+  print("unknown config subcommand")
+  return 2
+}

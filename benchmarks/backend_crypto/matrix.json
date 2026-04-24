@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "name": "backend_crypto_competitive_matrix",
+  "goal": "narrow_hard_win",
+  "focus_libraries": [
+    "std::bytes",
+    "std::json",
+    "std::http",
+    "official/nebula-service",
+    "official/nebula-crypto",
+    "official/nebula-tls",
+    "official/nebula-pqc-protocols"
+  ],
+  "victory_thresholds": {
+    "target_workload_count": 5,
+    "required_win_count": 3,
+    "min_lead_vs_cpp_rust_pct": 10.0,
+    "max_allowed_trail_pct": -5.0,
+    "swift_scope": "macos_fair_only"
+  },
+  "workloads": [
+    {
+      "id": "http_route_roundtrip",
+      "category": "backend",
+      "description": "HTTP request parse plus route match plus response construction hot path",
+      "timed_scope": "in-memory request path matching and response construction; no raw socket I/O or HTTP byte parsing",
+      "setup_scope": "static path and literal request construction only",
+      "input_profile": "path=/hello/nebula; route=/hello/:name; expected body=nebula",
+      "correctness_contract": [
+        "status=200",
+        "content_type=text/plain; charset=utf-8",
+        "body=nebula"
+      ],
+      "nebula_project": "benchmarks/backend_crypto/nebula/http_route_roundtrip",
+      "references": {
+        "cpp": "benchmarks/backend_crypto/reference/cpp/http_route_roundtrip/main.cpp",
+        "rust": "benchmarks/backend_crypto/reference/rust/http_route_roundtrip/main.rs",
+        "swift": "benchmarks/backend_crypto/reference/swift/http_route_roundtrip/main.swift"
+      },
+      "reference_support": [],
+      "reference_languages": [
+        "cpp",
+        "rust",
+        "swift"
+      ]
+    },
+    {
+      "id": "json_payload_roundtrip",
+      "category": "backend",
+      "description": "JSON parse and stringify payload path",
+      "timed_scope": "fixed-shape object stringify plus parse plus field extraction",
+      "setup_scope": "no dependency fetch beyond normal project resolution; fixed literal payload shape",
+      "input_profile": "{\"user\":\"nebula\",\"count\":7,\"ok\":true,\"zone\":\"prod-cn\",\"kind\":\"api\"}",
+      "correctness_contract": [
+        "user=nebula",
+        "count=7",
+        "ok=true"
+      ],
+      "nebula_project": "benchmarks/backend_crypto/nebula/json_payload_roundtrip",
+      "references": {
+        "cpp": "benchmarks/backend_crypto/reference/cpp/json_payload_roundtrip/main.cpp",
+        "rust": "benchmarks/backend_crypto/reference/rust/json_payload_roundtrip/main.rs",
+        "swift": "benchmarks/backend_crypto/reference/swift/json_payload_roundtrip/main.swift"
+      },
+      "reference_support": [],
+      "reference_languages": [
+        "cpp",
+        "rust",
+        "swift"
+      ]
+    },
+    {
+      "id": "bytes_frame_hotpath",
+      "category": "backend",
+      "description": "Bytes framing, concatenation, and copy path",
+      "timed_scope": "header+payload+delimiter+payload concatenation and final length validation",
+      "setup_scope": "fixed 32-byte payload literal",
+      "input_profile": "header=hdr:, delimiter=|, payload_len=32 bytes",
+      "correctness_contract": [
+        "frame_not_empty",
+        "frame_len=69"
+      ],
+      "nebula_project": "benchmarks/backend_crypto/nebula/bytes_frame_hotpath",
+      "references": {
+        "cpp": "benchmarks/backend_crypto/reference/cpp/bytes_frame_hotpath/main.cpp",
+        "rust": "benchmarks/backend_crypto/reference/rust/bytes_frame_hotpath/main.rs",
+        "swift": "benchmarks/backend_crypto/reference/swift/bytes_frame_hotpath/main.swift"
+      },
+      "reference_support": [],
+      "reference_languages": [
+        "cpp",
+        "rust",
+        "swift"
+      ]
+    },
+    {
+      "id": "hash_throughput",
+      "category": "crypto",
+      "description": "BLAKE3 and SHA3 throughput path",
+      "timed_scope": "BLAKE3 digest plus SHA3-256 digest on a fixed payload",
+      "setup_scope": "fixed payload literal; no key generation",
+      "input_profile": "payload=nebula-backend-crypto-benchmark-0123456789abcdef0123456789abcdef",
+      "correctness_contract": [
+        "blake_len=32",
+        "sha3_256_len=32"
+      ],
+      "nebula_project": "benchmarks/backend_crypto/nebula/hash_throughput",
+      "references": {
+        "cpp": "benchmarks/backend_crypto/reference/cpp/hash_throughput/main.cpp",
+        "rust": "benchmarks/backend_crypto/reference/rust/hash_throughput/main.rs",
+        "swift": "benchmarks/backend_crypto/reference/swift/hash_throughput/main.swift"
+      },
+      "reference_support": [
+        "crypto_ref_support"
+      ],
+      "reference_languages": [
+        "cpp",
+        "rust",
+        "swift"
+      ]
+    },
+    {
+      "id": "aead_pqc_core",
+      "category": "crypto",
+      "description": "AEAD seal/open plus PQC encapsulate/decapsulate path",
+      "timed_scope": "ChaCha20-Poly1305 seal/open using fixed key+nonce+aad plus ML-KEM-768 keypair/encapsulate/decapsulate",
+      "setup_scope": "fixed AEAD material; PQC randomness remains part of the measured operation",
+      "input_profile": "aead_key=32 bytes ascii; nonce=12 bytes ascii; plaintext=nebula backend+crypto benchmark; PQC=ML-KEM-768",
+      "correctness_contract": [
+        "opened_plaintext_matches_input",
+        "shared_secret_roundtrip_matches"
+      ],
+      "nebula_project": "benchmarks/backend_crypto/nebula/aead_pqc_core",
+      "references": {
+        "cpp": "benchmarks/backend_crypto/reference/cpp/aead_pqc_core/main.cpp",
+        "rust": "benchmarks/backend_crypto/reference/rust/aead_pqc_core/main.rs",
+        "swift": "benchmarks/backend_crypto/reference/swift/aead_pqc_core/main.swift"
+      },
+      "reference_support": [
+        "crypto_ref_support"
+      ],
+      "reference_languages": [
+        "cpp",
+        "rust",
+        "swift"
+      ]
+    }
+  ]
+}

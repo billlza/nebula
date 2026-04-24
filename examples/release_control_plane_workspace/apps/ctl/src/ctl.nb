@@ -1,0 +1,262 @@
+module ctl
+import approval
+import auth
+import audit
+import args
+import broker
+import client
+import config
+import core::contracts
+import core::validate
+import deploy
+import errors
+import platform
+import releases
+import render
+import runner
+import schedule
+import shell
+import std::json
+import std::result
+import webhook
+import workflow
+import worker
+
+fn print_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn print_usage_error() -> Int {
+  usage()
+  return 2
+}
+
+fn parse_status_field(reply: JsonResponse) -> Result<String, String> {
+  return get_string(reply.payload, "status")
+}
+
+fn build_status_summary(base_url: String,
+                        health: JsonResponse,
+                        health_state: String,
+                        ready: JsonResponse,
+                        ready_state: String,
+                        info: ServiceInfo) -> StatusSummary {
+  let ok = health.status == 200 &&
+           health_state == "ok" &&
+           ready.status == 200 &&
+           ready_state == "ready"
+  return StatusSummary(base_url,
+                       health.status,
+                       health_state,
+                       ready.status,
+                       ready_state,
+                       ok,
+                       info)
+}
+
+fn build_status_summary_from_replies(base_url: String,
+                                     health: JsonResponse,
+                                     ready: JsonResponse,
+                                     info: ServiceInfo) -> Result<StatusSummary, String> {
+  match parse_status_field(health) {
+    Ok(health_state) => {
+      match parse_status_field(ready) {
+        Ok(ready_state) => {
+          return Ok(build_status_summary(base_url, health, health_state, ready, ready_state, info))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn parse_service_info_reply(reply: JsonResponse) -> Result<ServiceInfo, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let info = service_info_from_json(reply.payload)?
+  validate_service_info(info)?
+  return Ok(info)
+}
+
+async fn fetch_service_info(base_url: String, options: ClientOptions) -> Result<ServiceInfo, String> {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      match await get_json(normalized, "/v1/info", options) {
+        Ok(reply) => {
+          return parse_service_info_reply(reply)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_status_summary_normalized(normalized: String,
+                                         options: ClientOptions) -> Result<StatusSummary, String> {
+  match await get_json(normalized, "/healthz", options) {
+    Ok(health) => {
+      match await get_json(normalized, "/readyz", options) {
+        Ok(ready) => {
+          match await fetch_service_info(normalized, options) {
+            Ok(info) => {
+              return build_status_summary_from_replies(normalized, health, ready, info)
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn fetch_status_summary(base_url: String, options: ClientOptions) -> Result<StatusSummary, String> {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      return await fetch_status_summary_normalized(normalized, options)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn run_status(base_url: String, options: ClientOptions, json_mode: Bool) -> Int {
+  match await fetch_status_summary(base_url, options) {
+    Ok(summary) => {
+      emit_status(summary, json_mode)
+      return exit_code_from_status(summary)
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+async fn run_info(base_url: String, options: ClientOptions, json_mode: Bool) -> Int {
+  match await fetch_service_info(base_url, options) {
+    Ok(info) => {
+      emit_service_info(info, json_mode)
+      return 0
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+fn run_control_plane_validate(base_url: String, json_mode: Bool) -> Int {
+  match normalize_base_url(base_url) {
+    Ok(normalized) => {
+      emit_control_plane_validate(normalized, json_mode)
+      return 0
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+fn selected_command_base_url(parsed: ParsedArgs) -> String {
+  return selected_base_url(parsed.url_override)
+}
+
+fn selected_command_options(parsed: ParsedArgs) -> ClientOptions {
+  return client_options(selected_token(parsed.token_override),
+                        selected_ca_file(parsed.ca_file_override))
+}
+
+async fn run_nested_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.command == "approval" {
+    return await run_approval_command(base_url, options, parsed)
+  }
+  if parsed.command == "audit" {
+    return await run_audit_command(base_url, options, parsed)
+  }
+  if parsed.command == "auth" {
+    return await run_auth_command(base_url, options, parsed)
+  }
+  return await run_primary_nested_command(base_url, options, parsed)
+}
+
+async fn run_primary_nested_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.command == "release" {
+    return await run_release_command(base_url, options, parsed)
+  }
+  if parsed.command == "config" {
+    return await run_config_command(base_url, options, parsed)
+  }
+  if parsed.command == "workflow" {
+    return await run_workflow_command(base_url, options, parsed)
+  }
+  if parsed.command == "worker" {
+    return await run_worker_command(base_url, options, parsed)
+  }
+  if parsed.command == "schedule" {
+    return await run_schedule_command(base_url, options, parsed)
+  }
+  if parsed.command == "broker" {
+    return await run_broker_command(base_url, options, parsed)
+  }
+  if parsed.command == "webhook" {
+    return await run_webhook_command(base_url, options, parsed)
+  }
+  if parsed.command == "shell" {
+    return await run_shell_command(base_url, options, parsed)
+  }
+  if parsed.command == "deploy" {
+    return await run_deploy_command(base_url, options, parsed)
+  }
+  if parsed.command == "runner" {
+    return await run_runner_command(base_url, options, parsed)
+  }
+  if parsed.command == "platform" {
+    return await run_platform_command(base_url, options, parsed)
+  }
+  return print_usage_error()
+}
+
+async fn run_command(parsed: ParsedArgs) -> Int {
+  let base_url = selected_command_base_url(parsed)
+  let options = selected_command_options(parsed)
+  if parsed.command == "status" {
+    return await run_status(base_url, options, parsed.json_mode)
+  }
+  if parsed.command == "info" {
+    return await run_info(base_url, options, parsed.json_mode)
+  }
+  if parsed.command == "control-plane-validate" {
+    return run_control_plane_validate(base_url, parsed.json_mode)
+  }
+  return await run_nested_command(base_url, options, parsed)
+}
+
+async fn run() -> Int {
+  match parse_args() {
+    Ok(parsed) => {
+      return await run_command(parsed)
+    }
+    Err(_) => {
+      return print_usage_error()
+    }
+  }
+}

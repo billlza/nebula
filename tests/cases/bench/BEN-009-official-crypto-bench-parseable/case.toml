@@ -1,0 +1,20 @@
+id = "BEN-009-official-crypto-bench-parseable"
+suite = "bench"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/crypto_bench && mkdir -p work/crypto_bench && cp -R \"$NEBULA_REPO_ROOT/official/nebula-crypto\" work/crypto_bench/pkg && mkdir -p work/crypto_bench/app/src && cat > work/crypto_bench/app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"crypto-bench\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\n\n[dependencies]\ncrypto = { path = \"../pkg\" }\nEOF\ncat > work/crypto_bench/app/src/main.nb <<'EOF'\nmodule main\nimport crypto::hash\nimport std::bytes\n\n@bench\nfn bench_blake3() -> Void {\n  let digest = blake3(from_string(\"nebula-bench\"))\n  expect_eq(len(digest), 32)\n}\n\nfn main() -> Void {\n  print(\"crypto-bench\")\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/crypto_bench/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "bench"
+args = ["--dir", "work/crypto_bench/app"]
+expect_rc = 0
+expect_stdout_regex = ["NEBULA_BENCH warmup_iterations=.* measure_iterations=.* samples=.* p50_ms=.* p90_ms=.* p99_ms=.* mean_ms=.* stddev_ms=.* throughput_ops_s=.* clock=.* platform=.* perf_capability=.* perf_counters=.* perf_reason=.*"]

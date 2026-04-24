@@ -1,0 +1,397 @@
+module contracts
+import std::json
+import std::result
+
+struct JobStageSpec {
+  name: String
+  kind: String
+  task_kind: String
+  timeout_s: Int
+  max_attempts: Int
+  depends_on: Json
+}
+
+struct JobDefinition {
+  name: String
+  trigger_kind: String
+  event_kind: String
+  stages: Json
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct JobRun {
+  run_id: Int
+  name: String
+  definition_revision_id: Int
+  event_id: String
+  event_kind: String
+  status: String
+  current_stage_index: Int
+  requested_by: String
+  requested_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  payload: Json
+  stages: Json
+}
+
+struct JobStageRun {
+  run_id: Int
+  stage_index: Int
+  stage_name: String
+  kind: String
+  task_kind: String
+  status: String
+  attempt: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct WorkerClaimRequest {
+  worker_id: String
+  task_kind: String
+  now_unix_ms: Int
+}
+
+struct WorkerLease {
+  lease_id: String
+  run_id: Int
+  job_name: String
+  stage_index: Int
+  stage_name: String
+  task_kind: String
+  payload: Json
+  lease_expires_unix_ms: Int
+}
+
+struct WorkerLeaseFields {
+  lease_id: String
+  run_id: Int
+  job_name: String
+  stage_index: Int
+  stage_name: String
+  task_kind: String
+}
+
+struct WorkerLeaseMeta {
+  payload: Json
+  lease_expires_unix_ms: Int
+}
+
+struct WorkerClaimEnvelope {
+  outcome: String
+  lease: WorkerLease
+}
+
+struct WorkerCompleteRequest {
+  worker_id: String
+  lease_id: String
+  status: String
+  result_message: String
+  result_payload: Json
+  now_unix_ms: Int
+}
+
+struct ApprovalGateResolveRequest {
+  run_id: Int
+  stage_name: String
+  stage_index: Int
+  decision: String
+  actor: String
+  message: String
+  now_unix_ms: Int
+}
+
+struct OutboxMessage {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+  payload: Json
+  status: String
+  attempt: Int
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+struct OutboxClaimRequest {
+  worker_id: String
+  topic: String
+  now_unix_ms: Int
+}
+
+struct OutboxClaimEnvelope {
+  outcome: String
+  message: OutboxMessage
+}
+
+struct OutboxCompleteRequest {
+  worker_id: String
+  lease_id: String
+  status: String
+  result_message: String
+  next_attempt_unix_ms: Int
+  now_unix_ms: Int
+}
+
+fn empty_json_array() -> Json {
+  return array_build(array_builder())
+}
+
+fn idle_worker_lease() -> WorkerLease {
+  return WorkerLease("", 0, "", 0, "", "", null_value(), 0)
+}
+
+fn idle_outbox_message() -> OutboxMessage {
+  return OutboxMessage(0, "", "", "", null_value(), "pending", 0, 0, "", "", 0, 0, 0, 0, "")
+}
+
+fn JobStageSpec_as_json(self: JobStageSpec) -> Json {
+  return object6("name",
+                 string_value(self.name),
+                 "kind",
+                 string_value(self.kind),
+                 "task_kind",
+                 string_value(self.task_kind),
+                 "timeout_s",
+                 int_value(self.timeout_s),
+                 "max_attempts",
+                 int_value(self.max_attempts),
+                 "depends_on",
+                 self.depends_on)
+}
+
+fn JobDefinition_as_json(self: JobDefinition) -> Json {
+  return object7("name",
+                 string_value(self.name),
+                 "trigger_kind",
+                 string_value(self.trigger_kind),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "stages",
+                 self.stages,
+                 "revision_id",
+                 int_value(self.revision_id),
+                 "updated_by",
+                 string_value(self.updated_by),
+                 "updated_unix_ms",
+                 int_value(self.updated_unix_ms))
+}
+
+fn JobStageRun_as_json(self: JobStageRun) -> Json {
+  return object9("run_id",
+                 int_value(self.run_id),
+                 "stage_index",
+                 int_value(self.stage_index),
+                 "stage_name",
+                 string_value(self.stage_name),
+                 "kind",
+                 string_value(self.kind),
+                 "task_kind",
+                 string_value(self.task_kind),
+                 "status",
+                 string_value(self.status),
+                 "attempt",
+                 int_value(self.attempt),
+                 "lease_id",
+                 string_value(self.lease_id),
+                 "meta",
+                 object6("worker_id",
+                         string_value(self.worker_id),
+                         "lease_expires_unix_ms",
+                         int_value(self.lease_expires_unix_ms),
+                         "started_unix_ms",
+                         int_value(self.started_unix_ms),
+                         "finished_unix_ms",
+                         int_value(self.finished_unix_ms),
+                         "result_message",
+                         string_value(self.result_message),
+                         "result_payload",
+                         self.result_payload))
+}
+
+fn JobRun_as_json(self: JobRun) -> Json {
+  return object8("run_id",
+                 int_value(self.run_id),
+                 "name",
+                 string_value(self.name),
+                 "definition_revision_id",
+                 int_value(self.definition_revision_id),
+                 "event_id",
+                 string_value(self.event_id),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "status",
+                 string_value(self.status),
+                 "current_stage_index",
+                 int_value(self.current_stage_index),
+                 "meta",
+                 object5("requested_by",
+                         string_value(self.requested_by),
+                         "requested_unix_ms",
+                         int_value(self.requested_unix_ms),
+                         "finished_unix_ms",
+                         int_value(self.finished_unix_ms),
+                         "result_message",
+                         string_value(self.result_message),
+                         "stages",
+                         self.stages))
+}
+
+fn WorkerLease_as_json(self: WorkerLease) -> Json {
+  return object8("lease_id",
+                 string_value(self.lease_id),
+                 "run_id",
+                 int_value(self.run_id),
+                 "job_name",
+                 string_value(self.job_name),
+                 "stage_index",
+                 int_value(self.stage_index),
+                 "stage_name",
+                 string_value(self.stage_name),
+                 "task_kind",
+                 string_value(self.task_kind),
+                 "payload",
+                 self.payload,
+                 "lease_expires_unix_ms",
+                 int_value(self.lease_expires_unix_ms))
+}
+
+fn WorkerClaimEnvelope_as_json(self: WorkerClaimEnvelope) -> Json {
+  return object2("outcome", string_value(self.outcome), "lease", self.lease.as_json())
+}
+
+fn ApprovalGateResolveRequest_as_json(self: ApprovalGateResolveRequest) -> Json {
+  return object7("run_id",
+                 int_value(self.run_id),
+                 "stage_name",
+                 string_value(self.stage_name),
+                 "stage_index",
+                 int_value(self.stage_index),
+                 "decision",
+                 string_value(self.decision),
+                 "actor",
+                 string_value(self.actor),
+                 "message",
+                 string_value(self.message),
+                 "now_unix_ms",
+                 int_value(self.now_unix_ms))
+}
+
+fn OutboxMessage_as_json(self: OutboxMessage) -> Json {
+  return object8("message_id",
+                 int_value(self.message_id),
+                 "topic",
+                 string_value(self.topic),
+                 "key",
+                 string_value(self.key),
+                 "dedupe_key",
+                 string_value(self.dedupe_key),
+                 "payload",
+                 self.payload,
+                 "status",
+                 string_value(self.status),
+                 "attempt",
+                 int_value(self.attempt),
+                 "meta",
+                 object8("max_attempts",
+                         int_value(self.max_attempts),
+                         "lease_id",
+                         string_value(self.lease_id),
+                         "worker_id",
+                         string_value(self.worker_id),
+                         "lease_expires_unix_ms",
+                         int_value(self.lease_expires_unix_ms),
+                         "next_attempt_unix_ms",
+                         int_value(self.next_attempt_unix_ms),
+                         "created_unix_ms",
+                         int_value(self.created_unix_ms),
+                         "updated_unix_ms",
+                         int_value(self.updated_unix_ms),
+                         "result_message",
+                         string_value(self.result_message)))
+}
+
+fn OutboxClaimEnvelope_as_json(self: OutboxClaimEnvelope) -> Json {
+  return object2("outcome", string_value(self.outcome), "message", self.message.as_json())
+}
+
+fn job_stage_spec_from_json(value: Json) -> Result<JobStageSpec, String> {
+  return Ok(JobStageSpec(get_string(value, "name")?,
+                         job_stage_kind_from_json(value)?,
+                         get_string(value, "task_kind")?,
+                         get_int(value, "timeout_s")?,
+                         get_int(value, "max_attempts")?,
+                         get_value(value, "depends_on")?))
+}
+
+fn job_stage_kind_from_json(value: Json) -> Result<String, String> {
+  match get_value(value, "kind") {
+    Ok(kind) => {
+      return as_string(kind)
+    }
+    Err(_) => {
+      return Ok("leased_task")
+    }
+  }
+}
+
+fn job_definition_from_json(value: Json) -> Result<JobDefinition, String> {
+  return Ok(JobDefinition(get_string(value, "name")?,
+                          get_string(value, "trigger_kind")?,
+                          get_string(value, "event_kind")?,
+                          get_value(value, "stages")?,
+                          get_int(value, "revision_id")?,
+                          get_string(value, "updated_by")?,
+                          get_int(value, "updated_unix_ms")?))
+}
+
+fn worker_lease_from_json(value: Json) -> Result<WorkerLease, String> {
+  let fields = worker_lease_fields_from_json(value)?
+  let meta = worker_lease_meta_from_json(value)?
+  return Ok(WorkerLease(fields.lease_id,
+                        fields.run_id,
+                        fields.job_name,
+                        fields.stage_index,
+                        fields.stage_name,
+                        fields.task_kind,
+                        meta.payload,
+                        meta.lease_expires_unix_ms))
+}
+
+fn worker_lease_fields_from_json(value: Json) -> Result<WorkerLeaseFields, String> {
+  return Ok(WorkerLeaseFields(get_string(value, "lease_id")?,
+                              get_int(value, "run_id")?,
+                              get_string(value, "job_name")?,
+                              get_int(value, "stage_index")?,
+                              get_string(value, "stage_name")?,
+                              get_string(value, "task_kind")?))
+}
+
+fn worker_lease_meta_from_json(value: Json) -> Result<WorkerLeaseMeta, String> {
+  return Ok(WorkerLeaseMeta(get_value(value, "payload")?,
+                            get_int(value, "lease_expires_unix_ms")?))
+}
+
+fn approval_gate_resolve_request_from_json(value: Json) -> Result<ApprovalGateResolveRequest, String> {
+  return Ok(ApprovalGateResolveRequest(get_int(value, "run_id")?,
+                                       get_string(value, "stage_name")?,
+                                       get_int(value, "stage_index")?,
+                                       get_string(value, "decision")?,
+                                       get_string(value, "actor")?,
+                                       get_string(value, "message")?,
+                                       get_int(value, "now_unix_ms")?))
+}

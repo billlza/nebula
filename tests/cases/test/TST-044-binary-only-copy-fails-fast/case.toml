@@ -1,0 +1,23 @@
+id = "TST-044-binary-only-copy-fails-fast"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/binonly work/binonly_app && mkdir -p work/binonly"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "cp \"$NEBULA_BINARY\" work/binonly/nebula && chmod +x work/binonly/nebula && work/binonly/nebula new work/binonly_app >/dev/null"
+expect_rc = 0
+must_exist = ["work/binonly_app/nebula.toml", "work/binonly_app/src/main.nb"]
+
+[[steps]]
+kind = "shell"
+run = "work/binonly/nebula run work/binonly_app --run-gate none --diag-format json > work/binonly.json 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-CLI-RUNTIME-MISSING\"' work/binonly.json && grep -F 'runtime headers were not found next to the executable' work/binonly.json"
+expect_rc = 0

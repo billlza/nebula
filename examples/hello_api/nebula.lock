@@ -1,0 +1,53 @@
+schema_version = 2
+root_package = "hello-api"
+root_manifest_hash = "6fe3e681f1d4c607"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "hello-api"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "6fe3e681f1d4c607"
+source_fingerprint = "bbcb8de3e892d829"
+integrity_fingerprint = "f75d9c848e40372b"
+is_root = 1
+dependencies = ["service=nebula-service"]
+
+[[package]]
+name = "nebula-observe"
+version = "0.1.0"
+root = "../../official/nebula-observe"
+manifest = "../../official/nebula-observe/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-observe"
+resolved_rev = ""
+manifest_hash = "9a8a10871f57579b"
+source_fingerprint = "a7a1b95ab781c16e"
+integrity_fingerprint = "6f73f1e37fd1e887"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "nebula-service"
+version = "0.1.0"
+root = "../../official/nebula-service"
+manifest = "../../official/nebula-service/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-service"
+resolved_rev = ""
+manifest_hash = "bd867fc565eaa5ba"
+source_fingerprint = "f9a5bd419fb957a4"
+integrity_fingerprint = "d8dc6eda43531d21"
+is_root = 0
+dependencies = ["observe=nebula-observe"]

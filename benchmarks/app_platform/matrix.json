@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "name": "app_platform_convergence_matrix",
+  "goal": "backend_first_internal_app_convergence",
+  "comparison_layers": [
+    "nebula_owned",
+    "host_owned",
+    "ops_owned"
+  ],
+  "reference_stacks": {
+    "cpp": {
+      "toolchain": "clang/cmake",
+      "backend": "asio/beast",
+      "data": "sqlite",
+      "ui": "Qt"
+    },
+    "rust": {
+      "toolchain": "cargo",
+      "backend": "tokio/axum",
+      "data": "rusqlite/sqlx",
+      "ui": "tauri/egui"
+    },
+    "swift": {
+      "toolchain": "SwiftPM",
+      "backend": "SwiftNIO/Vapor",
+      "data": "SQLite wrapper",
+      "ui": "SwiftUI/AppKit/UIKit"
+    }
+  },
+  "measurement_defaults": {
+    "split_by_layer": true,
+    "treat_host_renderer_as_nebula_runtime": false,
+    "public_claim_blocked_until": [
+      "internal_app_standard",
+      "thin_host_contract"
+    ]
+  },
+  "workloads": [
+    {
+      "id": "cli_cold_start",
+      "category": "cli",
+      "description": "Cold start for a representative operator/dev CLI",
+      "timed_scope": "binary startup, argument parse, config validation, output, and clean exit",
+      "correctness_contract": [
+        "exit_code=0",
+        "stable_base_url_output"
+      ],
+      "nebula_paths": [
+        "examples/release_control_plane_workspace/apps/ctl",
+        "examples/release_control_plane_workspace/packages/core"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/cli_cold_start",
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "service_json_db_crud",
+      "category": "backend",
+      "description": "Long-lived service plus JSON plus embedded-data CRUD path",
+      "timed_scope": "service request handling, JSON contract parse/render, SQLite-backed CRUD, and response round-trip",
+      "correctness_contract": [
+        "create_get_list_delete_roundtrip",
+        "stable_revision_contract"
+      ],
+      "nebula_paths": [
+        "examples/cli_service_workspace",
+        "official/nebula-service",
+        "official/nebula-db-sqlite"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/service_json_db_crud",
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "thin_host_bridge_roundtrip",
+      "category": "thin_host",
+      "description": "Host<->core command/query/event bridge round-trip path",
+      "timed_scope": "host event submission, Nebula state transition, view-model/snapshot response, and host consumption",
+      "correctness_contract": [
+        "event_sequence_applied",
+        "stable_snapshot_contract"
+      ],
+      "nebula_paths": [
+        "examples/thin_host_app_core",
+        "examples/thin_host_bridge_replay"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/thin_host_bridge_roundtrip",
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "state_sync_latency",
+      "category": "thin_host",
+      "description": "State transition plus propagated snapshot/update latency",
+      "timed_scope": "Nebula-owned state transition and compact snapshot/update production only",
+      "correctness_contract": [
+        "deterministic_state_progression"
+      ],
+      "nebula_paths": [
+        "examples/thin_host_app_core",
+        "examples/thin_host_bridge_replay"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/state_sync_latency",
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "resident_memory",
+      "category": "ops",
+      "description": "Steady-state memory footprint for a representative long-lived internal app service",
+      "timed_scope": "idle healthy service after startup preflight and state-store initialization",
+      "correctness_contract": [
+        "healthy_service",
+        "steady_state_sample"
+      ],
+      "nebula_paths": [
+        "examples/release_control_plane_workspace/apps/service"
+      ],
+      "nebula_project": "examples/release_control_plane_workspace/apps/service",
+      "nebula_runner": "resident_memory",
+      "comparison_layer": "ops_owned"
+    },
+    {
+      "id": "nebula_ui_startup",
+      "category": "ui",
+      "description": "Nebula UI tree construction startup path",
+      "timed_scope": "construct representative state, lower ui item to JSON IR, and validate root component",
+      "correctness_contract": [
+        "schema=nebula-ui.tree.v1",
+        "root_component=Window"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/nebula_ui_startup",
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_action_roundtrip",
+      "category": "ui",
+      "description": "Nebula UI action identifier extraction and validation path",
+      "timed_scope": "build UI tree, extract the first button action from JSON IR, and validate action id",
+      "correctness_contract": [
+        "action=targets.refresh"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_action_roundtrip",
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_snapshot_render",
+      "category": "ui",
+      "description": "Nebula UI snapshot stringify/render handoff path",
+      "timed_scope": "build UI tree, stringify JSON IR, and validate stable schema text",
+      "correctness_contract": [
+        "snapshot_contains_schema",
+        "snapshot_contains_button"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_snapshot_render",
+      "comparison_layer": "nebula_owned"
+    }
+  ]
+}

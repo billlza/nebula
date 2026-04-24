@@ -1,0 +1,18 @@
+[Unit]
+Description=Nebula Release Control Plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/release-control-plane
+EnvironmentFile=/etc/nebula/release-control-plane.env
+ExecStart=/srv/release-control-plane/.service-out/main.out
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+StandardOutput=null
+StandardError=append:/var/log/nebula/release-control-plane.observe.ndjson
+
+[Install]
+WantedBy=multi-user.target

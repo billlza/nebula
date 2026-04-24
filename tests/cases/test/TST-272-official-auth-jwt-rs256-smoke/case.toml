@@ -1,0 +1,131 @@
+id = "TST-272-official-auth-jwt-rs256-smoke"
+suite = "test"
+description = "official nebula-auth verifies RS256 JWTs and rejects invalid resource-server claims"
+
+[[steps]]
+kind = "shell"
+run = """
+rm -rf work/official-auth-rs256
+mkdir -p work/official-auth-rs256/app/src
+cp -R "$NEBULA_REPO_ROOT/official/nebula-auth" work/official-auth-rs256/pkg
+cat > work/official-auth-rs256/app/nebula.toml <<'EOF'
+schema_version = 1
+
+[package]
+name = "official-auth-rs256"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+auth = { path = "../pkg" }
+EOF
+cat > work/official-auth-rs256/jwks.json <<'EOF'
+{"keys":[{"kty":"RSA","kid":"test-key","alg":"RS256","n":"u1XzrSC7xLK4FJVZNaJ578TOvBS0g6Gv2P66IUCnzWx6kAi0W1tkI5skloF75EjLCPvi-CT4AP07PTee62TEiLQNC9MkVATTT_mbCkhMWqeUr4S6Bj3N19yhL2Fmymfg7RU8kTA7R2l9XhPdUGNqXfpLTD7aXXtSrlgvw-6WjHa1vAR60QJb31PAjmQKwo8EoJtkrY-DsEgKhhFqKmfhTp_H119vB5UfygkvcypsLdOXK89Iz7t2E1RmqDLe1-ngiOnYbIIJueB33VKnJCITo5RZb0Qj6-zbu7iBcz9lgztezT-kN-orcmkoYTrSkCBzszDO7_lKvLLk2pQadMBmpw","e":"AQAB"}]}
+EOF
+cat > work/official-auth-rs256/unknown-kid-jwks.json <<'EOF'
+{"keys":[{"kty":"RSA","kid":"other-key","alg":"RS256","n":"u1XzrSC7xLK4FJVZNaJ578TOvBS0g6Gv2P66IUCnzWx6kAi0W1tkI5skloF75EjLCPvi-CT4AP07PTee62TEiLQNC9MkVATTT_mbCkhMWqeUr4S6Bj3N19yhL2Fmymfg7RU8kTA7R2l9XhPdUGNqXfpLTD7aXXtSrlgvw-6WjHa1vAR60QJb31PAjmQKwo8EoJtkrY-DsEgKhhFqKmfhTp_H119vB5UfygkvcypsLdOXK89Iz7t2E1RmqDLe1-ngiOnYbIIJueB33VKnJCITo5RZb0Qj6-zbu7iBcz9lgztezT-kN-orcmkoYTrSkCBzszDO7_lKvLLk2pQadMBmpw","e":"AQAB"}]}
+EOF
+cat > work/official-auth-rs256/reader.jwt <<'EOF'
+eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.ODsFGAvLT3lIkDuhA28kGBUg-dCvVNiVAxPUg_hB5QEiwr8C58qnZwJGYNYmuM2TBXYOXLyDkPg8wwXdNng3Hzv1dAFWrsPRDl6oFiY0TE7WnwV3B0Ik-wgTdu5u8VryRWJjMArJOdC3Uiqb7dTukNhcWKL3GMIL3qwgjulOUa5KUeJfdcNBYwyNrnJY14rNpaeGBSRB47Te_LAA-HtPvkq4P4Ohd565IaeWzT0hgc4PozqH7YEgxb4CEsIefWunpGIBgRzFEkYGWev17Oa8SfrKRFvPTQNbT2A6GnHhZGH8eMDTLf7Od1gbjQNIcrhJ6oUz1UjNApGSyS-AwHAWvw
+EOF
+cat > work/official-auth-rs256/wrong-aud.jwt <<'EOF'
+eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoid3JvbmciLCJleHAiOjQxMDI0NDQ4MDAsIm5iZiI6MTAwMCwic3ViIjoicmVhZGVyIiwicm9sZXMiOlsicmVhZGVyIl19.dbu3wuknwVLpCMartZQQSvSZ-axG7HPewUURcS4Hp2F-B99s0sofhAovm39sR2gUrLWJu8ZoVhAQPKm8ITeyeG26F3-iiuiCQDi0KVAMYDvHqCv3M10IZCPQoOo1iUU6jyRrDLEMp1FG6i4v0-OVJn0VAUaMOFknXJouV8_kj66XOmggst4PYglRr0OgOpRWbRCP0D2A6HSP5Nb4Dkw3DhZMiT3SkoDKZphrKvKrf9EBthTAsMDVkypCWZ4PkR6EfdoyswXHtJ8MddzCcG__zrKN5nOVgRhrq-RX36tiC-Ba0mCLCD4d1gEavpzfobDnymTfdwcUDPJPyMQRNE-_kg
+EOF
+cat > work/official-auth-rs256/expired.jwt <<'EOF'
+eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjoxMDAxLCJuYmYiOjEwMDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.urGH2bL5_ACEfYvI42sMrL_i37Aon3OhpJl5R8D5CXt1EwpB8XZCnE2t9IWyqjNthEf-ltfelzSkH4dxxMtuanpAQT5Y-cBlgGgKNtCpVkyf2JlQolp0_mUJ8OTiVMidNeXjnR56hY5UqrYL0g_hIOE-e9AzOrauAY51oEAzCRfxLxGX7F2Vt3rOxmlSz0ty4iUF1MxTO6Ow7qWC7UqflYpAWNTWZmbyPkf6gM4_eBl_1CphsLrgJpJbemnXTLeV3bPw9KwWtXB_E9htkM__XoeTR4xTlpuYdnP_HaxkSaVZSlidA02WM21gezLByxf2NTzy3UfhXfrxFm7rdkFM5Q
+EOF
+cat > work/official-auth-rs256/future.jwt <<'EOF'
+eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjQxMDI0NDQ3MDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.R1C8x4AokKcvxr1h8X4aDApfNpfxpy8LgiJr22vGnnltDNCQwR5h32Jsk-Izxyc37B3sLDB22pHmrdyk7KZSICQqooIX7K45pZCRuO5ScR7ba1WTde4k_ypSW95MhBuGphD0VzKtvAV4deN7wwsGw0fc6po48YBcSorimjCx5xjoexo7zggBAiWCOfLhvfQNueOfh_8iLNnpSOomnQWWb8M1vErQN7K9u67a4ImU4n4siAWFC8ayYEvK_TLu-eA_ICjiubOYNxcWIgTaiS8viw0K_oqX4zgrOLpw_H_9nBw5CtNHZ-ftCeMXKeVisNex42h8Z2wpmDHQcGXtMdq8ag
+EOF
+cat > work/official-auth-rs256/tampered.jwt <<'EOF'
+eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.ODsFGAvLT3lIkDuhA28kGBUg-dCvVNiVAxPUg_hB5QEiwr8C58qnZwJGYNYmuM2TBXYOXLyDkPg8wwXdNng3Hzv1dAFWrsPRDl6oFiY0TE7WnwV3B0Ik-wgTdu5u8VryRWJjMArJOdC3Uiqb7dTukNhcWKL3GMIL3qwgjulOUa5KUeJfdcNBYwyNrnJY14rNpaeGBSRB47Te_LAA-HtPvkq4P4Ohd565IaeWzT0hgc4PozqH7YEgxb4CEsIefWunpGIBgRzFEkYGWev17Oa8SfrKRFvPTQNbT2A6GnHhZGH8eMDTLf7Od1gbjQNIcrhJ6oUz1UjNApGSyS-AwHAWvA
+EOF
+cat > work/official-auth-rs256/none.jwt <<'EOF'
+eyJhbGciOiJub25lIiwia2lkIjoidGVzdC1rZXkiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.x
+EOF
+cat > work/official-auth-rs256/app/src/main.nb <<'EOF'
+module main
+import auth::jwt
+import std::fs
+import std::json
+import std::result
+
+fn config_from_file(path: String, now_unix_s: Int) -> Result<JwtValidationConfig, String> {
+  return Ok(JwtValidationConfig("https://issuer.example",
+                                "release-control-plane",
+                                read_string(path)?,
+                                now_unix_s))
+}
+
+fn wrong_issuer_config_from_file(path: String) -> Result<JwtValidationConfig, String> {
+  return Ok(JwtValidationConfig("https://other-issuer.example",
+                                "release-control-plane",
+                                read_string(path)?,
+                                2000))
+}
+
+fn expect_valid_subject(path: String, subject: String, config: JwtValidationConfig) -> Result<Bool, String> {
+  let claims = verify_rs256_jwt(read_string(path)?, config)?
+  return Ok(claims.subject == subject && array_len(claims.roles)? == 1)
+}
+
+fn expect_invalid(path: String, config: JwtValidationConfig) -> Result<Bool, String> {
+  match verify_rs256_jwt(read_string(path)?, config) {
+    Ok(_) => {
+      return Ok(false)
+    }
+    Err(_) => {
+      return Ok(true)
+    }
+  }
+}
+
+fn run_checks() -> Result<Bool, String> {
+  let config = config_from_file("work/official-auth-rs256/jwks.json", 2000)?
+  let unknown_config = config_from_file("work/official-auth-rs256/unknown-kid-jwks.json", 2000)?
+  let wrong_issuer_config = wrong_issuer_config_from_file("work/official-auth-rs256/jwks.json")?
+  validate_rs256_jwks(config.jwks_text)?
+  let ok = true
+  ok = ok && expect_valid_subject("work/official-auth-rs256/reader.jwt", "reader", config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/tampered.jwt", config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/reader.jwt", wrong_issuer_config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/wrong-aud.jwt", config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/expired.jwt", config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/future.jwt", config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/none.jwt", config)?
+  ok = ok && expect_invalid("work/official-auth-rs256/reader.jwt", unknown_config)?
+  return Ok(ok)
+}
+
+fn main() -> Void {
+  match run_checks() {
+    Ok(ok) => {
+      if ok {
+        print("official-auth-jwt-rs256-ok")
+      } else {
+        print("official-auth-jwt-rs256-bad")
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+EOF
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-auth-rs256/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-auth-rs256/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["official-auth-jwt-rs256-ok"]

@@ -1,0 +1,7 @@
+id = "TST-046-public-docs-no-hardcoded-1-0-0"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "! rg -n '1\\.0\\.0' \"$NEBULA_REPO_ROOT/README.md\" \"$NEBULA_REPO_ROOT/spec\" \"$NEBULA_REPO_ROOT/tests/README.md\" \"$NEBULA_REPO_ROOT/packaging/homebrew/nebula.rb.in\" \"$NEBULA_REPO_ROOT/scripts/install.sh\" \"$NEBULA_REPO_ROOT/scripts/install.ps1\""
+expect_rc = 0

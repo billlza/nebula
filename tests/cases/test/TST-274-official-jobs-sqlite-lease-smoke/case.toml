@@ -1,0 +1,349 @@
+id = "TST-274-official-jobs-sqlite-lease-smoke"
+suite = "test"
+description = "official nebula-jobs SQLite store supports idempotent runs and CAS worker leases"
+
+[[steps]]
+kind = "shell"
+run = """
+rm -rf work/official-jobs-lease
+mkdir -p work/official-jobs-lease/app/src
+cat > work/official-jobs-lease/app/nebula.toml <<EOF
+schema_version = 1
+
+[package]
+name = "official-jobs-lease"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+jobs = { path = "$NEBULA_REPO_ROOT/official/nebula-jobs" }
+EOF
+cat > work/official-jobs-lease/app/src/main.nb <<'EOF'
+module main
+import jobs::contracts
+import jobs::sqlite
+import std::json
+import std::result
+
+fn one_stage_definition(max_attempts: Int) -> JobDefinition {
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("build", "leased_task", "build", 30, max_attempts, empty_json_array()).as_json())
+  return JobDefinition("build-job", "internal_event", "build_requested", array_build(stages), 1, "tester", 100)
+}
+
+fn timeout_definition() -> JobDefinition {
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("short", "leased_task", "short_task", 5, 1, empty_json_array()).as_json())
+  return JobDefinition("timeout-job", "internal_event", "timeout_requested", array_build(stages), 1, "tester", 150)
+}
+
+fn dependent_definition() -> JobDefinition {
+  let deps = array_build(array_push(array_builder(), string_value("build")))
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("build", "leased_task", "build", 30, 2, empty_json_array()).as_json())
+  stages = array_push(stages, JobStageSpec("deploy", "leased_task", "deploy", 30, 2, deps).as_json())
+  return JobDefinition("deploy-job", "internal_event", "deploy_requested", array_build(stages), 1, "tester", 200)
+}
+
+fn approval_chain_definition() -> JobDefinition {
+  let deps = array_build(array_push(array_builder(), string_value("approval")))
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("approval", "approval_gate", "", 0, 0, empty_json_array()).as_json())
+  stages = array_push(stages, JobStageSpec("deploy", "leased_task", "deploy", 30, 2, deps).as_json())
+  return JobDefinition("approval-chain-job", "internal_event", "approval_requested", array_build(stages), 1, "tester", 250)
+}
+
+fn approval_only_definition() -> JobDefinition {
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("approval", "approval_gate", "", 0, 0, empty_json_array()).as_json())
+  return JobDefinition("approval-job", "internal_event", "approval_requested", array_build(stages), 1, "tester", 300)
+}
+
+fn expect_failed_complete(path: String, lease_id: String) -> Result<Bool, String> {
+  match complete_worker(path, WorkerCompleteRequest("worker-b", lease_id, "succeeded", "bad", null_value(), 120)) {
+    Ok(_) => { return Ok(false) }
+    Err(_) => { return Ok(true) }
+  }
+}
+
+fn expect_dependent_stage_ready_after_success(path: String) -> Result<Bool, String> {
+  write_definition(path, dependent_definition())?
+  create_run(path, "deploy-job", "dag-event-1", object1("seq", int_value(4)), "tester", 240)?
+  let build_claim = claim_worker(path, WorkerClaimRequest("worker-a", "build", 250))?
+  if build_claim.outcome != "claimed" || build_claim.lease.stage_name != "build" {
+    return Ok(false)
+  }
+  let deploy_too_early = claim_worker(path, WorkerClaimRequest("worker-a", "deploy", 251))?
+  if deploy_too_early.outcome != "idle" {
+    return Ok(false)
+  }
+  complete_worker(path, WorkerCompleteRequest("worker-a", build_claim.lease.lease_id, "succeeded", "built", null_value(), 260))?
+  let deploy_claim = claim_worker(path, WorkerClaimRequest("worker-a", "deploy", 270))?
+  if deploy_claim.outcome != "claimed" || deploy_claim.lease.stage_name != "deploy" {
+    return Ok(false)
+  }
+  let completed = complete_worker(path, WorkerCompleteRequest("worker-a", deploy_claim.lease.lease_id, "succeeded", "deployed", null_value(), 280))?
+  return Ok(completed.status == "completed")
+}
+
+fn expect_timeout_ttl_uses_stage_spec(path: String) -> Result<Bool, String> {
+  write_definition(path, timeout_definition())?
+  create_run(path, "timeout-job", "timeout-event-1", object1("seq", int_value(6)), "tester", 1000)?
+  let claim = claim_worker(path, WorkerClaimRequest("worker-a", "short_task", 1000))?
+  if claim.outcome != "claimed" || claim.lease.lease_expires_unix_ms != 6000 {
+    return Ok(false)
+  }
+  let heartbeat = heartbeat_worker(path, claim.lease.lease_id, "worker-a", 2000)?
+  return Ok(heartbeat.lease_expires_unix_ms == 7000)
+}
+
+fn expect_approval_gate_resolve(path: String) -> Result<Bool, String> {
+  write_definition(path, approval_chain_definition())?
+  let approved_run = create_run(path, "approval-chain-job", "approval-chain-approved", object1("seq", int_value(7)), "tester", 400)?
+  let approved = resolve_approval_gate(path, ApprovalGateResolveRequest(approved_run.run_id, "approval", -1, "approved", "approver", "gate ok", 410))?
+  if approved.status != "ready" {
+    return Ok(false)
+  }
+  let deploy_claim = claim_worker(path, WorkerClaimRequest("worker-a", "deploy", 420))?
+  if deploy_claim.outcome != "claimed" || deploy_claim.lease.stage_name != "deploy" {
+    return Ok(false)
+  }
+  complete_worker(path, WorkerCompleteRequest("worker-a", deploy_claim.lease.lease_id, "succeeded", "deployed", null_value(), 430))?
+  let rejected_run = create_run(path, "approval-chain-job", "approval-chain-rejected", object1("seq", int_value(8)), "tester", 500)?
+  let rejected = resolve_approval_gate(path, ApprovalGateResolveRequest(rejected_run.run_id, "", 0, "rejected", "approver", "gate denied", 510))?
+  if rejected.status != "failed" || rejected.result_message != "gate denied" {
+    return Ok(false)
+  }
+  match resolve_approval_gate(path, ApprovalGateResolveRequest(rejected_run.run_id, "deploy", -1, "approved", "approver", "", 520)) {
+    Ok(_) => { return Ok(false) }
+    Err(_) => {}
+  }
+  return Ok(true)
+}
+
+fn expect_approval_gate_not_claimed(path: String) -> Result<Bool, String> {
+  write_definition(path, approval_only_definition())?
+  create_run(path, "approval-job", "approval-event-1", object1("seq", int_value(5)), "tester", 300)?
+  let claim = claim_worker(path, WorkerClaimRequest("worker-a", "", 310))?
+  return Ok(claim.outcome == "idle")
+}
+
+fn expect_legacy_kind_migration_claims(path: String) -> Result<Bool, String> {
+  initialize(path)?
+  let run = load_run(path, 1)?
+  let stage_json = array_get(run.stages, 0)?
+  if get_string(stage_json, "kind")? != "leased_task" {
+    return Ok(false)
+  }
+  let claim = claim_worker(path, WorkerClaimRequest("worker-legacy", "legacy", 20))?
+  if claim.outcome != "claimed" {
+    return Ok(false)
+  }
+  return Ok(claim.lease.lease_expires_unix_ms == 15020)
+}
+
+fn run_smoke(path: String) -> Result<Bool, String> {
+  initialize(path)?
+  write_definition(path, one_stage_definition(2))?
+  let run1 = create_run(path, "build-job", "event-1", object1("seq", int_value(1)), "tester", 100)?
+  let run1_again = create_run(path, "build-job", "event-1", object1("seq", int_value(2)), "tester", 101)?
+  if run1_again.run_id != run1.run_id {
+    return Ok(false)
+  }
+  let claim1 = claim_worker(path, WorkerClaimRequest("worker-a", "build", 110))?
+  if claim1.outcome != "claimed" {
+    return Ok(false)
+  }
+  let claim2 = claim_worker(path, WorkerClaimRequest("worker-b", "build", 111))?
+  if claim2.outcome != "idle" {
+    return Ok(false)
+  }
+  if !expect_failed_complete(path, claim1.lease.lease_id)? {
+    return Ok(false)
+  }
+  let after_fail1 = complete_worker(path, WorkerCompleteRequest("worker-a", claim1.lease.lease_id, "failed", "retry", null_value(), 120))?
+  if after_fail1.status != "ready" {
+    return Ok(false)
+  }
+  let claim3 = claim_worker(path, WorkerClaimRequest("worker-a", "build", 130))?
+  if claim3.outcome != "claimed" || claim3.lease.lease_id == claim1.lease.lease_id {
+    return Ok(false)
+  }
+  let after_fail2 = complete_worker(path, WorkerCompleteRequest("worker-a", claim3.lease.lease_id, "failed", "dead", null_value(), 140))?
+  if after_fail2.status != "failed" {
+    return Ok(false)
+  }
+  let run2 = create_run(path, "build-job", "event-2", object1("seq", int_value(3)), "tester", 200)?
+  if run2.run_id == run1.run_id {
+    return Ok(false)
+  }
+  let claim4 = claim_worker(path, WorkerClaimRequest("worker-a", "build", 210))?
+  let heartbeat = heartbeat_worker(path, claim4.lease.lease_id, "worker-a", 220)?
+  if heartbeat.lease_expires_unix_ms <= claim4.lease.lease_expires_unix_ms {
+    return Ok(false)
+  }
+  let completed = complete_worker(path, WorkerCompleteRequest("worker-a", claim4.lease.lease_id, "succeeded", "done", null_value(), 230))?
+  if completed.status != "completed" {
+    return Ok(false)
+  }
+  if !expect_timeout_ttl_uses_stage_spec(path)? {
+    return Ok(false)
+  }
+  if !expect_dependent_stage_ready_after_success(path)? {
+    return Ok(false)
+  }
+  if !expect_approval_gate_resolve(path)? {
+    return Ok(false)
+  }
+  if !expect_approval_gate_not_claimed(path)? {
+    return Ok(false)
+  }
+  return expect_legacy_kind_migration_claims("work/official-jobs-lease/legacy-kind.db")
+}
+
+fn main() -> Void {
+  match run_smoke("work/official-jobs-lease/jobs.db") {
+    Ok(ok) => {
+      if ok {
+        print("official-jobs-sqlite-lease-ok")
+      } else {
+        print("official-jobs-sqlite-lease-bad")
+      }
+    }
+    Err(msg) => { print(msg) }
+  }
+}
+EOF
+python3 - <<'PY'
+import json
+import sqlite3
+from pathlib import Path
+
+db_path = Path("work/official-jobs-lease/legacy-kind.db")
+db_path.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(db_path)
+try:
+    conn.executescript('''
+    CREATE TABLE __nebula_schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_unix_ms INTEGER NOT NULL
+    );
+    CREATE TABLE jobs_definitions (
+      name TEXT PRIMARY KEY,
+      trigger_kind TEXT NOT NULL,
+      event_kind TEXT NOT NULL,
+      stages TEXT NOT NULL,
+      revision_id INTEGER NOT NULL,
+      updated_by TEXT NOT NULL,
+      updated_unix_ms INTEGER NOT NULL
+    );
+    CREATE TABLE jobs_runs (
+      run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      definition_revision_id INTEGER NOT NULL,
+      event_id TEXT NOT NULL,
+      event_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_stage_index INTEGER NOT NULL,
+      requested_by TEXT NOT NULL,
+      requested_unix_ms INTEGER NOT NULL,
+      finished_unix_ms INTEGER NOT NULL,
+      result_message TEXT NOT NULL,
+      payload TEXT NOT NULL
+    );
+    CREATE TABLE jobs_stage_runs (
+      run_id INTEGER NOT NULL,
+      stage_index INTEGER NOT NULL,
+      stage_name TEXT NOT NULL,
+      task_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt INTEGER NOT NULL,
+      lease_id TEXT NOT NULL,
+      worker_id TEXT NOT NULL,
+      lease_expires_unix_ms INTEGER NOT NULL,
+      started_unix_ms INTEGER NOT NULL,
+      finished_unix_ms INTEGER NOT NULL,
+      result_message TEXT NOT NULL,
+      result_payload TEXT NOT NULL,
+      PRIMARY KEY (run_id, stage_index)
+    );
+    CREATE TABLE jobs_event_receipts (
+      event_id TEXT PRIMARY KEY,
+      run_id INTEGER NOT NULL
+    );
+    CREATE TABLE jobs_outbox_messages (
+      message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic TEXT NOT NULL,
+      key TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt INTEGER NOT NULL,
+      max_attempts INTEGER NOT NULL,
+      lease_id TEXT NOT NULL,
+      worker_id TEXT NOT NULL,
+      lease_expires_unix_ms INTEGER NOT NULL,
+      next_attempt_unix_ms INTEGER NOT NULL,
+      created_unix_ms INTEGER NOT NULL,
+      updated_unix_ms INTEGER NOT NULL,
+      result_message TEXT NOT NULL
+    );
+    ''')
+    migrations = [
+        (1, "create_jobs_definitions"),
+        (2, "create_jobs_runs"),
+        (3, "create_jobs_stage_runs"),
+        (4, "create_jobs_event_receipts"),
+        (5, "create_jobs_outbox_messages"),
+    ]
+    conn.executemany(
+        "INSERT INTO __nebula_schema_migrations(version, name, applied_unix_ms) VALUES (?, ?, 1)",
+        migrations,
+    )
+    legacy_stages = [
+        {
+            "name": "legacy",
+            "task_kind": "legacy",
+            "timeout_s": 15,
+            "max_attempts": 1,
+            "depends_on": [],
+        }
+    ]
+    conn.execute(
+        "INSERT INTO jobs_definitions(name, trigger_kind, event_kind, stages, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("legacy-job", "internal_event", "legacy_requested", json.dumps(legacy_stages), 1, "tester", 1),
+    )
+    conn.execute(
+        "INSERT INTO jobs_runs(run_id, name, definition_revision_id, event_id, event_kind, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, "legacy-job", 1, "legacy-event", "legacy_requested", "ready", 0, "tester", 10, 0, "", '{"seq":6}'),
+    )
+    conn.execute(
+        "INSERT INTO jobs_stage_runs(run_id, stage_index, stage_name, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, 0, "legacy", "legacy", "ready", 0, "", "", 0, 0, 0, "", "null"),
+    )
+    conn.execute(
+        "INSERT INTO jobs_event_receipts(event_id, run_id) VALUES (?, ?)",
+        ("legacy-event", 1),
+    )
+    conn.commit()
+finally:
+    conn.close()
+PY
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-jobs-lease/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-jobs-lease/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["official-jobs-sqlite-lease-ok"]

@@ -1,0 +1,8 @@
+id = "TST-197-import-library-performance-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport os\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nchecks = [\n    (repo_root / 'README.md', [\n        'Nebula already has a usable module and package-distribution surface',\n        'installed',\n        'hosted registry',\n        'backend/crypto'\n    ]),\n    (repo_root / 'spec' / 'tooling_cli.md', [\n        'backend-SDK `installed` packages',\n        'switching a dependency between `path`, `git`, `installed`, local registry, and hosted registry',\n        'does not change source imports'\n    ]),\n    (repo_root / 'ROADMAP.md', [\n        'Backend + Crypto hard-win performance program',\n        'fixed five-workload competitive matrix'\n    ]),\n    (repo_root / 'docs' / 'import_library_performance.md', [\n        'Nebula already has multiple package-distribution channels',\n        'The next meaningful gap is library competitiveness and proof, not import plumbing',\n        '3/5',\n        '>= 10%',\n        '>-5%'\n    ]),\n    (repo_root / 'benchmarks' / 'backend_crypto' / 'README.md', [\n        'external reference implementations are committed under `reference/cpp`, `reference/rust`, and',\n        'run-reference --language cpp --workload hash_throughput',\n        'run-matrix --binary ./build/nebula'\n    ]),\n]\nfor path, fragments in checks:\n    text = path.read_text(encoding='utf-8')\n    missing = [fragment for fragment in fragments if fragment not in text]\n    if missing:\n        raise SystemExit(f'{path} missing fragments: {missing!r}')\nprint('import-library-performance-docs-ok')\nPY"
+expect_rc = 0
+expect_stdout_contains = ["import-library-performance-docs-ok"]

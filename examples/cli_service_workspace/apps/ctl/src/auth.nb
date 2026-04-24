@@ -1,0 +1,65 @@
+module auth
+import args
+import client
+import core::contracts
+import core::validate
+import errors
+import std::json
+import std::result
+
+fn print_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn print_whoami_text(envelope: WhoAmIEnvelope) -> Void {
+  print(text_concat("auth_enabled=", bool_text(envelope.auth_enabled)))
+  print(text_concat("actor=", envelope.actor))
+  print(text_concat("role=", envelope.role))
+  print(text_concat("request_id=", envelope.request_id))
+  print(text_concat("unix_ms=", int_text(envelope.unix_ms)))
+}
+
+fn emit_whoami(envelope: WhoAmIEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_whoami_text(envelope)
+  return 0
+}
+
+fn parse_whoami_reply(reply: JsonResponse) -> Result<WhoAmIEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = whoami_envelope_from_json(reply.payload)?
+  validate_whoami_envelope(envelope)?
+  return Ok(envelope)
+}
+
+async fn fetch_whoami(base_url: String, options: ClientOptions) -> Result<WhoAmIEnvelope, String> {
+  match await get_json(base_url, "/v1/auth/whoami", options) {
+    Ok(reply) => {
+      return parse_whoami_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn run_auth_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand != "whoami" {
+    print("unknown auth subcommand")
+    return 2
+  }
+  match await fetch_whoami(base_url, options) {
+    Ok(envelope) => {
+      return emit_whoami(envelope, parsed.json_mode)
+    }
+    Err(msg) => {
+      return print_error_exit(msg)
+    }
+  }
+}

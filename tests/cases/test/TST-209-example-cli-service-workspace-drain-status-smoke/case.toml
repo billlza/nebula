@@ -1,0 +1,83 @@
+id = "TST-209-example-cli-service-workspace-drain-status-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+    wait_until_ready_status,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_drain')
+drain_file = root / 'service.draining'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, {'NEBULA_DRAIN_FILE': str(drain_file), 'NEBULA_DRAIN_POLL_MS': '1000'})
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_ready_status(proc, stderr_lines, port, 200, 'ready')
+    base_url = f'http://127.0.0.1:{port}'
+
+    prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    healthy = run_ctl(binary, root, 'status', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(healthy, 'ctl status before drain')
+    if 'status=ok' not in healthy.stdout:
+        print_completed(healthy)
+        raise SystemExit('ctl status before drain did not render status=ok')
+
+    drain_file.write_text('drain\\n', encoding='utf-8')
+    degraded = None
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        degraded = run_ctl(binary, root, 'status', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+        if degraded.returncode == 1 and 'status=not-ready' in degraded.stdout and 'health=200' in degraded.stdout and 'ready=503' in degraded.stdout:
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    else:
+        raise SystemExit('ctl status never observed the draining/not-ready state')
+
+    if degraded is None or degraded.returncode != 1 or 'status=not-ready' not in degraded.stdout:
+        if degraded is not None:
+            print_completed(degraded)
+        raise SystemExit('ctl status while draining did not render status=not-ready')
+    if 'health=200' not in degraded.stdout or 'ready=503' not in degraded.stdout:
+        print_completed(degraded)
+        raise SystemExit('ctl status while draining did not preserve the expected health/ready summary')
+
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        raise SystemExit('service did not exit after drain quiesced')
+    if proc.returncode != 0:
+        raise SystemExit(f'draining service exited with rc={proc.returncode}')
+
+    print('example-cli-service-workspace-drain-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-drain-ok"]

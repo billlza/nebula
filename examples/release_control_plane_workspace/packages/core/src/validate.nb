@@ -1,0 +1,448 @@
+module validate
+import app
+import contracts
+import std::bytes
+import std::json
+import std::result
+
+extern fn __release_control_plane_core_normalize_base_url(url: String) -> Result<String, String>
+extern fn __release_control_plane_core_base_url_scheme(url: String) -> Result<String, String>
+extern fn __release_control_plane_core_base_url_host(url: String) -> Result<String, String>
+extern fn __release_control_plane_core_base_url_port(url: String) -> Result<Int, String>
+extern fn __release_control_plane_core_base_url_authority(url: String) -> Result<String, String>
+extern fn __release_control_plane_core_base_url_path_prefix(url: String) -> Result<String, String>
+extern fn __release_control_plane_core_validate_path_segment(label: String, value: String) -> Result<Bool, String>
+
+fn text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn text_concat3(first: String, second: String, third: String) -> String {
+  return text_concat(text_concat(first, second), third)
+}
+
+fn int_text(value: Int) -> String {
+  return stringify(int_value(value))
+}
+
+fn bool_text(value: Bool) -> String {
+  return stringify(bool_value(value))
+}
+
+fn normalize_base_url(url: String) -> Result<String, String> {
+  return __release_control_plane_core_normalize_base_url(url)
+}
+
+fn base_url_scheme(url: String) -> Result<String, String> {
+  return __release_control_plane_core_base_url_scheme(url)
+}
+
+fn base_url_host(url: String) -> Result<String, String> {
+  return __release_control_plane_core_base_url_host(url)
+}
+
+fn base_url_port(url: String) -> Result<Int, String> {
+  return __release_control_plane_core_base_url_port(url)
+}
+
+fn base_url_authority(url: String) -> Result<String, String> {
+  return __release_control_plane_core_base_url_authority(url)
+}
+
+fn base_url_path_prefix(url: String) -> Result<String, String> {
+  return __release_control_plane_core_base_url_path_prefix(url)
+}
+
+fn validate_app_segment(app_name: String) -> Result<Bool, String> {
+  return __release_control_plane_core_validate_path_segment("app", app_name)
+}
+
+fn validate_channel_segment(channel: String) -> Result<Bool, String> {
+  return __release_control_plane_core_validate_path_segment("channel", channel)
+}
+
+fn validate_actor_segment(actor: String) -> Result<Bool, String> {
+  return __release_control_plane_core_validate_path_segment("actor", actor)
+}
+
+fn validate_schedule_id_segment(schedule_id: String) -> Result<Bool, String> {
+  return __release_control_plane_core_validate_path_segment("schedule_id", schedule_id)
+}
+
+fn validate_webhook_provider_segment(provider: String) -> Result<Bool, String> {
+  return __release_control_plane_core_validate_path_segment("webhook_provider", provider)
+}
+
+fn validate_role(role: String) -> Result<Bool, String> {
+  if role == "reader" || role == "writer" || role == "admin" || role == "worker" {
+    return Ok(true)
+  }
+  return Err("role must be one of reader/writer/admin/worker")
+}
+
+fn validate_release_version(version: String) -> Result<Bool, String> {
+  if version == "" {
+    return Err("release version must be non-empty")
+  }
+  return Ok(true)
+}
+
+fn validate_release_put_request(request: ReleasePutRequest) -> Result<Bool, String> {
+  validate_release_version(request.version)?
+  if request.config_revision < 0 {
+    return Err("release config_revision must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_release_entry_identity(entry: ReleaseEntry) -> Result<Bool, String> {
+  validate_app_segment(entry.app)?
+  validate_channel_segment(entry.channel)?
+  return Ok(true)
+}
+
+fn validate_release_entry_state(entry: ReleaseEntry) -> Result<Bool, String> {
+  if entry.revision_id < 0 {
+    return Err("release revision_id must be non-negative")
+  }
+  validate_actor_segment(entry.updated_by)?
+  if entry.updated_unix_ms < 0 {
+    return Err("release updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_release_entry(entry: ReleaseEntry) -> Result<Bool, String> {
+  validate_release_entry_identity(entry)?
+  validate_release_version(entry.version)?
+  if entry.config_revision < 0 {
+    return Err("release config_revision must be non-negative")
+  }
+  validate_release_entry_state(entry)?
+  return Ok(true)
+}
+
+fn validate_release_entries_array(releases: Json) -> Result<Bool, String> {
+  let count = array_len(releases)?
+  let index = 0
+  while index < count {
+    let entry_json = array_get(releases, index)?
+    let entry = release_entry_from_json(entry_json)?
+    validate_release_entry(entry)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_release_entry_envelope(envelope: ReleaseEntryEnvelope) -> Result<Bool, String> {
+  validate_release_entry(envelope.entry)?
+  if envelope.request_id == "" {
+    return Err("release entry envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("release entry envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_release_list_envelope(envelope: ReleaseListEnvelope) -> Result<Bool, String> {
+  validate_app_segment(envelope.app)?
+  validate_release_entries_array(envelope.releases)?
+  if envelope.request_id == "" {
+    return Err("release list envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("release list envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_approval_decision_request_value(decision: String) -> Result<Bool, String> {
+  if decision == "approved" || decision == "rejected" {
+    return Ok(true)
+  }
+  return Err("approval decision must be approved or rejected")
+}
+
+fn validate_approval_decision_state(decision: String) -> Result<Bool, String> {
+  if decision == "pending" || decision == "approved" || decision == "rejected" {
+    return Ok(true)
+  }
+  return Err("approval decision state must be pending, approved, or rejected")
+}
+
+fn validate_approval_decision_request(request: ApprovalDecisionRequest) -> Result<Bool, String> {
+  return validate_approval_decision_request_value(request.decision)
+}
+
+fn validate_approval_decision_identity(value: ApprovalDecision) -> Result<Bool, String> {
+  validate_app_segment(value.app)?
+  validate_channel_segment(value.channel)?
+  if value.release_revision_id < 0 {
+    return Err("approval release_revision_id must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_pending_approval_decision(value: ApprovalDecision) -> Result<Bool, String> {
+  if value.reason != "" || value.decided_by != "" || value.decided_unix_ms != 0 {
+    return Err("pending approval decisions must keep reason/actor/unix_ms at zero values")
+  }
+  return Ok(true)
+}
+
+fn validate_final_approval_decision(value: ApprovalDecision) -> Result<Bool, String> {
+  validate_actor_segment(value.decided_by)?
+  if value.decided_unix_ms < 0 {
+    return Err("approval decided_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_approval_decision(value: ApprovalDecision) -> Result<Bool, String> {
+  validate_approval_decision_identity(value)?
+  validate_approval_decision_state(value.decision)?
+  if value.decision == "pending" {
+    return validate_pending_approval_decision(value)
+  }
+  return validate_final_approval_decision(value)
+}
+
+fn validate_approval_decision_envelope(envelope: ApprovalDecisionEnvelope) -> Result<Bool, String> {
+  validate_approval_decision(envelope.decision)?
+  if envelope.request_id == "" {
+    return Err("approval decision envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("approval decision envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_apply_run_status(status: String) -> Result<Bool, String> {
+  if status == "idle" || status == "pending" || status == "applied" || status == "failed" {
+    return Ok(true)
+  }
+  return Err("apply run status must be idle, pending, applied, or failed")
+}
+
+fn validate_apply_run_timing(run: ApplyRun) -> Result<Bool, String> {
+  if run.requested_unix_ms < 0 || run.started_unix_ms < 0 || run.finished_unix_ms < 0 {
+    return Err("apply run unix_ms fields must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_apply_run_idle(run: ApplyRun) -> Result<Bool, String> {
+  if run.run_id != 0 || run.app != "" || run.channel != "" || run.release_revision_id != 0 ||
+     run.requested_by != "" || run.requested_unix_ms != 0 || run.started_unix_ms != 0 ||
+     run.finished_unix_ms != 0 || run.runner_id != "" || run.result_message != "" {
+    return Err("idle apply runs must keep all fields at zero values")
+  }
+  return Ok(true)
+}
+
+fn validate_apply_run_active(run: ApplyRun) -> Result<Bool, String> {
+  if run.run_id <= 0 {
+    return Err("apply run id must be positive")
+  }
+  validate_app_segment(run.app)?
+  validate_channel_segment(run.channel)?
+  if run.release_revision_id < 0 {
+    return Err("apply run release_revision_id must be non-negative")
+  }
+  validate_actor_segment(run.requested_by)?
+  return validate_apply_run_timing(run)
+}
+
+fn validate_apply_run(run: ApplyRun) -> Result<Bool, String> {
+  validate_apply_run_status(run.status)?
+  if run.status == "idle" {
+    return validate_apply_run_idle(run)
+  }
+  return validate_apply_run_active(run)
+}
+
+fn validate_apply_run_envelope(envelope: ApplyRunEnvelope) -> Result<Bool, String> {
+  validate_apply_run(envelope.run)?
+  if envelope.run.status == "idle" {
+    return Err("apply run envelope must not use idle status")
+  }
+  if envelope.request_id == "" {
+    return Err("apply run envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("apply run envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_apply_runner_once_outcome(outcome: String) -> Result<Bool, String> {
+  if outcome == "idle" || outcome == "processed" {
+    return Ok(true)
+  }
+  return Err("apply runner outcome must be idle or processed")
+}
+
+fn validate_apply_runner_once_envelope(envelope: ApplyRunnerOnceEnvelope) -> Result<Bool, String> {
+  validate_apply_runner_once_outcome(envelope.outcome)?
+  validate_apply_run(envelope.run)?
+  if envelope.outcome == "idle" && envelope.run.status != "idle" {
+    return Err("idle runner outcomes must carry an idle run placeholder")
+  }
+  if envelope.outcome == "processed" && envelope.run.status == "idle" {
+    return Err("processed runner outcomes must carry a real run")
+  }
+  if envelope.request_id == "" {
+    return Err("apply runner envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("apply runner envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_audit_event_kind(kind: String) -> Result<Bool, String> {
+  if kind == "release_upserted" || kind == "approval_decided" || kind == "release_apply_requested" ||
+     kind == "release_apply_started" || kind == "release_apply_completed" ||
+     kind == "config_upserted" || kind == "config_deleted" ||
+     kind == "workflow_event_received" || kind == "workflow_run_created" ||
+     kind == "workflow_stage_ready" || kind == "workflow_stage_leased" ||
+     kind == "workflow_stage_heartbeat" || kind == "workflow_stage_requeued" ||
+     kind == "workflow_stage_completed" || kind == "workflow_run_failed" ||
+     kind == "workflow_run_completed" {
+    return Ok(true)
+  }
+  return Err("audit event kind is unknown")
+}
+
+fn validate_audit_event_identity(event: AuditEvent) -> Result<Bool, String> {
+  validate_app_segment(event.app)?
+  validate_channel_segment(event.channel)?
+  validate_audit_event_kind(event.event_kind)?
+  validate_actor_segment(event.actor)?
+  return Ok(true)
+}
+
+fn validate_audit_event_references(event: AuditEvent) -> Result<Bool, String> {
+  if event.release_revision_id < 0 {
+    return Err("audit release_revision_id must be non-negative")
+  }
+  if event.apply_run_id < 0 {
+    return Err("audit apply_run_id must be non-negative")
+  }
+  if event.unix_ms < 0 {
+    return Err("audit unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_audit_event(event: AuditEvent) -> Result<Bool, String> {
+  if event.event_id <= 0 {
+    return Err("audit event id must be positive")
+  }
+  validate_audit_event_identity(event)?
+  return validate_audit_event_references(event)
+}
+
+fn validate_audit_events_array(events: Json) -> Result<Bool, String> {
+  let count = array_len(events)?
+  let index = 0
+  while index < count {
+    let event_json = array_get(events, index)?
+    let event = audit_event_from_json(event_json)?
+    validate_audit_event(event)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_audit_list_envelope(envelope: AuditListEnvelope) -> Result<Bool, String> {
+  validate_app_segment(envelope.app)?
+  validate_channel_segment(envelope.channel)?
+  validate_audit_events_array(envelope.events)?
+  if envelope.request_id == "" {
+    return Err("audit list envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("audit list envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_service_info(info: ServiceInfo) -> Result<Bool, String> {
+  if info.service == "" {
+    return Err("service info is missing service")
+  }
+  if info.version == "" {
+    return Err("service info is missing version")
+  }
+  if info.profile == "" {
+    return Err("service info is missing profile")
+  }
+  if info.request_id == "" {
+    return Err("service info is missing request_id")
+  }
+  if info.unix_ms < 0 {
+    return Err("service info unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_whoami_envelope(envelope: WhoAmIEnvelope) -> Result<Bool, String> {
+  validate_actor_segment(envelope.actor)?
+  validate_role(envelope.role)?
+  if envelope.request_id == "" {
+    return Err("whoami envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("whoami envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_release_entry_validation_contract() -> Void {
+  let entry = ReleaseEntry("control-plane", "prod", "2026.04.21", 7, "", 1, "writer", 123)
+  match validate_release_entry(entry) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_pending_approval_validation_contract() -> Void {
+  let decision = ApprovalDecision("control-plane", "prod", 2, "pending", "", "", 0)
+  match validate_approval_decision(decision) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@test
+fn test_apply_runner_idle_validation_contract() -> Void {
+  let run = ApplyRun(0, "", "", 0, "idle", "", 0, 0, 0, "", "")
+  let envelope = ApplyRunnerOnceEnvelope("idle", run, "req-idle", 123)
+  match validate_apply_runner_once_envelope(envelope) {
+    Ok(_) => {}
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}
+
+@bench
+fn bench_normalize_default_base_url() -> Void {
+  match normalize_base_url(default_base_url()) {
+    Ok(url) => {
+      assert(url == default_base_url(), "normalized base URL drifted")
+    }
+    Err(msg) => {
+      panic(msg)
+    }
+  }
+}

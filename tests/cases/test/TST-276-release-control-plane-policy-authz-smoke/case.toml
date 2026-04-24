@@ -1,0 +1,156 @@
+id = "TST-276-release-control-plane-policy-authz-smoke"
+suite = "test"
+description = "release control plane returns stable permission-scoped authz denials"
+
+[[steps]]
+kind = "shell"
+timeout = 240
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/release_control_plane_policy_authz")
+state_dir = root / "state"
+ctl_out_dir = root / ".ctl-out"
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(
+    binary,
+    root,
+    {
+        "APP_STATE_DIR": str(state_dir),
+        "APP_AUTH_REQUIRED": "1",
+        "APP_READ_TOKEN": "reader-token",
+        "APP_WRITE_TOKEN": "writer-token",
+        "APP_ADMIN_TOKEN": "admin-token",
+        "APP_WORKER_TOKEN": "worker-token",
+        "APP_SCHEDULES_PREVIEW": "1",
+        "APP_EXTERNAL_BROKER_PREVIEW": "1",
+        "APP_EXTERNAL_BROKER_URL": "http://127.0.0.1:9090",
+    },
+)
+
+def require_denied(result, role_text: str, permission_text: str, label: str) -> None:
+    if result.returncode != 1:
+        print_completed(result)
+        raise SystemExit(f"{label} unexpectedly succeeded")
+    if role_text not in result.stdout or permission_text not in result.stdout:
+        print_completed(result)
+        raise SystemExit(f"{label} missing authz detail: expected {role_text!r} and {permission_text!r}")
+
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f"http://127.0.0.1:{port}"
+    prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, "prewarm ctl")
+
+    reader_put = run_ctl(
+        binary,
+        root,
+        "config", "put",
+        "--app", "control-plane",
+        "--channel", "prod",
+        "--key", "feature.flag",
+        "--bool", "true",
+        "--description", "flag",
+        "--url", base_url,
+        "--token", "reader-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(reader_put, "required role: writer", "permission=config.write", "reader config put")
+
+    reader_workflow_submit = run_ctl(
+        binary,
+        root,
+        "workflow", "event", "submit",
+        "--app", "control-plane",
+        "--channel", "prod",
+        "--event-id", "evt-1",
+        "--event-kind", "release_apply_requested",
+        "--release-revision", "1",
+        "--url", base_url,
+        "--token", "reader-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(reader_workflow_submit, "required role: writer", "permission=jobs.run.trigger", "reader workflow submit")
+
+    writer_approval = run_ctl(
+        binary,
+        root,
+        "approval", "decide",
+        "--app", "control-plane",
+        "--channel", "prod",
+        "--if-match", "1",
+        "--decision", "approved",
+        "--reason", "ok",
+        "--url", base_url,
+        "--token", "writer-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(writer_approval, "required role: admin", "permission=approval.decide", "writer approval decide")
+
+    writer_schedule_tick = run_ctl(
+        binary,
+        root,
+        "schedule", "tick",
+        "--now-unix-ms", "1000",
+        "--url", base_url,
+        "--token", "writer-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(writer_schedule_tick, "required role: admin", "permission=schedule.tick", "writer schedule tick")
+
+    reader_broker_claim = run_ctl(
+        binary,
+        root,
+        "broker", "outbox", "claim",
+        "--worker-id", "relay-1",
+        "--topic", "workflow.run.created",
+        "--now-unix-ms", "1000",
+        "--url", base_url,
+        "--token", "reader-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(reader_broker_claim, "required role: worker", "permission=jobs.outbox.relay", "reader broker claim")
+
+    worker_broker_get = run_ctl(
+        binary,
+        root,
+        "broker", "outbox", "get",
+        "--message-id", "1",
+        "--url", base_url,
+        "--token", "worker-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(worker_broker_get, "required role: reader", "permission=jobs.outbox.read", "worker broker get")
+finally:
+    terminate_process(proc)
+
+print("release-control-plane-policy-authz-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-policy-authz-ok"]

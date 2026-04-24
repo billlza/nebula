@@ -1,0 +1,40 @@
+module main
+import service::drain
+import server
+import service::config
+import service::server
+import std::result
+
+fn app_service_name() -> String {
+  return "hello-api"
+}
+
+async fn main() -> Void {
+  match config_from_env(app_service_name(), 40490) {
+    Ok(cfg) => {
+      match from_env() {
+        Ok(drain_cfg) => {
+          match await bind_listener(cfg) {
+            Ok(listener) => {
+              match await serve_requests_result_until_drained(listener, cfg, drain_cfg, handle_request) {
+                Ok(_) => {}
+                Err(msg) => {
+                  print(msg)
+                }
+              }
+            }
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

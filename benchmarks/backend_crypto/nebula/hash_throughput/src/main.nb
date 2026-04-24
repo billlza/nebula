@@ -1,0 +1,26 @@
+module main
+import crypto::hash
+import std::bytes
+
+fn payload() -> Bytes {
+  return concat(
+    from_string("nebula-backend-crypto-benchmark-"),
+    from_string("0123456789abcdef0123456789abcdef")
+  )
+}
+
+@bench
+fn bench_hash_throughput() -> Void {
+  let data = payload()
+  let blake = blake3(data)
+  let sha = sha3_256(data)
+  expect_eq(len(blake), 32)
+  expect_eq(len(sha), 32)
+  if hex(blake) == "" || hex(sha) == "" {
+    expect_eq(1, 0)
+  }
+}
+
+fn main() -> Void {
+  print("bench-hash-throughput")
+}

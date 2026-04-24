@@ -1,0 +1,21 @@
+id = "TST-261-official-crypto-hmac-sha256-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/official-crypto-hmac && mkdir -p work/official-crypto-hmac/app/src && cp -R \"$NEBULA_REPO_ROOT/official/nebula-crypto\" work/official-crypto-hmac/pkg && cat > work/official-crypto-hmac/app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"official-crypto-hmac\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\n\n[dependencies]\ncrypto = { path = \"../pkg\" }\nEOF\ncat > work/official-crypto-hmac/app/src/main.nb <<'EOF'\nmodule main\nimport crypto::mac\nimport std::bytes\nimport std::result\n\nfn main() -> Void {\n  let ok = true\n  let body = from_string(\"what do ya want for nothing?\")\n  let expected = \"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843\"\n  match hmac_sha256_hex(\"Jefe\", body) {\n    Ok(actual) => {\n      if actual != expected {\n        ok = false\n      }\n    }\n    Err(_) => {\n      ok = false\n    }\n  }\n  match verify_hmac_sha256_hex(\"Jefe\", body, expected) {\n    Ok(valid) => {\n      if !valid {\n        ok = false\n      }\n    }\n    Err(_) => {\n      ok = false\n    }\n  }\n  match verify_hmac_sha256_hex(\"Jefe\", body, \"00\") {\n    Ok(valid) => {\n      if valid {\n        ok = false\n      }\n    }\n    Err(_) => {\n      ok = false\n    }\n  }\n  if ok {\n    print(\"crypto-hmac-ok\")\n  } else {\n    print(\"crypto-hmac-bad\")\n  }\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-crypto-hmac/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-crypto-hmac/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["crypto-hmac-ok"]

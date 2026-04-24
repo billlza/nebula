@@ -1,0 +1,40 @@
+module main
+import counter::counter_core
+
+extern fn host_shell_begin() -> Void
+extern fn host_shell_open() -> Bool
+extern fn host_shell_next_command_text() -> String
+extern fn host_shell_publish_event(event: String) -> Void
+extern fn host_shell_render_snapshot(snapshot: String) -> Void
+extern fn host_shell_end() -> Void
+
+fn render_state(state: CounterState) -> Void {
+  host_shell_render_snapshot(query_snapshot_text(state))
+}
+
+fn main() -> Int {
+  let state = initial_state()
+  host_shell_begin()
+  host_shell_publish_event(boot_event_text(state))
+  render_state(state)
+  while host_shell_open() {
+    let command_text = host_shell_next_command_text()
+    match apply_command_text(state, command_text) {
+      Ok(step) => {
+        state = step.state()
+        host_shell_publish_event(step.event_text())
+        render_state(state)
+        if step.should_exit_value() {
+          host_shell_end()
+          return 0
+        }
+      }
+      Err(msg) => {
+        host_shell_publish_event(command_rejected_event_text(state, msg))
+        render_state(state)
+      }
+    }
+  }
+  host_shell_end()
+  return 0
+}

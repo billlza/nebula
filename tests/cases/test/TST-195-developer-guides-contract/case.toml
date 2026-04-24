@@ -1,0 +1,7 @@
+id = "TST-195-developer-guides-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'response deadline, not cancellation' \"$NEBULA_REPO_ROOT/docs/backend_developer_guide.md\" && grep -F 'the `listener_bound` lifecycle event now records the real bound host/port when available' \"$NEBULA_REPO_ROOT/docs/backend_developer_guide.md\" && grep -F 'the host owns the shell, rendering stack, navigation, accessibility, platform I/O, and event loop' \"$NEBULA_REPO_ROOT/docs/thin_host_app_shell.md\" && grep -F 'Nebula is not trying to become a replacement' \"$NEBULA_REPO_ROOT/docs/thin_host_app_shell.md\" && grep -F 'docs/backend_developer_guide.md' \"$NEBULA_REPO_ROOT/README.md\" && grep -F 'docs/thin_host_app_shell.md' \"$NEBULA_REPO_ROOT/README.md\""
+expect_rc = 0

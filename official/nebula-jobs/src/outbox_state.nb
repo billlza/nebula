@@ -1,0 +1,135 @@
+module outbox_state
+import contracts
+import request_validate
+import std::json
+import validate
+import std::result
+
+fn outbox_text_concat3(first: String, second: String, third: String) -> String {
+  return text_concat(text_concat(first, second), third)
+}
+
+fn outbox_int_text(value: Int) -> String {
+  return stringify(int_value(value))
+}
+
+fn outbox_lease_id(message_id: Int, attempt: Int) -> String {
+  return outbox_text_concat3("broker-lease-",
+                             outbox_int_text(message_id),
+                             text_concat("-", outbox_int_text(attempt)))
+}
+
+fn leased_outbox_message(message: OutboxMessage,
+                         worker_id: String,
+                         now_unix_ms: Int,
+                         lease_ttl_ms: Int) -> OutboxMessage {
+  let next_attempt = message.attempt + 1
+  return OutboxMessage(message.message_id,
+                       message.topic,
+                       message.key,
+                       message.dedupe_key,
+                       message.payload,
+                       "leased",
+                       next_attempt,
+                       message.max_attempts,
+                       outbox_lease_id(message.message_id, next_attempt),
+                       worker_id,
+                       now_unix_ms + lease_ttl_ms,
+                       message.next_attempt_unix_ms,
+                       message.created_unix_ms,
+                       now_unix_ms,
+                       "")
+}
+
+fn published_outbox_message(message: OutboxMessage,
+                            result_message: String,
+                            now_unix_ms: Int) -> OutboxMessage {
+  return OutboxMessage(message.message_id,
+                       message.topic,
+                       message.key,
+                       message.dedupe_key,
+                       message.payload,
+                       "published",
+                       message.attempt,
+                       message.max_attempts,
+                       "",
+                       "",
+                       0,
+                       message.next_attempt_unix_ms,
+                       message.created_unix_ms,
+                       now_unix_ms,
+                       result_message)
+}
+
+fn failed_outbox_status(message: OutboxMessage) -> String {
+  if message.attempt >= message.max_attempts {
+    return "dead_letter"
+  }
+  return "pending"
+}
+
+fn failed_outbox_next_attempt(request: OutboxCompleteRequest, now_unix_ms: Int) -> Int {
+  if request.next_attempt_unix_ms > 0 {
+    return request.next_attempt_unix_ms
+  }
+  return now_unix_ms
+}
+
+fn failed_outbox_message(message: OutboxMessage,
+                         request: OutboxCompleteRequest,
+                         now_unix_ms: Int) -> OutboxMessage {
+  return OutboxMessage(message.message_id,
+                       message.topic,
+                       message.key,
+                       message.dedupe_key,
+                       message.payload,
+                       failed_outbox_status(message),
+                       message.attempt,
+                       message.max_attempts,
+                       "",
+                       "",
+                       0,
+                       failed_outbox_next_attempt(request, now_unix_ms),
+                       message.created_unix_ms,
+                       now_unix_ms,
+                       request.result_message)
+}
+
+fn completed_outbox_message(message: OutboxMessage,
+                            request: OutboxCompleteRequest,
+                            now_unix_ms: Int) -> Result<OutboxMessage, String> {
+  if message.status == "published" || message.status == "dead_letter" {
+    return Err("broker outbox message is terminal")
+  }
+  if message.status != "leased" {
+    return Err("broker outbox message is not leased")
+  }
+  if message.worker_id != request.worker_id {
+    return Err("broker outbox message belongs to a different worker")
+  }
+  if message.lease_id != request.lease_id {
+    return Err("broker outbox lease mismatch")
+  }
+  if request.status == "published" {
+    return Ok(published_outbox_message(message, request.result_message, now_unix_ms))
+  }
+  return Ok(failed_outbox_message(message, request, now_unix_ms))
+}
+
+fn validate_complete_outbox_call(message_id: Int, request: OutboxCompleteRequest) -> Result<Bool, String> {
+  if message_id <= 0 {
+    return Err("broker outbox message_id must be positive")
+  }
+  return validate_outbox_complete_request_shape(request.worker_id,
+                                                request.lease_id,
+                                                request.status,
+                                                request.next_attempt_unix_ms)
+}
+
+@test
+fn test_outbox_state_failed_status_contract() -> Void {
+  let message = OutboxMessage(1, "topic", "key", "dedupe", null_value(), "leased", 1, 2, "lease", "worker", 10, 0, 1, 2, "")
+  assert(failed_outbox_status(message) == "pending", "first failure should requeue")
+  let exhausted = OutboxMessage(1, "topic", "key", "dedupe", null_value(), "leased", 2, 2, "lease", "worker", 10, 0, 1, 2, "")
+  assert(failed_outbox_status(exhausted) == "dead_letter", "exhausted failure should dead-letter")
+}

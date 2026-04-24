@@ -1,0 +1,180 @@
+module headless
+import std::bytes
+import std::json
+import std::result
+
+fn text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn text_concat3(first: String, second: String, third: String) -> String {
+  return text_concat(first, text_concat(second, third))
+}
+
+fn empty_text() -> String {
+  return text_concat("", "")
+}
+
+fn indented(depth: Int, text: String) -> String {
+  let out = text
+  let index = 0
+  while index < depth {
+    out = text_concat("  ", out)
+    index += 1
+  }
+  return out
+}
+
+fn prop_text(props: Json, key: String) -> String {
+  match get_string(props, key) {
+    Ok(value) => {
+      return text_concat3(" ", key, text_concat("=", value))
+    }
+    Err(_) => {
+      match get_int(props, key) {
+        Ok(value) => {
+          return text_concat3(" ", key, text_concat("=", stringify(int_value(value))))
+        }
+        Err(_) => {
+          match get_bool(props, key) {
+            Ok(value) => {
+              return text_concat3(" ", key, text_concat("=", stringify(bool_value(value))))
+            }
+            Err(_) => {
+              return empty_text()
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn known_props_text(component: String, props: Json) -> String {
+  if component == "Window" {
+    return prop_text(props, "title")
+  }
+  if component == "Column" || component == "Row" {
+    return prop_text(props, "spacing")
+  }
+  if component == "Text" {
+    return prop_text(props, "text")
+  }
+  if component == "Button" {
+    return text_concat(prop_text(props, "text"), prop_text(props, "action"))
+  }
+  if component == "Input" {
+    return text_concat(prop_text(props, "value"), prop_text(props, "action"))
+  }
+  return empty_text()
+}
+
+fn render_children(children: Json, depth: Int) -> Result<String, String> {
+  let out = empty_text()
+  let count = array_len(children)?
+  let index = 0
+  while index < count {
+    let child = array_get(children, index)?
+    let rendered = render_view(child, depth)?
+    if out == "" {
+      out = rendered
+    } else {
+      out = text_concat(out, text_concat("\n", rendered))
+    }
+    index += 1
+  }
+  return Ok(out)
+}
+
+fn checked_component(node: Json) -> Result<String, String> {
+  let schema_text = get_string(node, "schema")?
+  if schema_text != "nebula-ui.tree.v1" {
+    return Err("headless adapter received an unsupported ui schema")
+  }
+  return get_string(node, "component")
+}
+
+fn render_view_line(component: String, props: Json, depth: Int) -> String {
+  return indented(depth, text_concat(component, known_props_text(component, props)))
+}
+
+fn render_with_children(line: String, child_text: String) -> String {
+  if child_text == "" {
+    return line
+  }
+  return text_concat(line, text_concat("\n", child_text))
+}
+
+fn render_view(node: Json, depth: Int) -> Result<String, String> {
+  let component = checked_component(node)?
+  let props = get_value(node, "props")?
+  let children = get_value(node, "children")?
+  let line = render_view_line(component, props, depth)
+  let child_text = render_children(children, depth + 1)?
+  return Ok(render_with_children(line, child_text))
+}
+
+fn render(tree: Json) -> Result<String, String> {
+  return render_view(tree, 0)
+}
+
+fn smoke(tree: Json) -> Result<String, String> {
+  let rendered = render(tree)?
+  return Ok(text_concat("nebula-ui-headless-ok\n", rendered))
+}
+
+fn dispatch_marker(action: String) -> String {
+  return text_concat("nebula-ui-action-dispatched=", action)
+}
+
+fn button_action(props: Json) -> Result<String, String> {
+  match get_string(props, "action") {
+    Ok(action) => {
+      if action == "" {
+        return Err("Button node requires non-empty action string")
+      }
+      return Ok(action)
+    }
+    Err(_) => {
+      return Err("Button node requires non-empty action string")
+    }
+  }
+}
+
+fn action_exists_children(children: Json, action: String) -> Result<Bool, String> {
+  let count = array_len(children)?
+  let index = 0
+  while index < count {
+    let child = array_get(children, index)?
+    let found = action_exists_view(child, action)?
+    if found {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn action_exists_view(node: Json, action: String) -> Result<Bool, String> {
+  let component = checked_component(node)?
+  let props = get_value(node, "props")?
+  let children = get_value(node, "children")?
+  if component == "Button" {
+    let candidate = button_action(props)?
+    if candidate == action {
+      return Ok(true)
+    }
+  }
+  return action_exists_children(children, action)
+}
+
+fn dispatch_action(tree: Json, action: String) -> Result<String, String> {
+  if action == "" {
+    return Err("action id must be non-empty")
+  }
+  let found = action_exists_view(tree, action)?
+  if found {
+    return Ok(dispatch_marker(action))
+  }
+  return Err(text_concat("action not found: ", action))
+}

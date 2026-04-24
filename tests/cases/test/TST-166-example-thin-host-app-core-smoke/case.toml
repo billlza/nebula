@@ -1,0 +1,8 @@
+id = "TST-166-example-thin-host-app-core-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" run \"$NEBULA_REPO_ROOT/examples/thin_host_app_core\" --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["host-shell-begin", "event:{\"schema\":\"thin-host-bridge.event.v1\",\"kind\":\"booted\"", "render:{\"schema\":\"thin-host-bridge.snapshot.v1\",\"screen\":\"counter\",\"payload\":{\"counter\":0", "\"kind\":\"quit_requested\"", "\"last_command\":\"quit\"}", "\"terminal\":true", "host-shell-end"]

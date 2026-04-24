@@ -1,0 +1,8 @@
+id = "TST-205-official-service-link-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport os\nimport shutil\nimport subprocess\nfrom pathlib import Path\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nroot = Path('work/official_service_link_smoke')\nshutil.rmtree(root, ignore_errors=True)\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('''schema_version = 1\\n\\n[package]\\nname = \"official-service-link-smoke\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nservice = { path = \"''' + str(repo_root / 'official' / 'nebula-service') + '''\" }\\n''', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('''module main\\nimport service::errors\\n\\nfn main() -> Void {\\n  print(\"service-link-ok\")\\n}\\n''', encoding='utf-8')\nsubprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], check=True)\nsubprocess.run([os.environ['NEBULA_BINARY'], 'run', str(root), '--run-gate', 'none'], check=True)\nPY"
+expect_rc = 0
+expect_stdout_contains = ["service-link-ok"]

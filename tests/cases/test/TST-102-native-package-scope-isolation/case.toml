@@ -1,0 +1,21 @@
+id = "TST-102-native-package-scope-isolation"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nroot = Path('work/native_scope')\ndep_a = root / 'dep_a'\ndep_b = root / 'dep_b'\napp = root / 'app'\nfor path in [dep_a / 'src', dep_a / 'native' / 'include', dep_b / 'src', dep_b / 'native' / 'include', app / 'src']:\n    path.mkdir(parents=True, exist_ok=True)\n(dep_a / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-a\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[native]\\ncxx_sources = [\"native/bridge.cpp\"]\\ninclude_dirs = [\"native/include\"]\\ndefines = [\"PACKAGE_OFFSET=20\"]\\n', encoding='utf-8')\n(dep_b / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep-b\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n\\n[native]\\ncxx_sources = [\"native/bridge.cpp\"]\\ninclude_dirs = [\"native/include\"]\\ndefines = [\"PACKAGE_OFFSET=30\"]\\n', encoding='utf-8')\n(dep_a / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn native_value_a() -> Int\\n\\nfn value_a() -> Int {\\n  return native_value_a()\\n}\\n', encoding='utf-8')\n(dep_b / 'src' / 'lib.nb').write_text('module lib\\n\\nextern fn native_value_b() -> Int\\n\\nfn value_b() -> Int {\\n  return native_value_b()\\n}\\n', encoding='utf-8')\n(dep_a / 'native' / 'include' / 'config.h').write_text('#pragma once\\n#define HEADER_BONUS 1\\n', encoding='utf-8')\n(dep_b / 'native' / 'include' / 'config.h').write_text('#pragma once\\n#define HEADER_BONUS 2\\n', encoding='utf-8')\n(dep_a / 'native' / 'bridge.cpp').write_text('#include <cstdint>\\n#include \"config.h\"\\nstd::int64_t native_value_a() { return PACKAGE_OFFSET + HEADER_BONUS; }\\n', encoding='utf-8')\n(dep_b / 'native' / 'bridge.cpp').write_text('#include <cstdint>\\n#include \"config.h\"\\nstd::int64_t native_value_b() { return PACKAGE_OFFSET + HEADER_BONUS; }\\n', encoding='utf-8')\n(app / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"scope-app\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\na = { path = \"../dep_a\" }\\nb = { path = \"../dep_b\" }\\n', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text('module main\\nimport a::lib\\nimport b::lib\\n\\nfn main() -> Void {\\n  if value_a() + value_b() == 53 {\\n    print(\"native-scope-ok\")\\n  } else {\\n    print(\"native-scope-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/native_scope/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/native_scope/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["native-scope-ok"]

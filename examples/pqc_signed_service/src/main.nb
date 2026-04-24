@@ -1,0 +1,32 @@
+module main
+import server
+import service::config
+import service::server
+import std::result
+
+fn app_service_name() -> String {
+  return "pqc-signed-service"
+}
+
+async fn main() -> Void {
+  match config_from_env(app_service_name(), 40491) {
+    Ok(cfg) => {
+      match await bind_listener(cfg) {
+        Ok(listener) => {
+          match await serve_requests_result_with_context(listener, cfg, handle_request) {
+            Ok(_) => {}
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

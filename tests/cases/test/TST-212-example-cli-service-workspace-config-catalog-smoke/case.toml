@@ -1,0 +1,167 @@
+id = "TST-212-example-cli-service-workspace-config-catalog-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_cli_service_workspace_config_catalog')
+state_dir = root / 'state'
+ctl_out_dir = root / '.ctl-out'
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+
+    prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    empty_list = run_ctl(binary, root, 'config', 'list', '--project', 'proj', '--env', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(empty_list, 'empty config list')
+    empty_payload = json.loads(empty_list.stdout)
+    if empty_payload.get('project') != 'proj' or empty_payload.get('environment') != 'prod' or empty_payload.get('entries') != []:
+        print_completed(empty_list)
+        raise SystemExit(f'unexpected empty list payload: {empty_payload!r}')
+
+    put_result = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--bool', 'true', '--description', 'feature flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(put_result, 'config put json')
+    put_payload = json.loads(put_result.stdout)
+    entry = put_payload.get('entry', {})
+    initial_revision_id = entry.get('revision_id')
+    if initial_revision_id != 1:
+        print_completed(put_result)
+        raise SystemExit(f'unexpected initial revision id: {put_payload!r}')
+
+    database_file = state_dir / 'catalog.db'
+    if not database_file.exists():
+        raise SystemExit(f'expected catalog database file missing: {database_file}')
+
+    get_result = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(get_result, 'config get json')
+    get_payload = json.loads(get_result.stdout)
+    entry = get_payload.get('entry', {})
+    if entry.get('project') != 'proj' or entry.get('environment') != 'prod' or entry.get('key') != 'flag':
+        print_completed(get_result)
+        raise SystemExit(f'config get identity mismatch: {get_payload!r}')
+    if entry.get('description') != 'feature flag' or entry.get('value', {}).get('kind') != 'bool' or entry.get('value', {}).get('bool_value') is not True or entry.get('revision_id') != initial_revision_id:
+        print_completed(get_result)
+        raise SystemExit(f'config get payload mismatch: {get_payload!r}')
+
+    list_result = run_ctl(binary, root, 'config', 'list', '--project', 'proj', '--env', 'prod', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(list_result, 'config list json')
+    list_payload = json.loads(list_result.stdout)
+    entries = list_payload.get('entries', [])
+    if len(entries) != 1 or entries[0].get('key') != 'flag' or entries[0].get('revision_id') != initial_revision_id:
+        print_completed(list_result)
+        raise SystemExit(f'config list payload mismatch: {list_payload!r}')
+
+    missing_precondition = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--bool', 'false', '--description', 'feature flag updated', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_precondition.returncode != 1 or 'status=428 error=config_precondition_required' not in missing_precondition.stdout:
+        print_completed(missing_precondition)
+        raise SystemExit(f'expected config put without --if-match to fail with precondition required, got rc={missing_precondition.returncode}')
+
+    stale_precondition = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--bool', 'false', '--description', 'feature flag updated', '--if-match', '0', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if stale_precondition.returncode != 1 or 'status=412 error=config_revision_mismatch' not in stale_precondition.stdout:
+        print_completed(stale_precondition)
+        raise SystemExit(f'expected stale config put to fail with revision mismatch, got rc={stale_precondition.returncode}')
+
+    update_result = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--bool', 'false', '--description', 'feature flag updated', '--if-match', str(initial_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(update_result, 'config update json')
+    update_payload = json.loads(update_result.stdout)
+    updated_entry = update_payload.get('entry', {})
+    updated_revision_id = updated_entry.get('revision_id')
+    if updated_revision_id != 2 or updated_entry.get('value', {}).get('bool_value') is not False:
+        print_completed(update_result)
+        raise SystemExit(f'config update payload mismatch: {update_payload!r}')
+
+    history_result = run_ctl(binary, root, 'config', 'history', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(history_result, 'config history json')
+    history_payload = json.loads(history_result.stdout)
+    revisions = history_payload.get('revisions', [])
+    if len(revisions) != 2 or [item.get('revision_id') for item in revisions] != [2, 1] or [item.get('action') for item in revisions] != ['put', 'put']:
+        print_completed(history_result)
+        raise SystemExit(f'config history payload mismatch after update: {history_payload!r}')
+
+    stale_delete = run_ctl(binary, root, 'config', 'delete', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--if-match', str(initial_revision_id), '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if stale_delete.returncode != 1 or 'status=412 error=config_revision_mismatch' not in stale_delete.stdout:
+        print_completed(stale_delete)
+        raise SystemExit(f'expected stale config delete to fail with revision mismatch, got rc={stale_delete.returncode}')
+
+    delete_result = run_ctl(binary, root, 'config', 'delete', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--if-match', str(updated_revision_id), '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(delete_result, 'config delete json')
+    delete_payload = json.loads(delete_result.stdout)
+    if delete_payload.get('deleted_revision_id') != 3:
+        print_completed(delete_result)
+        raise SystemExit(f'config delete payload drifted: {delete_payload!r}')
+
+    missing_get = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_get.returncode != 1 or 'config entry not found:' not in missing_get.stdout:
+        print_completed(missing_get)
+        raise SystemExit(f'expected missing config get to fail with not-found message, got rc={missing_get.returncode}')
+
+    history_after_delete = run_ctl(binary, root, 'config', 'history', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    require_success(history_after_delete, 'config history after delete')
+    history_after_delete_payload = json.loads(history_after_delete.stdout)
+    revisions = history_after_delete_payload.get('revisions', [])
+    if len(revisions) != 3 or [item.get('revision_id') for item in revisions] != [3, 2, 1] or [item.get('action') for item in revisions] != ['delete', 'put', 'put']:
+        print_completed(history_after_delete)
+        raise SystemExit(f'config history payload mismatch after delete: {history_after_delete_payload!r}')
+
+    missing_subcommand = run_ctl(binary, root, 'config', out_dir=ctl_out_dir, no_build=True)
+    if missing_subcommand.returncode != 2:
+        print_completed(missing_subcommand)
+        raise SystemExit(f'config without subcommand should exit 2, got {missing_subcommand.returncode}')
+
+    missing_key = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_key.returncode != 2:
+        print_completed(missing_key)
+        raise SystemExit(f'config get without --key should exit 2, got {missing_key.returncode}')
+
+    missing_delete_if_match = run_ctl(binary, root, 'config', 'delete', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_delete_if_match.returncode != 2:
+        print_completed(missing_delete_if_match)
+        raise SystemExit(f'config delete without --if-match should exit 2, got {missing_delete_if_match.returncode}')
+
+    extra_key = run_ctl(binary, root, 'config', 'list', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if extra_key.returncode != 2:
+        print_completed(extra_key)
+        raise SystemExit(f'config list with --key should exit 2, got {extra_key.returncode}')
+
+    missing_value = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if missing_value.returncode != 2:
+        print_completed(missing_value)
+        raise SystemExit(f'config put without a typed value should exit 2, got {missing_value.returncode}')
+
+    multiple_values = run_ctl(binary, root, 'config', 'put', '--project', 'proj', '--env', 'prod', '--key', 'flag', '--string', 'yes', '--bool', 'true', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
+    if multiple_values.returncode != 2:
+        print_completed(multiple_values)
+        raise SystemExit(f'config put with multiple typed values should exit 2, got {multiple_values.returncode}')
+
+    print('example-cli-service-workspace-config-catalog-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-cli-service-workspace-config-catalog-ok"]

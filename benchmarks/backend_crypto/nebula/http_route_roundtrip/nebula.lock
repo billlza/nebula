@@ -1,0 +1,21 @@
+schema_version = 2
+root_package = "bench-http-route-roundtrip"
+root_manifest_hash = "85948b75d66cf550"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "bench-http-route-roundtrip"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "85948b75d66cf550"
+source_fingerprint = "f6a8dc63961c3489"
+integrity_fingerprint = "2582f50a1171624d"
+is_root = 1
+dependencies = []

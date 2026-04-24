@@ -1,0 +1,56 @@
+module main
+import crypto::hash
+import crypto::pqc.kem
+import crypto::pqc.sign
+import std::bytes
+import std::result
+
+fn main() -> Void {
+  let msg = from_string("nebula-crypto example")
+  print(hex(sha3_256(msg)))
+  match ml_kem_768_keypair() {
+    Ok(kem_pair) => {
+      match encapsulate(kem_pair.public_key()) {
+        Ok(encap) => {
+          match decapsulate(kem_pair.secret_key(), encap.ciphertext()) {
+            Ok(ss2) => {
+              if encap.shared_secret().equal(ss2) {
+                print("ml-kem-768 ok")
+              } else {
+                print("ml-kem-768 bad")
+              }
+            }
+            Err(msg2) => {
+              print(msg2)
+            }
+          }
+        }
+        Err(msg3) => {
+          print(msg3)
+        }
+      }
+    }
+    Err(msg4) => {
+      print(msg4)
+    }
+  }
+  match ml_dsa_65_keypair() {
+    Ok(sig_pair) => {
+      match sign(sig_pair.secret_key(), msg) {
+        Ok(sig) => {
+          if verify(sig_pair.public_key(), msg, sig) {
+            print("ml-dsa-65 ok")
+          } else {
+            print("ml-dsa-65 bad")
+          }
+        }
+        Err(msg5) => {
+          print(msg5)
+        }
+      }
+    }
+    Err(msg6) => {
+      print(msg6)
+    }
+  }
+}

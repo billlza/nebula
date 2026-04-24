@@ -1,0 +1,157 @@
+module config_validate
+import config_contracts
+import validate
+import std::json
+import std::result
+
+fn validate_config_key_segment(key: String) -> Result<Bool, String> {
+  return __release_control_plane_core_validate_path_segment("key", key)
+}
+
+fn validate_config_value(value: ConfigValue) -> Result<Bool, String> {
+  if value.kind == "string" {
+    if value.bool_value || value.int_value != 0 {
+      return Err("string config values must keep inactive fields at zero values")
+    }
+    return Ok(true)
+  }
+  if value.kind == "bool" {
+    if value.string_value != "" || value.int_value != 0 {
+      return Err("bool config values must keep inactive fields at zero values")
+    }
+    return Ok(true)
+  }
+  if value.kind == "int" {
+    if value.string_value != "" || value.bool_value {
+      return Err("int config values must keep inactive fields at zero values")
+    }
+    return Ok(true)
+  }
+  return Err("config value kind must be one of string/bool/int")
+}
+
+fn validate_config_put_request(request: ConfigPutRequest) -> Result<Bool, String> {
+  return validate_config_value(request.value)
+}
+
+fn validate_config_entry_identity(entry: ConfigEntry) -> Result<Bool, String> {
+  validate_app_segment(entry.app)?
+  validate_channel_segment(entry.channel)?
+  validate_config_key_segment(entry.key)?
+  return Ok(true)
+}
+
+fn validate_config_entry_state(entry: ConfigEntry) -> Result<Bool, String> {
+  if entry.revision_id < 0 {
+    return Err("config entry revision_id must be non-negative")
+  }
+  validate_actor_segment(entry.updated_by)?
+  if entry.updated_unix_ms < 0 {
+    return Err("config entry updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_entry(entry: ConfigEntry) -> Result<Bool, String> {
+  validate_config_entry_identity(entry)?
+  validate_config_value(entry.value)?
+  validate_config_entry_state(entry)?
+  return Ok(true)
+}
+
+fn validate_config_entry_envelope(envelope: ConfigEntryEnvelope) -> Result<Bool, String> {
+  validate_config_entry(envelope.entry)?
+  if envelope.request_id == "" {
+    return Err("config entry envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config entry envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_list_envelope(envelope: ConfigListEnvelope) -> Result<Bool, String> {
+  validate_app_segment(envelope.app)?
+  validate_channel_segment(envelope.channel)?
+  if envelope.snapshot_revision_id < 0 {
+    return Err("config list envelope snapshot_revision_id must be non-negative")
+  }
+  validate_config_entries_array(envelope.entries)?
+  if envelope.request_id == "" {
+    return Err("config list envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config list envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_delete_envelope(envelope: ConfigDeleteEnvelope) -> Result<Bool, String> {
+  validate_app_segment(envelope.app)?
+  validate_channel_segment(envelope.channel)?
+  validate_config_key_segment(envelope.key)?
+  if envelope.deleted_revision_id < 0 {
+    return Err("config delete envelope deleted_revision_id must be non-negative")
+  }
+  if envelope.request_id == "" {
+    return Err("config delete envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config delete envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_revision_action(action: String) -> Result<Bool, String> {
+  if action != "put" && action != "delete" {
+    return Err("config revision action must be put or delete")
+  }
+  return Ok(true)
+}
+
+fn validate_config_revision_identity(revision: ConfigRevision) -> Result<Bool, String> {
+  validate_app_segment(revision.app)?
+  validate_channel_segment(revision.channel)?
+  validate_config_key_segment(revision.key)?
+  return Ok(true)
+}
+
+fn validate_config_revision(revision: ConfigRevision) -> Result<Bool, String> {
+  if revision.revision_id < 0 {
+    return Err("config revision revision_id must be non-negative")
+  }
+  validate_config_revision_identity(revision)?
+  validate_config_revision_action(revision.action)?
+  validate_config_value(revision.value)?
+  validate_actor_segment(revision.updated_by)?
+  if revision.updated_unix_ms < 0 {
+    return Err("config revision updated_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_config_revisions_payload(revisions: Json) -> Result<Bool, String> {
+  let count = array_len(revisions)?
+  let index = 0
+  while index < count {
+    let revision_json = array_get(revisions, index)?
+    let revision = config_revision_from_json(revision_json)?
+    validate_config_revision(revision)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_config_history_envelope(envelope: ConfigHistoryEnvelope) -> Result<Bool, String> {
+  validate_app_segment(envelope.app)?
+  validate_channel_segment(envelope.channel)?
+  validate_config_key_segment(envelope.key)?
+  validate_config_revisions_payload(envelope.revisions)?
+  if envelope.request_id == "" {
+    return Err("config history envelope is missing request_id")
+  }
+  if envelope.unix_ms < 0 {
+    return Err("config history envelope unix_ms must be non-negative")
+  }
+  return Ok(true)
+}

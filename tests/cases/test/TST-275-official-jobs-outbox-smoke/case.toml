@@ -1,0 +1,116 @@
+id = "TST-275-official-jobs-outbox-smoke"
+suite = "test"
+description = "official nebula-jobs SQLite outbox supports CAS claim, retry, dead-letter, and publish"
+
+[[steps]]
+kind = "shell"
+run = """
+rm -rf work/official-jobs-outbox
+mkdir -p work/official-jobs-outbox/app/src
+cat > work/official-jobs-outbox/app/nebula.toml <<EOF
+schema_version = 1
+
+[package]
+name = "official-jobs-outbox"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+jobs = { path = "$NEBULA_REPO_ROOT/official/nebula-jobs" }
+EOF
+cat > work/official-jobs-outbox/app/src/main.nb <<'EOF'
+module main
+import jobs::contracts
+import jobs::sqlite
+import std::json
+import std::result
+
+fn expect_wrong_complete(path: String, message_id: Int, lease_id: String) -> Result<Bool, String> {
+  match complete_outbox(path, message_id, OutboxCompleteRequest("relay-b", lease_id, "published", "bad", 0, 110)) {
+    Ok(_) => { return Ok(false) }
+    Err(_) => { return Ok(true) }
+  }
+}
+
+fn retry_to_dead_letter(path: String, message_id: Int, lease_id: String) -> Result<Bool, String> {
+  let failed1 = complete_outbox(path, message_id, OutboxCompleteRequest("relay-a", lease_id, "failed", "retry", 150, 120))?
+  if failed1.status != "pending" || failed1.next_attempt_unix_ms != 150 {
+    return Ok(false)
+  }
+  let too_early = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 140))?
+  if too_early.outcome != "empty" {
+    return Ok(false)
+  }
+  let claim2 = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 150))?
+  if claim2.outcome != "claimed" || claim2.message.attempt != 2 {
+    return Ok(false)
+  }
+  let failed2 = complete_outbox(path, message_id, OutboxCompleteRequest("relay-a", claim2.message.lease_id, "failed", "dead", 160, 160))?
+  return Ok(failed2.status == "dead_letter")
+}
+
+fn publish_second_message(path: String) -> Result<Bool, String> {
+  let message = enqueue_outbox(path, "jobs.run.created", "key-2", "dedupe-2", object1("run_id", int_value(2)), 2, 200)?
+  let claim = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 200))?
+  if claim.outcome != "claimed" || claim.message.message_id != message.message_id {
+    return Ok(false)
+  }
+  let published = complete_outbox(path, message.message_id, OutboxCompleteRequest("relay-a", claim.message.lease_id, "published", "ok", 0, 210))?
+  let loaded = load_outbox(path, message.message_id)?
+  return Ok(published.status == "published" && loaded.status == "published")
+}
+
+fn run_smoke(path: String) -> Result<Bool, String> {
+  initialize(path)?
+  let first = enqueue_outbox(path, "jobs.run.created", "key-1", "dedupe-1", object1("run_id", int_value(1)), 2, 100)?
+  let duplicate = enqueue_outbox(path, "jobs.run.created", "key-1", "dedupe-1", object1("run_id", int_value(99)), 2, 101)?
+  if duplicate.message_id != first.message_id {
+    return Ok(false)
+  }
+  let claim1 = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 100))?
+  if claim1.outcome != "claimed" {
+    return Ok(false)
+  }
+  let claim2 = claim_outbox(path, OutboxClaimRequest("relay-b", "jobs.run.created", 100))?
+  if claim2.outcome != "empty" {
+    return Ok(false)
+  }
+  if !expect_wrong_complete(path, first.message_id, claim1.message.lease_id)? {
+    return Ok(false)
+  }
+  if !retry_to_dead_letter(path, first.message_id, claim1.message.lease_id)? {
+    return Ok(false)
+  }
+  return publish_second_message(path)
+}
+
+fn main() -> Void {
+  match run_smoke("work/official-jobs-outbox/jobs.db") {
+    Ok(ok) => {
+      if ok {
+        print("official-jobs-outbox-ok")
+      } else {
+        print("official-jobs-outbox-bad")
+      }
+    }
+    Err(msg) => { print(msg) }
+  }
+}
+EOF
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-jobs-outbox/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-jobs-outbox/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["official-jobs-outbox-ok"]

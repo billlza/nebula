@@ -1,0 +1,563 @@
+module deploy
+import args
+import client
+import core::validate
+import core::workflow_contracts
+import core::workflow_validate
+import errors
+import std::fs
+import std::json
+import std::result
+
+struct DeployCliArgs {
+  subcommand: String
+  detail_subcommand: String
+  file: String
+  app_name: String
+  channel: String
+  target: String
+  event_id: String
+  release_revision_text: String
+  target_file: String
+  command_id: String
+}
+
+struct DeployParseProgress {
+  parsed: DeployCliArgs
+  next_index: Int
+}
+
+struct DeployTargetEntry {
+  id: String
+  command_id: String
+  args: Json
+}
+
+fn deploy_args() -> DeployCliArgs {
+  return DeployCliArgs("", "", "", "", "", "", "", "", "", "")
+}
+
+fn deploy_rebuild_args(subcommand: String,
+                       detail_subcommand: String,
+                       file: String,
+                       app_name: String,
+                       channel: String,
+                       target: String,
+                       event_id: String,
+                       release_revision_text: String,
+                       target_file: String,
+                       command_id: String) -> DeployCliArgs {
+  return DeployCliArgs(subcommand,
+                       detail_subcommand,
+                       file,
+                       app_name,
+                       channel,
+                       target,
+                       event_id,
+                       release_revision_text,
+                       target_file,
+                       command_id)
+}
+
+fn deploy_with_subcommand(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(value,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_detail(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             value,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_file(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             value,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_app(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             value,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_channel(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             value,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_target(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             value,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_event_id(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             value,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_release_revision(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             value,
+                             parsed.target_file,
+                             parsed.command_id)
+}
+
+fn deploy_with_target_file(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             value,
+                             parsed.command_id)
+}
+
+fn deploy_with_command_id(parsed: DeployCliArgs, value: String) -> DeployCliArgs {
+  return deploy_rebuild_args(parsed.subcommand,
+                             parsed.detail_subcommand,
+                             parsed.file,
+                             parsed.app_name,
+                             parsed.channel,
+                             parsed.target,
+                             parsed.event_id,
+                             parsed.release_revision_text,
+                             parsed.target_file,
+                             value)
+}
+
+fn deploy_argv(parsed: ParsedArgs) -> Json {
+  return array_build(parsed.command_argv)
+}
+
+fn deploy_arg_count(argv_json: Json) -> Result<Int, String> {
+  return array_len(argv_json)
+}
+
+fn deploy_arg_text(argv_json: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv_json, index)?)
+}
+
+fn deploy_next_value(argv_json: Json, index: Int, flag: String) -> Result<String, String> {
+  if index + 1 >= deploy_arg_count(argv_json)? {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return deploy_arg_text(argv_json, index + 1)
+}
+
+fn deploy_progress(parsed: DeployCliArgs, next_index: Int) -> DeployParseProgress {
+  return DeployParseProgress(parsed, next_index)
+}
+
+fn deploy_parse_flag(argv_json: Json,
+                     parsed: DeployCliArgs,
+                     index: Int,
+                     arg: String) -> Result<DeployParseProgress, String> {
+  let value = deploy_next_value(argv_json, index, arg)?
+  if arg == "--file" {
+    return Ok(deploy_progress(deploy_with_file(parsed, value), index + 2))
+  }
+  if arg == "--app" {
+    return Ok(deploy_progress(deploy_with_app(parsed, value), index + 2))
+  }
+  if arg == "--channel" {
+    return Ok(deploy_progress(deploy_with_channel(parsed, value), index + 2))
+  }
+  if arg == "--target" {
+    return Ok(deploy_progress(deploy_with_target(parsed, value), index + 2))
+  }
+  if arg == "--event-id" {
+    return Ok(deploy_progress(deploy_with_event_id(parsed, value), index + 2))
+  }
+  if arg == "--release-revision" {
+    return Ok(deploy_progress(deploy_with_release_revision(parsed, value), index + 2))
+  }
+  if arg == "--target-file" {
+    return Ok(deploy_progress(deploy_with_target_file(parsed, value), index + 2))
+  }
+  if arg == "--command-id" {
+    return Ok(deploy_progress(deploy_with_command_id(parsed, value), index + 2))
+  }
+  return Err("unexpected deploy argument")
+}
+
+fn deploy_parse_current_arg(argv_json: Json,
+                            parsed: DeployCliArgs,
+                            index: Int,
+                            arg: String) -> Result<DeployParseProgress, String> {
+  if parsed.subcommand == "" {
+    return Ok(deploy_progress(deploy_with_subcommand(parsed, arg), index + 1))
+  }
+  if parsed.subcommand == "target" && parsed.detail_subcommand == "" {
+    return Ok(deploy_progress(deploy_with_detail(parsed, arg), index + 1))
+  }
+  return deploy_parse_flag(argv_json, parsed, index, arg)
+}
+
+fn parse_deploy_cli_args(parsed: ParsedArgs) -> Result<DeployCliArgs, String> {
+  let argv_json = deploy_argv(parsed)
+  let count = deploy_arg_count(argv_json)?
+  let index = 0
+  let state = deploy_args()
+  while index < count {
+    let arg = deploy_arg_text(argv_json, index)?
+    let progress = deploy_parse_current_arg(argv_json, state, index, arg)?
+    state = progress.parsed
+    index = progress.next_index
+  }
+  return Ok(state)
+}
+
+fn require_deploy_flag(value: String, label: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(label, " is required"))
+  }
+  return Ok(true)
+}
+
+fn reject_deploy_flag(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed for this deploy subcommand"))
+  }
+  return Ok(true)
+}
+
+fn reject_deploy_resource_flags(args: DeployCliArgs) -> Result<Bool, String> {
+  reject_deploy_flag(args.app_name, "--app")?
+  reject_deploy_flag(args.channel, "--channel")?
+  reject_deploy_flag(args.target, "--target")?
+  return reject_deploy_event_flags(args)
+}
+
+fn reject_deploy_event_flags(args: DeployCliArgs) -> Result<Bool, String> {
+  reject_deploy_flag(args.event_id, "--event-id")?
+  reject_deploy_flag(args.release_revision_text, "--release-revision")?
+  reject_deploy_flag(args.target_file, "--target-file")?
+  reject_deploy_flag(args.command_id, "--command-id")?
+  return Ok(true)
+}
+
+fn finalize_deploy_target_args(args: DeployCliArgs) -> Result<DeployCliArgs, String> {
+  if args.detail_subcommand != "validate" {
+    return Err("deploy target requires validate")
+  }
+  require_deploy_flag(args.file, "--file")?
+  reject_deploy_resource_flags(args)?
+  return Ok(args)
+}
+
+fn finalize_deploy_apply_args(args: DeployCliArgs) -> Result<DeployCliArgs, String> {
+  reject_deploy_flag(args.detail_subcommand, "deploy detail subcommand")?
+  reject_deploy_flag(args.file, "--file")?
+  require_deploy_scope_args(args)?
+  require_deploy_apply_event_args(args)?
+  return Ok(args)
+}
+
+fn require_deploy_scope_args(args: DeployCliArgs) -> Result<Bool, String> {
+  require_deploy_flag(args.app_name, "--app")?
+  require_deploy_flag(args.channel, "--channel")?
+  require_deploy_flag(args.target, "--target")?
+  return Ok(true)
+}
+
+fn require_deploy_apply_event_args(args: DeployCliArgs) -> Result<Bool, String> {
+  require_deploy_flag(args.event_id, "--event-id")?
+  require_deploy_flag(args.release_revision_text, "--release-revision")?
+  require_deploy_flag(args.target_file, "--target-file")?
+  return Ok(true)
+}
+
+fn finalize_deploy_args(args: DeployCliArgs) -> Result<DeployCliArgs, String> {
+  if args.subcommand == "target" {
+    return finalize_deploy_target_args(args)
+  }
+  if args.subcommand == "apply" {
+    return finalize_deploy_apply_args(args)
+  }
+  return Err("unknown deploy subcommand")
+}
+
+fn deploy_target_entry_from_json(value: Json) -> Result<DeployTargetEntry, String> {
+  return Ok(DeployTargetEntry(get_string(value, "id")?,
+                              get_string(value, "command_id")?,
+                              get_value(value, "args")?))
+}
+
+fn validate_deploy_string_array(values: Json) -> Result<Bool, String> {
+  let count = array_len(values)?
+  let index = 0
+  while index < count {
+    as_string(array_get(values, index)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_deploy_target_entry(entry: DeployTargetEntry) -> Result<Bool, String> {
+  validate_actor_segment(entry.id)?
+  validate_actor_segment(entry.command_id)?
+  return validate_deploy_string_array(entry.args)
+}
+
+fn validate_deploy_target_entries(entries: Json) -> Result<Bool, String> {
+  let count = array_len(entries)?
+  if count <= 0 {
+    return Err("deploy target allowlist must not be empty")
+  }
+  let index = 0
+  while index < count {
+    validate_deploy_target_entry(deploy_target_entry_from_json(array_get(entries, index)?)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_deploy_target_allowlist(value: Json) -> Result<Bool, String> {
+  return validate_deploy_target_entries(get_value(value, "targets")?)
+}
+
+fn read_deploy_target_allowlist(path: String) -> Result<Json, String> {
+  let value = parse(read_string(path)?)?
+  validate_deploy_target_allowlist(value)?
+  return Ok(value)
+}
+
+fn find_deploy_target_entry(value: Json, target: String) -> Result<DeployTargetEntry, String> {
+  let entries = get_value(value, "targets")?
+  let count = array_len(entries)?
+  let index = 0
+  while index < count {
+    let entry = deploy_target_entry_from_json(array_get(entries, index)?)?
+    if entry.id == target {
+      return Ok(entry)
+    }
+    index += 1
+  }
+  return Err(text_concat("deploy target is not allowlisted: ", target))
+}
+
+fn selected_deploy_command_id(entry: DeployTargetEntry, args: DeployCliArgs) -> Result<String, String> {
+  if args.command_id != "" {
+    validate_actor_segment(args.command_id)?
+    return Ok(args.command_id)
+  }
+  return Ok(entry.command_id)
+}
+
+fn selected_deploy_command_id_text(entry: DeployTargetEntry, args: DeployCliArgs) -> String {
+  if args.command_id != "" {
+    return args.command_id
+  }
+  return entry.command_id
+}
+
+fn deploy_event_payload(args: DeployCliArgs, entry: DeployTargetEntry) -> Result<Json, String> {
+  let command_id = selected_deploy_command_id(entry, args)?
+  let deploy_meta = object2("target", string_value(args.target), "command_id", string_value(command_id))
+  let shell_command = object2("command_id", string_value(command_id), "args", entry.args)
+  return Ok(object2("deploy", deploy_meta, "shell_command", shell_command))
+}
+
+fn deploy_events_path(app_name: String, channel: String) -> String {
+  return text_concat3("/v1/workflows/", app_name, text_concat("/", text_concat(channel, "/events")))
+}
+
+fn deploy_non_negative_int(text: String, label: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value < 0 {
+    return Err(text_concat(label, " must be a non-negative integer"))
+  }
+  return Ok(value)
+}
+
+fn deploy_event_request(args: DeployCliArgs, entry: DeployTargetEntry) -> Result<WorkflowEventSubmitRequest, String> {
+  let request = WorkflowEventSubmitRequest(args.event_id,
+                                           "release_apply_requested",
+                                           deploy_non_negative_int(args.release_revision_text, "--release-revision")?,
+                                           deploy_event_payload(args, entry)?)
+  validate_workflow_event_submit_request(request)?
+  return Ok(request)
+}
+
+fn parse_deploy_event_reply(reply: JsonResponse) -> Result<WorkflowEventSubmitEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = workflow_event_submit_envelope_from_json(reply.payload)?
+  validate_workflow_event_submit_envelope(envelope)?
+  return Ok(envelope)
+}
+
+fn emit_deploy_event(envelope: WorkflowEventSubmitEnvelope,
+                     target: String,
+                     command_id: String,
+                     json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print(text_concat("outcome=", envelope.outcome))
+  print(text_concat("run_id=", int_text(envelope.run.run_id)))
+  print(text_concat("target=", target))
+  print(text_concat("command_id=", command_id))
+  return 0
+}
+
+fn run_deploy_target_validate(args: DeployCliArgs, json_mode: Bool) -> Int {
+  match read_deploy_target_allowlist(args.file) {
+    Ok(_) => {
+      if json_mode {
+        print(stringify(object1("status", string_value("ok"))))
+      } else {
+        print("deploy target allowlist ok")
+      }
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn submit_deploy_apply(base_url: String,
+                             options: ClientOptions,
+                             args: DeployCliArgs,
+                             entry: DeployTargetEntry,
+                             json_mode: Bool) -> Int {
+  match deploy_event_request(args, entry) {
+    Ok(request) => {
+      match await post_json(base_url, deploy_events_path(args.app_name, args.channel), request.as_json(), options) {
+        Ok(reply) => {
+          match parse_deploy_event_reply(reply) {
+            Ok(envelope) => {
+              return emit_deploy_event(envelope, args.target, selected_deploy_command_id_text(entry, args), json_mode)
+            }
+            Err(msg) => {
+              print(msg)
+              return 1
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+          return 1
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn run_deploy_apply(base_url: String,
+                          options: ClientOptions,
+                          args: DeployCliArgs,
+                          json_mode: Bool) -> Int {
+  match read_deploy_target_allowlist(args.target_file) {
+    Ok(allowlist) => {
+      match find_deploy_target_entry(allowlist, args.target) {
+        Ok(entry) => {
+          return await submit_deploy_apply(base_url, options, args, entry, json_mode)
+        }
+        Err(msg) => {
+          print(msg)
+          return 1
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+
+async fn run_deploy_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  match parse_deploy_cli_args(parsed) {
+    Ok(raw_args) => {
+      match finalize_deploy_args(raw_args) {
+        Ok(args) => {
+          if args.subcommand == "target" {
+            return run_deploy_target_validate(args, parsed.json_mode)
+          }
+          return await run_deploy_apply(base_url, options, args, parsed.json_mode)
+        }
+        Err(msg) => {
+          print(msg)
+          return 2
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 2
+    }
+  }
+}

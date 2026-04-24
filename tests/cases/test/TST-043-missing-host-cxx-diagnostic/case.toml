@@ -1,0 +1,22 @@
+id = "TST-043-missing-host-cxx-diagnostic"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/missing_cxx_app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY new work/missing_cxx_app >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "CXX=/definitely/missing/compiler $NEBULA_BINARY run work/missing_cxx_app --run-gate none --diag-format json > work/missing-cxx.json 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-CLI-CXX-NOTEXEC\"' work/missing-cxx.json && grep -F '/definitely/missing/compiler' work/missing-cxx.json"
+expect_rc = 0

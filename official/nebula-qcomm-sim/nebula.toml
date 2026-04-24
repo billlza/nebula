@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+name = "nebula-qcomm-sim"
+version = "0.1.0"
+entry = "src/lib.nb"
+src_dir = "src"
+
+[dependencies]
+crypto = { path = "../nebula-crypto" }
+pqc = { path = "../nebula-pqc-protocols" }
+
+[native]
+cxx_sources = ["native/bridge.cpp"]

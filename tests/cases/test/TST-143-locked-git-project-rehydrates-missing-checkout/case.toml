@@ -1,0 +1,43 @@
+id = "TST-143-locked-git-project-rehydrates-missing-checkout"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport subprocess\nroot = Path('work/git_rehydrate')\ndep = root / 'dep'\napp = root / 'app'\n(dep / 'src').mkdir(parents=True, exist_ok=True)\ndep.joinpath('nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"dep\"\\nversion = \"0.1.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\ndep.joinpath('src/lib.nb').write_text('module lib\\n\\nfn lib_value() -> Int {\\n  return 7\\n}\\n', encoding='utf-8')\nsubprocess.run(['git', 'init', dep], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nsubprocess.run(['git', '-C', str(dep), 'config', 'user.email', 'tests@example.com'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'config', 'user.name', 'Nebula Tests'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'add', '.'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'commit', '-m', 'init'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY new work/git_rehydrate/app >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\napp = Path('work/git_rehydrate/app')\n(app / 'src' / 'main.nb').write_text('module main\\nimport dep::lib\\n\\nfn main() -> Void {\\n  if lib_value() == 7 {\\n    print(\"git-rehydrate-ok\")\\n  } else {\\n    print(\"git-rehydrate-bad\")\\n  }\\n}\\n', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" add work/git_rehydrate/app dep --git \"$PWD/work/git_rehydrate/dep\" --rev HEAD >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" fetch work/git_rehydrate/app >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'git_url = \"' work/git_rehydrate/app/nebula.lock && grep -F 'git_requested_rev = \"HEAD\"' work/git_rehydrate/app/nebula.lock"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport shutil\nimport subprocess\nroot = Path('work/git_rehydrate')\ndep = root / 'dep'\napp = root / 'app'\n(dep / 'src/lib.nb').write_text('module lib\\n\\nfn lib_value() -> Int {\\n  return 9\\n}\\n', encoding='utf-8')\nsubprocess.run(['git', '-C', str(dep), 'add', '.'], check=True)\nsubprocess.run(['git', '-C', str(dep), 'commit', '-m', 'change-head'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nshutil.rmtree(app / '.nebula' / 'git')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "\"$NEBULA_BINARY\" run work/git_rehydrate/app --run-gate none"
+expect_rc = 0
+expect_stdout_contains = ["git-rehydrate-ok"]

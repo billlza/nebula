@@ -1,0 +1,22 @@
+id = "TST-045-invalid-host-cxx-setting-diagnostic"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/invalid_cxx_app"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY new work/invalid_cxx_app >/dev/null"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "CXX='clang++ -stdlib=libc++' $NEBULA_BINARY run work/invalid_cxx_app --run-gate none --diag-format json > work/invalid-cxx.json 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F '\"code\":\"NBL-CLI-CXX-INVALID\"' work/invalid-cxx.json && grep -F 'single executable' work/invalid-cxx.json"
+expect_rc = 0

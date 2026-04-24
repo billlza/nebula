@@ -1,0 +1,2617 @@
+module workflow_store
+import broker_outbox_store
+import core::contracts
+import core::policy
+import core::validate
+import core::workflow_contracts
+import core::workflow_jobs_adapter
+import core::workflow_validate
+import db
+import preview
+import std::json
+import std::result
+import std::time
+import store
+
+struct WorkflowDefinitionLookup {
+  found: Bool
+  definition: WorkflowDefinition
+}
+
+struct WorkflowRunLookup {
+  found: Bool
+  run: WorkflowRun
+}
+
+struct WorkerLeaseLookup {
+  found: Bool
+  lease: WorkerLease
+}
+
+struct ReadyStageSelection {
+  run_id: Int
+  stage: WorkflowStageRun
+}
+
+struct WorkflowScope {
+  app: String
+  channel: String
+}
+
+struct ExpiredLeaseStage {
+  run_id: Int
+  stage_index: Int
+}
+
+struct ApplyRunnerCompatOutcome {
+  outcome: String
+  run: ApplyRun
+}
+
+struct WorkflowDefinitionIdentityFields {
+  app: String
+  channel: String
+}
+
+struct WorkflowDefinitionStateFields {
+  trigger_kind: String
+  event_kind: String
+  stages_text: String
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct WorkflowRunRowFields {
+  run_id: Int
+  workflow_revision_id: Int
+  event_id: String
+  event_kind: String
+  release_revision_id: Int
+  status: String
+  current_stage_index: Int
+  requested_by: String
+  requested_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+}
+
+struct WorkflowRunIdentityFields {
+  run_id: Int
+  workflow_revision_id: Int
+  event_id: String
+  event_kind: String
+  release_revision_id: Int
+}
+
+struct WorkflowRunStateFields {
+  status: String
+  current_stage_index: Int
+  requested_by: String
+  requested_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+}
+
+struct WorkerLeaseContext {
+  run: WorkflowRun
+  stage: WorkflowStageRun
+}
+
+struct WorkflowDefinitionRowFields {
+  app: String
+  channel: String
+  trigger_kind: String
+  event_kind: String
+  stages_text: String
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct WorkflowStageRunRowFields {
+  stage_index: Int
+  stage_name: String
+  kind: String
+  task_kind: String
+  status: String
+  attempt: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct WorkflowStageRunIdentityFields {
+  stage_index: Int
+  stage_name: String
+  kind: String
+  task_kind: String
+}
+
+struct WorkflowStageRunStateFields {
+  status: String
+  attempt: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct WorkflowStageRunLeaseFields {
+  status: String
+  attempt: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+}
+
+struct WorkflowStageRunResultFields {
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+fn workflow_state_store_path() -> String {
+  return release_store_path()
+}
+
+fn validate_workflow_scope(app_name: String, channel: String) -> Result<Bool, String> {
+  validate_app_segment(app_name)?
+  validate_channel_segment(channel)?
+  return Ok(true)
+}
+
+fn workflow_scope_matches(app_scope: Json,
+                          channel_scope: Json,
+                          app_name: String,
+                          channel: String) -> Result<Bool, String> {
+  if !scope_allows_app(app_scope, app_name)? {
+    return Ok(false)
+  }
+  return scope_allows_channel(channel_scope, channel)
+}
+
+fn workflow_stages_contain_task_kind(stages: Json, task_kind: String) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_spec_from_json(array_get(stages, index)?)?
+    if stage.task_kind == task_kind {
+      return Ok(true)
+    }
+    index += 1
+  }
+  return Ok(false)
+}
+
+fn shell_tasks_preview_enabled() -> Result<Bool, String> {
+  return preview_env_enabled("APP_SHELL_TASKS_PREVIEW")
+}
+
+fn validate_shell_task_definition_enabled(stages: Json) -> Result<Bool, String> {
+  if !workflow_stages_contain_task_kind(stages, "shell_command")? {
+    return Ok(true)
+  }
+  if shell_tasks_preview_enabled()? {
+    return Ok(true)
+  }
+  return Err("shell_command workflow stages require APP_SHELL_TASKS_PREVIEW=1")
+}
+
+fn validate_shell_command_args(args: Json) -> Result<Bool, String> {
+  let count = array_len(args)?
+  let index = 0
+  while index < count {
+    as_string(array_get(args, index)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_shell_command_event_payload(payload: Json) -> Result<Bool, String> {
+  let shell = get_value(payload, "shell_command")?
+  validate_actor_segment(get_string(shell, "command_id")?)?
+  return validate_shell_command_args(get_value(shell, "args")?)
+}
+
+fn validate_shell_task_event_enabled(definition: WorkflowDefinition,
+                                     request: WorkflowEventSubmitRequest) -> Result<Bool, String> {
+  if !workflow_stages_contain_task_kind(definition.stages, "shell_command")? {
+    return Ok(true)
+  }
+  validate_shell_task_definition_enabled(definition.stages)?
+  return validate_shell_command_event_payload(request.payload)
+}
+
+fn validate_shell_task_claim_enabled(task_kind: String) -> Result<Bool, String> {
+  if task_kind != "shell_command" {
+    return Ok(true)
+  }
+  if shell_tasks_preview_enabled()? {
+    return Ok(true)
+  }
+  return Err("shell_command worker claims require APP_SHELL_TASKS_PREVIEW=1")
+}
+
+fn deploy_preview_enabled() -> Result<Bool, String> {
+  return preview_env_enabled("APP_DISTRIBUTED_DEPLOY_PREVIEW")
+}
+
+fn validate_deploy_payload_shape(payload: Json) -> Result<Bool, String> {
+  let deploy = get_value(payload, "deploy")?
+  validate_actor_segment(get_string(deploy, "target")?)?
+  validate_actor_segment(get_string(deploy, "command_id")?)?
+  get_value(payload, "shell_command")?
+  return Ok(true)
+}
+
+fn validate_deploy_event_enabled(definition: WorkflowDefinition,
+                                 request: WorkflowEventSubmitRequest) -> Result<Bool, String> {
+  match get_value(request.payload, "deploy") {
+    Ok(_) => {
+      if !deploy_preview_enabled()? {
+        return Err("deploy workflow events require APP_DISTRIBUTED_DEPLOY_PREVIEW=1")
+      }
+      if !workflow_stages_contain_task_kind(definition.stages, "shell_command")? {
+        return Err("deploy workflow events require a shell_command workflow stage")
+      }
+      return validate_deploy_payload_shape(request.payload)
+    }
+    Err(_) => {
+      return Ok(true)
+    }
+  }
+}
+
+fn open_workflow_tx() -> Result<Transaction, String> {
+  let conn = open(workflow_state_store_path())?
+  return conn.begin_transaction()
+}
+
+fn workflow_migrations() -> Json {
+  let builder = array_builder()
+  let create_release_revisions_sql = "CREATE TABLE IF NOT EXISTS release_revisions (app TEXT NOT NULL, channel TEXT NOT NULL, version TEXT NOT NULL, config_revision INTEGER NOT NULL, description TEXT NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (app, channel, revision_id))"
+  builder = array_push(builder, migration(7, "create_release_revisions", create_release_revisions_sql))
+  let create_workflow_definitions_sql = "CREATE TABLE IF NOT EXISTS workflow_definitions (app TEXT NOT NULL, channel TEXT NOT NULL, trigger_kind TEXT NOT NULL, event_kind TEXT NOT NULL, stages TEXT NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, PRIMARY KEY (app, channel))"
+  builder = array_push(builder, migration(8, "create_workflow_definitions", create_workflow_definitions_sql))
+  let create_workflow_runs_sql = "CREATE TABLE IF NOT EXISTS workflow_runs (run_id INTEGER PRIMARY KEY AUTOINCREMENT, app TEXT NOT NULL, channel TEXT NOT NULL, workflow_revision_id INTEGER NOT NULL, event_id TEXT NOT NULL, event_kind TEXT NOT NULL, release_revision_id INTEGER NOT NULL, status TEXT NOT NULL, current_stage_index INTEGER NOT NULL, requested_by TEXT NOT NULL, requested_unix_ms INTEGER NOT NULL, finished_unix_ms INTEGER NOT NULL, result_message TEXT NOT NULL)"
+  builder = array_push(builder, migration(9, "create_workflow_runs", create_workflow_runs_sql))
+  let create_workflow_stage_runs_sql = "CREATE TABLE IF NOT EXISTS workflow_stage_runs (run_id INTEGER NOT NULL, stage_index INTEGER NOT NULL, stage_name TEXT NOT NULL, kind TEXT NOT NULL, task_kind TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL, lease_id TEXT NOT NULL, worker_id TEXT NOT NULL, lease_expires_unix_ms INTEGER NOT NULL, started_unix_ms INTEGER NOT NULL, finished_unix_ms INTEGER NOT NULL, result_message TEXT NOT NULL, PRIMARY KEY (run_id, stage_index))"
+  builder = array_push(builder, migration(10, "create_workflow_stage_runs", create_workflow_stage_runs_sql))
+  let create_workflow_event_receipts_sql = "CREATE TABLE IF NOT EXISTS workflow_event_receipts (app TEXT NOT NULL, channel TEXT NOT NULL, event_id TEXT NOT NULL, run_id INTEGER NOT NULL, event_kind TEXT NOT NULL, payload TEXT NOT NULL, received_unix_ms INTEGER NOT NULL, PRIMARY KEY (app, channel, event_id))"
+  builder = array_push(builder, migration(11, "create_workflow_event_receipts", create_workflow_event_receipts_sql))
+  return array_build(builder)
+}
+
+fn backfill_release_revisions_sql() -> String {
+  return "INSERT INTO release_revisions(app, channel, version, config_revision, description, revision_id, updated_by, updated_unix_ms) SELECT s.app, s.channel, s.version, s.config_revision, s.description, s.revision_id, s.updated_by, s.updated_unix_ms FROM release_states s WHERE NOT EXISTS (SELECT 1 FROM release_revisions r WHERE r.app = s.app AND r.channel = s.channel AND r.revision_id = s.revision_id)"
+}
+
+fn initialize_workflow_store() -> Result<Bool, String> {
+  let conn = open(workflow_state_store_path())?
+  conn.run_migrations(workflow_migrations())?
+  conn.execute0(backfill_release_revisions_sql())?
+  return Ok(true)
+}
+
+fn default_workflow_stage_specs_json() -> Json {
+  let stages = array_builder()
+  stages = array_push(stages, WorkflowStageSpec("approval", "approval_gate", "", 0, 0).as_json())
+  stages = array_push(stages, WorkflowStageSpec("apply", "leased_task", "apply_release", 30, 3).as_json())
+  return array_build(stages)
+}
+
+fn default_workflow_definition(app_name: String, channel: String, updated_by: String) -> WorkflowDefinition {
+  return WorkflowDefinition(app_name,
+                            channel,
+                            "internal_event",
+                            "release_apply_requested",
+                            default_workflow_stage_specs_json(),
+                            1,
+                            updated_by,
+                            unix_millis())
+}
+
+fn workflow_definition_placeholder() -> WorkflowDefinition {
+  return WorkflowDefinition("", "", "", "", array_build(array_builder()), 0, "", 0)
+}
+
+fn workflow_text_json(value: Json) -> String {
+  return stringify(value)
+}
+
+fn builder_with_workflow_definition_identity(builder: JsonArrayBuilder,
+                                             app_name: String,
+                                             channel: String) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  return builder
+}
+
+fn builder_with_workflow_definition_state(builder: JsonArrayBuilder,
+                                          definition: WorkflowDefinition) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(definition.trigger_kind))
+  builder = array_push(builder, string_value(definition.event_kind))
+  builder = array_push(builder, string_value(workflow_text_json(definition.stages)))
+  builder = array_push(builder, int_value(definition.revision_id))
+  builder = array_push(builder, string_value(definition.updated_by))
+  builder = array_push(builder, int_value(definition.updated_unix_ms))
+  return builder
+}
+
+fn workflow_definition_params(definition: WorkflowDefinition) -> Json {
+  let builder = array_builder()
+  builder = builder_with_workflow_definition_identity(builder, definition.app, definition.channel)
+  builder = builder_with_workflow_definition_state(builder, definition)
+  return array_build(builder)
+}
+
+fn workflow_definition_update_params(definition: WorkflowDefinition) -> Json {
+  let builder = array_builder()
+  builder = builder_with_workflow_definition_state(builder, definition)
+  builder = builder_with_workflow_definition_identity(builder, definition.app, definition.channel)
+  return array_build(builder)
+}
+
+fn builder_with_workflow_run_identity(builder: JsonArrayBuilder, run: WorkflowRun) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(run.app))
+  builder = array_push(builder, string_value(run.channel))
+  builder = array_push(builder, int_value(run.workflow_revision_id))
+  builder = array_push(builder, string_value(run.event_id))
+  builder = array_push(builder, string_value(run.event_kind))
+  builder = array_push(builder, int_value(run.release_revision_id))
+  return builder
+}
+
+fn builder_with_workflow_run_state(builder: JsonArrayBuilder, run: WorkflowRun) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(run.status))
+  builder = array_push(builder, int_value(run.current_stage_index))
+  builder = array_push(builder, string_value(run.requested_by))
+  builder = array_push(builder, int_value(run.requested_unix_ms))
+  builder = array_push(builder, int_value(run.finished_unix_ms))
+  builder = array_push(builder, string_value(run.result_message))
+  return builder
+}
+
+fn workflow_run_params(run: WorkflowRun) -> Json {
+  let builder = array_builder()
+  builder = builder_with_workflow_run_identity(builder, run)
+  builder = builder_with_workflow_run_state(builder, run)
+  return array_build(builder)
+}
+
+fn workflow_run_update_params(run: WorkflowRun) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(run.status))
+  builder = array_push(builder, int_value(run.current_stage_index))
+  builder = array_push(builder, int_value(run.finished_unix_ms))
+  builder = array_push(builder, string_value(run.result_message))
+  builder = array_push(builder, int_value(run.run_id))
+  return array_build(builder)
+}
+
+fn builder_with_workflow_stage_identity(builder: JsonArrayBuilder,
+                                        run_id: Int,
+                                        stage: WorkflowStageRun) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  builder = array_push(builder, string_value(stage.stage_name))
+  builder = array_push(builder, string_value(stage.kind))
+  builder = array_push(builder, string_value(stage.task_kind))
+  builder = array_push(builder, string_value(stage.status))
+  return builder
+}
+
+fn builder_with_workflow_stage_state(builder: JsonArrayBuilder, stage: WorkflowStageRun) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(stage.attempt))
+  builder = array_push(builder, string_value(stage.lease_id))
+  builder = array_push(builder, string_value(stage.worker_id))
+  builder = array_push(builder, int_value(stage.lease_expires_unix_ms))
+  builder = array_push(builder, int_value(stage.started_unix_ms))
+  builder = array_push(builder, int_value(stage.finished_unix_ms))
+  builder = array_push(builder, string_value(stage.result_message))
+  return builder
+}
+
+fn workflow_stage_run_insert_params(run_id: Int, stage: WorkflowStageRun) -> Json {
+  let builder = array_builder()
+  builder = builder_with_workflow_stage_identity(builder, run_id, stage)
+  builder = builder_with_workflow_stage_state(builder, stage)
+  return array_build(builder)
+}
+
+fn workflow_stage_run_update_params(run_id: Int, stage: WorkflowStageRun) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(stage.status))
+  builder = builder_with_workflow_stage_state(builder, stage)
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  return array_build(builder)
+}
+
+fn workflow_stage_run_active_update_params(run_id: Int, stage: WorkflowStageRun) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(stage.status))
+  builder = builder_with_workflow_stage_state(builder, stage)
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  builder = array_push(builder, string_value(stage.lease_id))
+  builder = array_push(builder, string_value(stage.worker_id))
+  return array_build(builder)
+}
+
+fn workflow_stage_run_claim_params(run_id: Int, stage: WorkflowStageRun) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(stage.status))
+  builder = builder_with_workflow_stage_state(builder, stage)
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  builder = array_push(builder, int_value(stage.attempt))
+  return array_build(builder)
+}
+
+fn workflow_event_receipt_params(app_name: String,
+                                 channel: String,
+                                 event_id: String,
+                                 run_id: Int,
+                                 event_kind: String,
+                                 payload: Json,
+                                 received_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, string_value(event_id))
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, string_value(event_kind))
+  builder = array_push(builder, string_value(workflow_text_json(payload)))
+  builder = array_push(builder, int_value(received_unix_ms))
+  return array_build(builder)
+}
+
+fn select_workflow_definition_sql() -> String {
+  return "SELECT app, channel, trigger_kind, event_kind, stages, revision_id, updated_by, updated_unix_ms FROM workflow_definitions WHERE app = ? AND channel = ?"
+}
+
+fn insert_workflow_definition_sql() -> String {
+  return "INSERT INTO workflow_definitions(app, channel, trigger_kind, event_kind, stages, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_workflow_definition_sql() -> String {
+  return "UPDATE workflow_definitions SET trigger_kind = ?, event_kind = ?, stages = ?, revision_id = ?, updated_by = ?, updated_unix_ms = ? WHERE app = ? AND channel = ?"
+}
+
+fn insert_workflow_run_sql() -> String {
+  return "INSERT INTO workflow_runs(app, channel, workflow_revision_id, event_id, event_kind, release_revision_id, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_workflow_run_sql() -> String {
+  return "UPDATE workflow_runs SET status = ?, current_stage_index = ?, finished_unix_ms = ?, result_message = ? WHERE run_id = ?"
+}
+
+fn lock_workflow_run_sql() -> String {
+  return "UPDATE workflow_runs SET status = status WHERE run_id = ?"
+}
+
+fn insert_workflow_stage_run_sql() -> String {
+  return "INSERT INTO workflow_stage_runs(run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn update_workflow_stage_run_sql() -> String {
+  return "UPDATE workflow_stage_runs SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, started_unix_ms = ?, finished_unix_ms = ?, result_message = ? WHERE run_id = ? AND stage_index = ?"
+}
+
+fn claim_ready_workflow_stage_run_sql() -> String {
+  return "UPDATE workflow_stage_runs SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, started_unix_ms = ?, finished_unix_ms = ?, result_message = ? WHERE run_id = ? AND stage_index = ? AND status = 'ready' AND attempt = ? AND lease_id = ''"
+}
+
+fn update_active_workflow_stage_run_sql() -> String {
+  return "UPDATE workflow_stage_runs SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, started_unix_ms = ?, finished_unix_ms = ?, result_message = ? WHERE run_id = ? AND stage_index = ? AND status = 'leased' AND lease_id = ? AND worker_id = ?"
+}
+
+fn upsert_workflow_stage_result_payload_sql() -> String {
+  return "INSERT INTO workflow_stage_result_payloads(run_id, stage_index, result_payload) VALUES (?, ?, ?) ON CONFLICT(run_id, stage_index) DO UPDATE SET result_payload = excluded.result_payload"
+}
+
+fn workflow_stage_result_payload_params(run_id: Int, stage_index: Int, result_payload: Json) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage_index))
+  builder = array_push(builder, string_value(workflow_text_json(result_payload)))
+  return array_build(builder)
+}
+
+fn workflow_stage_select_columns() -> String {
+  return "s.run_id, s.stage_index, s.stage_name, s.kind, s.task_kind, s.status, s.attempt, s.lease_id, s.worker_id, s.lease_expires_unix_ms, s.started_unix_ms, s.finished_unix_ms, s.result_message, COALESCE(p.result_payload, 'null') AS result_payload"
+}
+
+fn workflow_stage_join_sql() -> String {
+  return " FROM workflow_stage_runs s LEFT JOIN workflow_stage_result_payloads p ON p.run_id = s.run_id AND p.stage_index = s.stage_index "
+}
+
+fn list_workflow_runs_sql() -> String {
+  return "SELECT run_id, app, channel, workflow_revision_id, event_id, event_kind, release_revision_id, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message FROM workflow_runs WHERE app = ? AND channel = ? ORDER BY run_id DESC"
+}
+
+fn select_workflow_run_sql() -> String {
+  return "SELECT run_id, app, channel, workflow_revision_id, event_id, event_kind, release_revision_id, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message FROM workflow_runs WHERE app = ? AND channel = ? AND run_id = ?"
+}
+
+fn select_workflow_run_by_id_sql() -> String {
+  return "SELECT run_id, app, channel, workflow_revision_id, event_id, event_kind, release_revision_id, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message FROM workflow_runs WHERE run_id = ?"
+}
+
+fn select_latest_release_apply_run_sql() -> String {
+  return "SELECT run_id, app, channel, workflow_revision_id, event_id, event_kind, release_revision_id, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message FROM workflow_runs WHERE app = ? AND channel = ? AND event_kind = 'release_apply_requested' AND release_revision_id = ? ORDER BY run_id DESC LIMIT 1"
+}
+
+fn list_workflow_stage_runs_sql() -> String {
+  return text_concat3("SELECT ", workflow_stage_select_columns(), text_concat(workflow_stage_join_sql(), "WHERE s.run_id = ? ORDER BY s.stage_index ASC"))
+}
+
+fn select_workflow_stage_run_sql() -> String {
+  return text_concat3("SELECT ", workflow_stage_select_columns(), text_concat(workflow_stage_join_sql(), "WHERE s.run_id = ? AND s.stage_index = ?"))
+}
+
+fn select_worker_lease_sql() -> String {
+  return text_concat3("SELECT ", workflow_stage_select_columns(), text_concat(workflow_stage_join_sql(), "WHERE s.lease_id = ?"))
+}
+
+fn select_event_receipt_sql() -> String {
+  return "SELECT run_id FROM workflow_event_receipts WHERE app = ? AND channel = ? AND event_id = ?"
+}
+
+fn select_event_receipt_payload_sql() -> String {
+  return "SELECT payload FROM workflow_event_receipts WHERE app = ? AND channel = ? AND event_id = ?"
+}
+
+fn insert_event_receipt_sql() -> String {
+  return "INSERT INTO workflow_event_receipts(app, channel, event_id, run_id, event_kind, payload, received_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?)"
+}
+
+fn ready_stage_claim_sql() -> String {
+  return "SELECT s.run_id, s.stage_index FROM workflow_stage_runs s JOIN workflow_runs r ON r.run_id = s.run_id WHERE s.kind = 'leased_task' AND s.status = 'ready' AND (r.status = 'ready' OR r.status = 'leased') ORDER BY r.requested_unix_ms ASC, s.run_id ASC, s.stage_index ASC LIMIT 1"
+}
+
+fn ready_stage_claim_with_task_sql() -> String {
+  return "SELECT s.run_id, s.stage_index FROM workflow_stage_runs s JOIN workflow_runs r ON r.run_id = s.run_id WHERE s.kind = 'leased_task' AND s.status = 'ready' AND (r.status = 'ready' OR r.status = 'leased') AND s.task_kind = ? ORDER BY r.requested_unix_ms ASC, s.run_id ASC, s.stage_index ASC LIMIT 1"
+}
+
+fn list_active_run_ids_sql() -> String {
+  return "SELECT run_id FROM workflow_runs WHERE app = ? AND channel = ? AND status != 'completed' AND status != 'failed' ORDER BY run_id ASC"
+}
+
+fn list_active_release_run_ids_sql() -> String {
+  return "SELECT run_id FROM workflow_runs WHERE app = ? AND channel = ? AND release_revision_id = ? AND status != 'completed' AND status != 'failed' ORDER BY run_id ASC"
+}
+
+fn list_expired_leases_sql() -> String {
+  return "SELECT s.run_id, s.stage_index FROM workflow_stage_runs s JOIN workflow_runs r ON r.run_id = s.run_id WHERE r.app = ? AND r.channel = ? AND s.status = 'leased' AND s.lease_expires_unix_ms > 0 AND s.lease_expires_unix_ms < ? ORDER BY s.run_id ASC, s.stage_index ASC"
+}
+
+fn workflow_definition_identity_fields(row: Row) -> Result<WorkflowDefinitionIdentityFields, String> {
+  return Ok(WorkflowDefinitionIdentityFields(row.get_string("app")?, row.get_string("channel")?))
+}
+
+fn workflow_definition_state_fields(row: Row) -> Result<WorkflowDefinitionStateFields, String> {
+  return Ok(WorkflowDefinitionStateFields(row.get_string("trigger_kind")?,
+                                          row.get_string("event_kind")?,
+                                          row.get_string("stages")?,
+                                          row.get_int("revision_id")?,
+                                          row.get_string("updated_by")?,
+                                          row.get_int("updated_unix_ms")?))
+}
+
+fn workflow_definition_row_fields(row: Row) -> Result<WorkflowDefinitionRowFields, String> {
+  let identity = workflow_definition_identity_fields(row)?
+  let state = workflow_definition_state_fields(row)?
+  return Ok(WorkflowDefinitionRowFields(identity.app,
+                                        identity.channel,
+                                        state.trigger_kind,
+                                        state.event_kind,
+                                        state.stages_text,
+                                        state.revision_id,
+                                        state.updated_by,
+                                        state.updated_unix_ms))
+}
+
+fn workflow_definition_from_row(row: Row) -> Result<WorkflowDefinition, String> {
+  let fields = workflow_definition_row_fields(row)?
+  let stages = parse(fields.stages_text)?
+  return Ok(WorkflowDefinition(fields.app,
+                               fields.channel,
+                               fields.trigger_kind,
+                               fields.event_kind,
+                               stages,
+                               fields.revision_id,
+                               fields.updated_by,
+                               fields.updated_unix_ms))
+}
+
+fn workflow_run_identity_fields(row: Row) -> Result<WorkflowRunIdentityFields, String> {
+  return Ok(WorkflowRunIdentityFields(row.get_int("run_id")?,
+                                      row.get_int("workflow_revision_id")?,
+                                      row.get_string("event_id")?,
+                                      row.get_string("event_kind")?,
+                                      row.get_int("release_revision_id")?))
+}
+
+fn workflow_run_state_fields(row: Row) -> Result<WorkflowRunStateFields, String> {
+  return Ok(WorkflowRunStateFields(row.get_string("status")?,
+                                   row.get_int("current_stage_index")?,
+                                   row.get_string("requested_by")?,
+                                   row.get_int("requested_unix_ms")?,
+                                   row.get_int("finished_unix_ms")?,
+                                   row.get_string("result_message")?))
+}
+
+fn workflow_run_row_fields(row: Row) -> Result<WorkflowRunRowFields, String> {
+  let identity = workflow_run_identity_fields(row)?
+  let state = workflow_run_state_fields(row)?
+  return Ok(WorkflowRunRowFields(identity.run_id,
+                                 identity.workflow_revision_id,
+                                 identity.event_id,
+                                 identity.event_kind,
+                                 identity.release_revision_id,
+                                 state.status,
+                                 state.current_stage_index,
+                                 state.requested_by,
+                                 state.requested_unix_ms,
+                                 state.finished_unix_ms,
+                                 state.result_message))
+}
+
+fn workflow_stage_run_identity_fields(row: Row) -> Result<WorkflowStageRunIdentityFields, String> {
+  return Ok(WorkflowStageRunIdentityFields(row.get_int("stage_index")?,
+                                           row.get_string("stage_name")?,
+                                           row.get_string("kind")?,
+                                           row.get_string("task_kind")?))
+}
+
+fn workflow_stage_run_lease_fields(row: Row) -> Result<WorkflowStageRunLeaseFields, String> {
+  return Ok(WorkflowStageRunLeaseFields(row.get_string("status")?,
+                                        row.get_int("attempt")?,
+                                        row.get_string("lease_id")?,
+                                        row.get_string("worker_id")?,
+                                        row.get_int("lease_expires_unix_ms")?))
+}
+
+fn workflow_stage_run_result_fields(row: Row) -> Result<WorkflowStageRunResultFields, String> {
+  return Ok(WorkflowStageRunResultFields(row.get_int("started_unix_ms")?,
+                                         row.get_int("finished_unix_ms")?,
+                                         row.get_string("result_message")?,
+                                         parse(row.get_string("result_payload")?)?))
+}
+
+fn workflow_stage_run_state_fields(row: Row) -> Result<WorkflowStageRunStateFields, String> {
+  let lease = workflow_stage_run_lease_fields(row)?
+  let result = workflow_stage_run_result_fields(row)?
+  return Ok(WorkflowStageRunStateFields(lease.status,
+                                        lease.attempt,
+                                        lease.lease_id,
+                                        lease.worker_id,
+                                        lease.lease_expires_unix_ms,
+                                        result.started_unix_ms,
+                                        result.finished_unix_ms,
+                                        result.result_message,
+                                        result.result_payload))
+}
+
+fn workflow_stage_run_row_fields(row: Row) -> Result<WorkflowStageRunRowFields, String> {
+  let identity = workflow_stage_run_identity_fields(row)?
+  let state = workflow_stage_run_state_fields(row)?
+  return Ok(WorkflowStageRunRowFields(identity.stage_index,
+                                      identity.stage_name,
+                                      identity.kind,
+                                      identity.task_kind,
+                                      state.status,
+                                      state.attempt,
+                                      state.lease_id,
+                                      state.worker_id,
+                                      state.lease_expires_unix_ms,
+                                      state.started_unix_ms,
+                                      state.finished_unix_ms,
+                                      state.result_message,
+                                      state.result_payload))
+}
+
+fn workflow_stage_run_from_row(row: Row) -> Result<WorkflowStageRun, String> {
+  let fields = workflow_stage_run_row_fields(row)?
+  return Ok(WorkflowStageRun(fields.stage_index,
+                             fields.stage_name,
+                             fields.kind,
+                             fields.task_kind,
+                             fields.status,
+                             fields.attempt,
+                             fields.lease_id,
+                             fields.worker_id,
+                             fields.lease_expires_unix_ms,
+                             fields.started_unix_ms,
+                             fields.finished_unix_ms,
+                             fields.result_message,
+                             fields.result_payload))
+}
+
+fn workflow_stage_runs_json_tx(tx: Transaction, run_id: Int) -> Result<Json, String> {
+  let rows = tx.query(list_workflow_stage_runs_sql(), one_int_param(run_id))?
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_from_row(rows.row(index)?)?
+    builder = array_push(builder, stage.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn one_int_param(value: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(value))
+  return array_build(builder)
+}
+
+fn three_workflow_text_params(first: String, second: String, third: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(first))
+  builder = array_push(builder, string_value(second))
+  builder = array_push(builder, string_value(third))
+  return array_build(builder)
+}
+
+fn workflow_run_from_row_tx(tx: Transaction, row: Row) -> Result<WorkflowRun, String> {
+  let fields = workflow_run_row_fields(row)?
+  let stages = workflow_stage_runs_json_tx(tx, fields.run_id)?
+  return Ok(WorkflowRun(fields.run_id,
+                        row.get_string("app")?,
+                        row.get_string("channel")?,
+                        fields.workflow_revision_id,
+                        fields.event_id,
+                        fields.event_kind,
+                        fields.release_revision_id,
+                        fields.status,
+                        fields.current_stage_index,
+                        fields.requested_by,
+                        fields.requested_unix_ms,
+                        fields.finished_unix_ms,
+                        fields.result_message,
+                        stages))
+}
+
+fn workflow_run_not_found() -> WorkflowRun {
+  return WorkflowRun(0, "", "", 0, "", "", 0, "failed", 0, "", 0, 0, "", array_build(array_builder()))
+}
+
+fn workflow_definition_lookup_tx(tx: Transaction, app_name: String, channel: String) -> Result<WorkflowDefinitionLookup, String> {
+  let rows = tx.query(select_workflow_definition_sql(), two_string_params(app_name, channel))?
+  if rows.len()? == 0 {
+    return Ok(WorkflowDefinitionLookup(false, workflow_definition_placeholder()))
+  }
+  let definition = workflow_definition_from_row(rows.row(0)?)?
+  return Ok(WorkflowDefinitionLookup(true, definition))
+}
+
+fn workflow_run_lookup_tx(tx: Transaction, app_name: String, channel: String, run_id: Int) -> Result<WorkflowRunLookup, String> {
+  let rows = tx.query(select_workflow_run_sql(), three_release_params(app_name, channel, run_id))?
+  if rows.len()? == 0 {
+    return Ok(WorkflowRunLookup(false, workflow_run_not_found()))
+  }
+  let run = workflow_run_from_row_tx(tx, rows.row(0)?)?
+  return Ok(WorkflowRunLookup(true, run))
+}
+
+fn workflow_run_lookup_by_id_tx(tx: Transaction, run_id: Int) -> Result<WorkflowRunLookup, String> {
+  let rows = tx.query(select_workflow_run_by_id_sql(), one_int_param(run_id))?
+  if rows.len()? == 0 {
+    return Ok(WorkflowRunLookup(false, workflow_run_not_found()))
+  }
+  let run = workflow_run_from_row_tx(tx, rows.row(0)?)?
+  return Ok(WorkflowRunLookup(true, run))
+}
+
+fn latest_release_apply_run_tx(tx: Transaction,
+                               app_name: String,
+                               channel: String,
+                               release_revision_id: Int) -> Result<WorkflowRunLookup, String> {
+  let rows = tx.query(select_latest_release_apply_run_sql(), three_release_params(app_name, channel, release_revision_id))?
+  if rows.len()? == 0 {
+    return Ok(WorkflowRunLookup(false, workflow_run_not_found()))
+  }
+  let run = workflow_run_from_row_tx(tx, rows.row(0)?)?
+  return Ok(WorkflowRunLookup(true, run))
+}
+
+fn workflow_stage_run_tx(tx: Transaction, run_id: Int, stage_index: Int) -> Result<WorkflowStageRun, String> {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage_index))
+  let rows = tx.query(select_workflow_stage_run_sql(), array_build(builder))?
+  if rows.len()? == 0 {
+    return Err("workflow stage run not found")
+  }
+  return workflow_stage_run_from_row(rows.row(0)?)
+}
+
+fn event_receipt_run_id_tx(tx: Transaction, app_name: String, channel: String, event_id: String) -> Result<Int, String> {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(app_name))
+  builder = array_push(builder, string_value(channel))
+  builder = array_push(builder, string_value(event_id))
+  let rows = tx.query(select_event_receipt_sql(), array_build(builder))?
+  if rows.len()? == 0 {
+    return Ok(0)
+  }
+  return rows.row(0)?.get_int("run_id")
+}
+
+fn workflow_definition_applied_outcome(definition: WorkflowDefinition) -> Json {
+  return object2("kind", string_value("applied"), "definition", definition.as_json())
+}
+
+fn workflow_definition_precondition_required_outcome(current_revision_id: Int) -> Json {
+  return object2("kind", string_value("precondition_required"), "current_revision_id", int_value(current_revision_id))
+}
+
+fn workflow_definition_conflict_outcome(expected_revision_id: Int, current_revision_id: Int) -> Json {
+  return object3("kind",
+                 string_value("conflict"),
+                 "expected_revision_id",
+                 int_value(expected_revision_id),
+                 "current_revision_id",
+                 int_value(current_revision_id))
+}
+
+fn workflow_event_submit_outcome(kind: String, run: WorkflowRun) -> Json {
+  return object2("kind", string_value(kind), "run", run.as_json())
+}
+
+fn worker_claim_outcome(kind: String, lease: WorkerLease) -> Json {
+  return object2("kind", string_value(kind), "lease", lease.as_json())
+}
+
+fn worker_complete_outcome(run: WorkflowRun) -> Json {
+  return object2("kind", string_value("completed"), "run", run.as_json())
+}
+
+fn workflow_idle_claim_outcome() -> Json {
+  return worker_claim_outcome("idle", idle_worker_lease())
+}
+
+fn default_workflow_event_payload(release_entry: ReleaseEntry) -> Json {
+  return object4("app",
+                 string_value(release_entry.app),
+                 "channel",
+                 string_value(release_entry.channel),
+                 "release_revision_id",
+                 int_value(release_entry.revision_id),
+                 "config_revision",
+                 int_value(release_entry.config_revision))
+}
+
+fn shell_workflow_event_payload(release_entry: ReleaseEntry, event_payload: Json) -> Result<Json, String> {
+  return Ok(object3("release",
+                    release_entry.as_json(),
+                    "event_payload",
+                    event_payload,
+                    "shell_command",
+                    get_value(event_payload, "shell_command")?))
+}
+
+fn workflow_event_received_audit_event(app_name: String,
+                                       channel: String,
+                                       actor: String,
+                                       release_revision_id: Int,
+                                       event_id: String,
+                                       event_kind: String) -> AuditEvent {
+  return audit_event_record(app_name,
+                            channel,
+                            "workflow_event_received",
+                            actor,
+                            release_revision_id,
+                            0,
+                            "workflow event received",
+                            object2("event_id", string_value(event_id), "event_kind", string_value(event_kind)))
+}
+
+fn workflow_run_created_audit_event(run: WorkflowRun) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_run_created",
+                            run.requested_by,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow run created",
+                            object2("run_id", int_value(run.run_id), "status", string_value(run.status)))
+}
+
+fn workflow_stage_event_payload(stage: WorkflowStageRun) -> Json {
+  return object3("stage_index",
+                 int_value(stage.stage_index),
+                 "stage_name",
+                 string_value(stage.stage_name),
+                 "status",
+                 string_value(stage.status))
+}
+
+fn workflow_stage_ready_audit_event(run: WorkflowRun, stage: WorkflowStageRun) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_stage_ready",
+                            run.requested_by,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow stage ready",
+                            workflow_stage_event_payload(stage))
+}
+
+fn workflow_stage_leased_audit_event(run: WorkflowRun, stage: WorkflowStageRun, worker_id: String) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_stage_leased",
+                            worker_id,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow stage leased",
+                            object4("stage_index",
+                                    int_value(stage.stage_index),
+                                    "stage_name",
+                                    string_value(stage.stage_name),
+                                    "lease_id",
+                                    string_value(stage.lease_id),
+                                    "status",
+                                    string_value(stage.status)))
+}
+
+fn workflow_stage_heartbeat_audit_event(run: WorkflowRun, stage: WorkflowStageRun, worker_id: String) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_stage_heartbeat",
+                            worker_id,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow stage heartbeat recorded",
+                            object2("stage_index", int_value(stage.stage_index), "lease_id", string_value(stage.lease_id)))
+}
+
+fn workflow_stage_requeued_audit_event(run: WorkflowRun, stage: WorkflowStageRun) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_stage_requeued",
+                            run.requested_by,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow stage requeued after lease expiry",
+                            workflow_stage_event_payload(stage))
+}
+
+fn workflow_stage_completed_audit_event(run: WorkflowRun, stage: WorkflowStageRun, actor: String) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_stage_completed",
+                            actor,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow stage completed",
+                            object4("stage_index",
+                                    int_value(stage.stage_index),
+                                    "stage_name",
+                                    string_value(stage.stage_name),
+                                    "status",
+                                    string_value(stage.status),
+                                    "result_message",
+                                    string_value(stage.result_message)))
+}
+
+fn workflow_run_failed_audit_event(run: WorkflowRun, actor: String) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_run_failed",
+                            actor,
+                            run.release_revision_id,
+                            run.run_id,
+                            run.result_message,
+                            object2("run_id", int_value(run.run_id), "status", string_value(run.status)))
+}
+
+fn workflow_run_completed_audit_event(run: WorkflowRun, actor: String) -> AuditEvent {
+  return audit_event_record(run.app,
+                            run.channel,
+                            "workflow_run_completed",
+                            actor,
+                            run.release_revision_id,
+                            run.run_id,
+                            "workflow run completed",
+                            object2("run_id", int_value(run.run_id), "status", string_value(run.status)))
+}
+
+fn workflow_stage_ready(stage: WorkflowStageRun) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          "ready",
+                          stage.attempt,
+                          "",
+                          "",
+                          0,
+                          0,
+                          0,
+                          "",
+                          null_value())
+}
+
+fn workflow_stage_completed_with_payload(stage: WorkflowStageRun,
+                                         result_message: String,
+                                         result_payload: Json) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          "completed",
+                          stage.attempt,
+                          stage.lease_id,
+                          stage.worker_id,
+                          stage.lease_expires_unix_ms,
+                          stage.started_unix_ms,
+                          unix_millis(),
+                          result_message,
+                          result_payload)
+}
+
+fn workflow_stage_completed(stage: WorkflowStageRun, result_message: String) -> WorkflowStageRun {
+  return workflow_stage_completed_with_payload(stage, result_message, null_value())
+}
+
+fn workflow_stage_failed_with_payload(stage: WorkflowStageRun,
+                                      result_message: String,
+                                      result_payload: Json) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          "failed",
+                          stage.attempt,
+                          stage.lease_id,
+                          stage.worker_id,
+                          stage.lease_expires_unix_ms,
+                          stage.started_unix_ms,
+                          unix_millis(),
+                          result_message,
+                          result_payload)
+}
+
+fn workflow_stage_failed(stage: WorkflowStageRun, result_message: String) -> WorkflowStageRun {
+  return workflow_stage_failed_with_payload(stage, result_message, null_value())
+}
+
+fn workflow_stage_leased(stage: WorkflowStageRun, worker_id: String, lease_id: String, lease_expires_unix_ms: Int) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          "leased",
+                          stage.attempt,
+                          lease_id,
+                          worker_id,
+                          lease_expires_unix_ms,
+                          unix_millis(),
+                          0,
+                          "",
+                          null_value())
+}
+
+fn workflow_stage_heartbeat(stage: WorkflowStageRun, lease_expires_unix_ms: Int) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          stage.status,
+                          stage.attempt,
+                          stage.lease_id,
+                          stage.worker_id,
+                          lease_expires_unix_ms,
+                          stage.started_unix_ms,
+                          stage.finished_unix_ms,
+                          stage.result_message,
+                          stage.result_payload)
+}
+
+fn workflow_stage_requeued(stage: WorkflowStageRun) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          "ready",
+                          stage.attempt + 1,
+                          "",
+                          "",
+                          0,
+                          0,
+                          0,
+                          "",
+                          null_value())
+}
+
+fn workflow_run_projection(run_id: Int,
+                           app_name: String,
+                           channel: String,
+                           definition: WorkflowDefinition,
+                           request: WorkflowEventSubmitRequest,
+                           requested_by: String) -> WorkflowRun {
+  return WorkflowRun(run_id,
+                     app_name,
+                     channel,
+                     definition.revision_id,
+                     request.event_id,
+                     request.event_kind,
+                     request.release_revision_id,
+                     "blocked",
+                     0,
+                     requested_by,
+                     unix_millis(),
+                     0,
+                     "",
+                     array_build(array_builder()))
+}
+
+fn workflow_stage_specs_count(stages: Json) -> Result<Int, String> {
+  return array_len(stages)
+}
+
+fn initial_workflow_stage_run(index: Int, spec: WorkflowStageSpec) -> WorkflowStageRun {
+  let attempt = 0
+  if spec.kind == "leased_task" {
+    attempt = 1
+  }
+  return WorkflowStageRun(index, spec.name, spec.kind, spec.task_kind, "blocked", attempt, "", "", 0, 0, 0, "", null_value())
+}
+
+fn insert_initial_workflow_stage_runs_tx(tx: Transaction, run_id: Int, stages: Json) -> Result<Bool, String> {
+  let count = workflow_stage_specs_count(stages)?
+  let index = 0
+  while index < count {
+    let spec = workflow_stage_spec_from_json(array_get(stages, index)?)?
+    let stage = initial_workflow_stage_run(index, spec)
+    tx.execute(insert_workflow_stage_run_sql(), workflow_stage_run_insert_params(run_id, stage))?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn update_workflow_run_tx(tx: Transaction, run: WorkflowRun) -> Result<Bool, String> {
+  tx.execute(update_workflow_run_sql(), workflow_run_update_params(run))?
+  return Ok(true)
+}
+
+fn lock_workflow_run_tx(tx: Transaction, run_id: Int) -> Result<Bool, String> {
+  let changed = tx.execute(lock_workflow_run_sql(), one_int_param(run_id))?
+  if changed != 1 {
+    return Err("workflow run not found")
+  }
+  return Ok(true)
+}
+
+fn update_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: WorkflowStageRun) -> Result<Bool, String> {
+  tx.execute(update_workflow_stage_run_sql(), workflow_stage_run_update_params(run_id, stage))?
+  tx.execute(upsert_workflow_stage_result_payload_sql(),
+             workflow_stage_result_payload_params(run_id, stage.stage_index, stage.result_payload))?
+  return Ok(true)
+}
+
+fn claim_ready_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: WorkflowStageRun) -> Result<Bool, String> {
+  let changed = tx.execute(claim_ready_workflow_stage_run_sql(), workflow_stage_run_claim_params(run_id, stage))?
+  if changed != 1 {
+    return Ok(false)
+  }
+  tx.execute(upsert_workflow_stage_result_payload_sql(),
+             workflow_stage_result_payload_params(run_id, stage.stage_index, stage.result_payload))?
+  return Ok(true)
+}
+
+fn update_active_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: WorkflowStageRun) -> Result<Bool, String> {
+  let changed = tx.execute(update_active_workflow_stage_run_sql(), workflow_stage_run_active_update_params(run_id, stage))?
+  if changed != 1 {
+    return Ok(false)
+  }
+  tx.execute(upsert_workflow_stage_result_payload_sql(),
+             workflow_stage_result_payload_params(run_id, stage.stage_index, stage.result_payload))?
+  return Ok(true)
+}
+
+fn load_release_revision_entry_tx(tx: Transaction,
+                                  app_name: String,
+                                  channel: String,
+                                  release_revision_id: Int) -> Result<ReleaseEntry, String> {
+  let rows = tx.query(select_release_revision_sql(), three_release_params(app_name, channel, release_revision_id))?
+  if rows.len()? == 0 {
+    return Err("release revision not found")
+  }
+  return release_entry_from_row(rows.row(0)?)
+}
+
+fn approval_decision_for_release_tx(tx: Transaction,
+                                    app_name: String,
+                                    channel: String,
+                                    release_revision_id: Int) -> Result<ApprovalDecision, String> {
+  let release_entry = load_release_revision_entry_tx(tx, app_name, channel, release_revision_id)?
+  return current_approval_decision_tx(tx, release_entry)
+}
+
+fn workflow_run_with_status(run: WorkflowRun,
+                            status: String,
+                            current_stage_index: Int,
+                            finished_unix_ms: Int,
+                            result_message: String) -> WorkflowRun {
+  return WorkflowRun(run.run_id,
+                     run.app,
+                     run.channel,
+                     run.workflow_revision_id,
+                     run.event_id,
+                     run.event_kind,
+                     run.release_revision_id,
+                     status,
+                     current_stage_index,
+                     run.requested_by,
+                     run.requested_unix_ms,
+                     finished_unix_ms,
+                     result_message,
+                     run.stages)
+}
+
+fn workflow_run_completed(run: WorkflowRun) -> WorkflowRun {
+  return workflow_run_with_status(run, "completed", run.current_stage_index, unix_millis(), "workflow completed")
+}
+
+fn workflow_run_failed(run: WorkflowRun, stage_index: Int, result_message: String) -> WorkflowRun {
+  return workflow_run_with_status(run, "failed", stage_index, unix_millis(), result_message)
+}
+
+fn workflow_run_ready(run: WorkflowRun, stage_index: Int) -> WorkflowRun {
+  return workflow_run_with_status(run, "ready", stage_index, 0, "")
+}
+
+fn workflow_run_leased(run: WorkflowRun, stage_index: Int) -> WorkflowRun {
+  return workflow_run_with_status(run, "leased", stage_index, 0, "")
+}
+
+fn workflow_run_blocked(run: WorkflowRun, stage_index: Int) -> WorkflowRun {
+  return workflow_run_with_status(run, "blocked", stage_index, 0, "")
+}
+
+fn workflow_run_stage_count(run: WorkflowRun) -> Result<Int, String> {
+  return array_len(run.stages)
+}
+
+fn workflow_stage_run_at(run: WorkflowRun, index: Int) -> Result<WorkflowStageRun, String> {
+  return workflow_stage_run_from_json(array_get(run.stages, index)?)
+}
+
+fn workflow_definition_required_tx(tx: Transaction, app_name: String, channel: String) -> Result<WorkflowDefinition, String> {
+  let lookup = workflow_definition_lookup_tx(tx, app_name, channel)?
+  if !lookup.found {
+    return Err("workflow definition not found")
+  }
+  return Ok(lookup.definition)
+}
+
+fn workflow_run_required_by_id_tx(tx: Transaction, run_id: Int) -> Result<WorkflowRun, String> {
+  let lookup = workflow_run_lookup_by_id_tx(tx, run_id)?
+  if !lookup.found {
+    return Err("workflow run not found")
+  }
+  return Ok(lookup.run)
+}
+
+fn workflow_stage_spec_at(definition: WorkflowDefinition, stage_index: Int) -> Result<WorkflowStageSpec, String> {
+  return workflow_stage_spec_from_json(array_get(definition.stages, stage_index)?)
+}
+
+fn refreshed_workflow_run_tx(tx: Transaction, run_id: Int) -> Result<WorkflowRun, String> {
+  return workflow_run_required_by_id_tx(tx, run_id)
+}
+
+fn failed_workflow_run_tx(tx: Transaction,
+                          run: WorkflowRun,
+                          stage_index: Int,
+                          actor: String,
+                          result_message: String) -> Result<WorkflowRun, String> {
+  let failed_run = workflow_run_failed(run, stage_index, result_message)
+  update_workflow_run_tx(tx, failed_run)?
+  append_audit_event_tx(tx, workflow_run_failed_audit_event(failed_run, actor))?
+  return refreshed_workflow_run_tx(tx, run.run_id)
+}
+
+fn blocked_workflow_run_tx(tx: Transaction, run: WorkflowRun, stage_index: Int) -> Result<WorkflowRun, String> {
+  let blocked_run = workflow_run_blocked(run, stage_index)
+  update_workflow_run_tx(tx, blocked_run)?
+  return refreshed_workflow_run_tx(tx, run.run_id)
+}
+
+fn ready_workflow_run_tx(tx: Transaction, run: WorkflowRun, stage_index: Int) -> Result<WorkflowRun, String> {
+  let ready_run = workflow_run_ready(run, stage_index)
+  update_workflow_run_tx(tx, ready_run)?
+  return refreshed_workflow_run_tx(tx, run.run_id)
+}
+
+fn leased_workflow_run_tx(tx: Transaction, run: WorkflowRun, stage_index: Int) -> Result<WorkflowRun, String> {
+  let leased_run = workflow_run_leased(run, stage_index)
+  update_workflow_run_tx(tx, leased_run)?
+  return refreshed_workflow_run_tx(tx, run.run_id)
+}
+
+fn completed_workflow_run_tx(tx: Transaction, run: WorkflowRun) -> Result<WorkflowRun, String> {
+  let completed_run = workflow_run_completed(run)
+  update_workflow_run_tx(tx, completed_run)?
+  append_audit_event_tx(tx, workflow_run_completed_audit_event(completed_run, run.requested_by))?
+  return refreshed_workflow_run_tx(tx, run.run_id)
+}
+
+fn completed_approval_stage_tx(tx: Transaction,
+                               run_id: Int,
+                               run: WorkflowRun,
+                               stage: WorkflowStageRun,
+                               decision: ApprovalDecision) -> Result<Bool, String> {
+  if !workflow_approval_gate_resolvable(stage) {
+    return Err("approval gate stage is not resolvable")
+  }
+  let final_status = workflow_approval_gate_status(decision.decision)?
+  if final_status != "completed" {
+    return Err("approval gate approved decision did not resolve to completed")
+  }
+  let completed_stage = workflow_stage_completed(stage, workflow_approval_gate_result_message(decision.decision, "approval gate passed")?)
+  update_workflow_stage_run_tx(tx, run_id, completed_stage)?
+  append_audit_event_tx(tx, workflow_stage_completed_audit_event(run, completed_stage, decision.decided_by))?
+  return Ok(true)
+}
+
+fn rejected_approval_stage_tx(tx: Transaction,
+                              run_id: Int,
+                              run: WorkflowRun,
+                              stage: WorkflowStageRun,
+                              decision: ApprovalDecision) -> Result<WorkflowRun, String> {
+  if !workflow_approval_gate_resolvable(stage) {
+    return Err("approval gate stage is not resolvable")
+  }
+  let final_status = workflow_approval_gate_status(decision.decision)?
+  if final_status != "failed" {
+    return Err("approval gate rejected decision did not resolve to failed")
+  }
+  let failed_stage = workflow_stage_failed(stage, workflow_approval_gate_result_message(decision.decision, text_concat("approval rejected: ", decision.reason))?)
+  update_workflow_stage_run_tx(tx, run_id, failed_stage)?
+  append_audit_event_tx(tx, workflow_stage_completed_audit_event(run, failed_stage, decision.decided_by))?
+  return failed_workflow_run_tx(tx, run, stage.stage_index, decision.decided_by, failed_stage.result_message)
+}
+
+fn ready_blocked_stage_tx(tx: Transaction,
+                          run_id: Int,
+                          run: WorkflowRun,
+                          stage: WorkflowStageRun) -> Result<WorkflowRun, String> {
+  let ready_stage = workflow_stage_ready(stage)
+  update_workflow_stage_run_tx(tx, run_id, ready_stage)?
+  append_audit_event_tx(tx, workflow_stage_ready_audit_event(run, ready_stage))?
+  return ready_workflow_run_tx(tx, run, stage.stage_index)
+}
+
+fn workflow_stage_status_by_name(run: WorkflowRun, name: String) -> Result<String, String> {
+  let count = workflow_run_stage_count(run)?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_at(run, index)?
+    if stage.stage_name == name {
+      return Ok(stage.status)
+    }
+    index += 1
+  }
+  return Err(text_concat("workflow stage dependency not found in run: ", name))
+}
+
+fn workflow_stage_dependency_completed(run: WorkflowRun, depends_on: Json, index: Int) -> Result<Bool, String> {
+  let dependency = as_string(array_get(depends_on, index)?)?
+  return Ok(workflow_stage_status_by_name(run, dependency)? == "completed")
+}
+
+fn workflow_stage_dependencies_completed(run: WorkflowRun,
+                                         definition: WorkflowDefinition,
+                                         stage_index: Int) -> Result<Bool, String> {
+  let depends_on = workflow_stage_depends_on(definition.stages, stage_index)?
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    if !workflow_stage_dependency_completed(run, depends_on, index)? {
+      return Ok(false)
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn refresh_readyable_approval_stage_tx(tx: Transaction,
+                                       run_id: Int,
+                                       run: WorkflowRun,
+                                       stage: WorkflowStageRun) -> Result<Bool, String> {
+  let decision = approval_decision_for_release_tx(tx, run.app, run.channel, run.release_revision_id)?
+  if decision.decision == "pending" {
+    return Ok(false)
+  }
+  if decision.decision == "rejected" {
+    rejected_approval_stage_tx(tx, run_id, run, stage, decision)?
+    return Ok(true)
+  }
+  completed_approval_stage_tx(tx, run_id, run, stage, decision)?
+  return Ok(true)
+}
+
+fn refresh_readyable_leased_stage_tx(tx: Transaction,
+                                     run_id: Int,
+                                     run: WorkflowRun,
+                                     stage: WorkflowStageRun) -> Result<Bool, String> {
+  let ready_stage = workflow_stage_ready(stage)
+  update_workflow_stage_run_tx(tx, run_id, ready_stage)?
+  append_audit_event_tx(tx, workflow_stage_ready_audit_event(run, ready_stage))?
+  return Ok(true)
+}
+
+fn refresh_readyable_stage_tx(tx: Transaction,
+                              run_id: Int,
+                              run: WorkflowRun,
+                              definition: WorkflowDefinition,
+                              stage: WorkflowStageRun) -> Result<Bool, String> {
+  if stage.status != "blocked" {
+    return Ok(false)
+  }
+  if !workflow_stage_dependencies_completed(run, definition, stage.stage_index)? {
+    return Ok(false)
+  }
+  if stage.kind == "approval_gate" {
+    return refresh_readyable_approval_stage_tx(tx, run_id, run, stage)
+  }
+  return refresh_readyable_leased_stage_tx(tx, run_id, run, stage)
+}
+
+fn refresh_readyable_stages_pass_tx(tx: Transaction,
+                                    run_id: Int,
+                                    run: WorkflowRun,
+                                    definition: WorkflowDefinition) -> Result<Bool, String> {
+  let changed = false
+  let count = workflow_run_stage_count(run)?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_at(run, index)?
+    if refresh_readyable_stage_tx(tx, run_id, run, definition, stage)? {
+      changed = true
+    }
+    index += 1
+  }
+  return Ok(changed)
+}
+
+fn refresh_readyable_stages_tx(tx: Transaction, run_id: Int, definition: WorkflowDefinition) -> Result<Bool, String> {
+  let max_passes = array_len(definition.stages)?
+  let pass = 0
+  while pass < max_passes {
+    let run = workflow_run_required_by_id_tx(tx, run_id)?
+    let changed = refresh_readyable_stages_pass_tx(tx, run_id, run, definition)?
+    if !changed {
+      return Ok(true)
+    }
+    pass += 1
+  }
+  return Ok(true)
+}
+
+fn first_stage_with_status(run: WorkflowRun, status: String) -> Result<Int, String> {
+  let count = workflow_run_stage_count(run)?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_at(run, index)?
+    if stage.status == status {
+      return Ok(index)
+    }
+    index += 1
+  }
+  return Ok(-1)
+}
+
+fn completed_stage_count(run: WorkflowRun) -> Result<Int, String> {
+  let count = workflow_run_stage_count(run)?
+  let completed = 0
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_at(run, index)?
+    if stage.status == "completed" {
+      completed += 1
+    }
+    index += 1
+  }
+  return Ok(completed)
+}
+
+fn failed_stage_result_message(run: WorkflowRun, stage_index: Int) -> Result<String, String> {
+  if stage_index < 0 {
+    return Ok("workflow stage failed")
+  }
+  return Ok(workflow_stage_run_at(run, stage_index)?.result_message)
+}
+
+fn refreshed_failed_workflow_run_state_tx(tx: Transaction, run: WorkflowRun) -> Result<WorkflowRun, String> {
+  let failed_index = first_stage_with_status(run, "failed")?
+  if failed_index >= 0 {
+    return failed_workflow_run_tx(tx, run, failed_index, run.requested_by, failed_stage_result_message(run, failed_index)?)
+  }
+  return Err("workflow run has no failed stage")
+}
+
+fn refreshed_active_workflow_run_state_tx(tx: Transaction, run: WorkflowRun) -> Result<WorkflowRun, String> {
+  let ready_index = first_stage_with_status(run, "ready")?
+  if ready_index >= 0 {
+    return ready_workflow_run_tx(tx, run, ready_index)
+  }
+  let leased_index = first_stage_with_status(run, "leased")?
+  if leased_index >= 0 {
+    return leased_workflow_run_tx(tx, run, leased_index)
+  }
+  let blocked_index = first_stage_with_status(run, "blocked")?
+  if blocked_index >= 0 {
+    return blocked_workflow_run_tx(tx, run, blocked_index)
+  }
+  return Err("workflow run has no refreshable state")
+}
+
+fn refreshed_workflow_run_state_tx(tx: Transaction, run: WorkflowRun) -> Result<WorkflowRun, String> {
+  if first_stage_with_status(run, "failed")? >= 0 {
+    return refreshed_failed_workflow_run_state_tx(tx, run)
+  }
+  if completed_stage_count(run)? == workflow_run_stage_count(run)? {
+    return completed_workflow_run_tx(tx, run)
+  }
+  return refreshed_active_workflow_run_state_tx(tx, run)
+}
+
+fn refresh_workflow_run_tx(tx: Transaction, run_id: Int) -> Result<WorkflowRun, String> {
+  lock_workflow_run_tx(tx, run_id)?
+  let run = workflow_run_required_by_id_tx(tx, run_id)?
+  let definition = workflow_definition_required_tx(tx, run.app, run.channel)?
+  refresh_readyable_stages_tx(tx, run_id, definition)?
+  let refreshed = workflow_run_required_by_id_tx(tx, run_id)?
+  return refreshed_workflow_run_state_tx(tx, refreshed)
+}
+
+fn expired_lease_params(app_name: String, channel: String) -> Json {
+  let params = array_builder()
+  params = array_push(params, string_value(app_name))
+  params = array_push(params, string_value(channel))
+  params = array_push(params, int_value(unix_millis()))
+  return array_build(params)
+}
+
+fn fail_expired_lease_stage_tx(tx: Transaction,
+                               run: WorkflowRun,
+                               run_id: Int,
+                               stage: WorkflowStageRun) -> Result<Bool, String> {
+  let failed_stage = workflow_stage_failed(stage, "lease expired")
+  update_workflow_stage_run_tx(tx, run_id, failed_stage)?
+  append_audit_event_tx(tx, workflow_stage_completed_audit_event(run, failed_stage, run.requested_by))?
+  failed_workflow_run_tx(tx, run, stage.stage_index, run.requested_by, "lease expired")?
+  return Ok(true)
+}
+
+fn requeue_expired_lease_stage_tx(tx: Transaction,
+                                  run: WorkflowRun,
+                                  run_id: Int,
+                                  stage: WorkflowStageRun) -> Result<Bool, String> {
+  let requeued = workflow_stage_requeued(stage)
+  update_workflow_stage_run_tx(tx, run_id, requeued)?
+  append_audit_event_tx(tx, workflow_stage_requeued_audit_event(run, requeued))?
+  return Ok(true)
+}
+
+fn handle_expired_lease_stage_tx(tx: Transaction, run_id: Int, stage_index: Int) -> Result<Bool, String> {
+  let stage = workflow_stage_run_tx(tx, run_id, stage_index)?
+  let run = workflow_run_required_by_id_tx(tx, run_id)?
+  let definition = workflow_definition_required_tx(tx, run.app, run.channel)?
+  let spec = workflow_stage_spec_at(definition, stage.stage_index)?
+  if stage.attempt >= spec.max_attempts {
+    return fail_expired_lease_stage_tx(tx, run, run_id, stage)
+  }
+  return requeue_expired_lease_stage_tx(tx, run, run_id, stage)
+}
+
+fn expired_lease_stage_from_row(row: Row) -> Result<ExpiredLeaseStage, String> {
+  return Ok(ExpiredLeaseStage(row.get_int("run_id")?, row.get_int("stage_index")?))
+}
+
+fn expired_lease_run_id_tx(tx: Transaction, row: Row) -> Result<Int, String> {
+  let expired = expired_lease_stage_from_row(row)?
+  handle_expired_lease_stage_tx(tx, expired.run_id, expired.stage_index)?
+  return Ok(expired.run_id)
+}
+
+fn expired_lease_run_ids_tx(tx: Transaction, app_name: String, channel: String) -> Result<Json, String> {
+  let builder = array_builder()
+  let rows = tx.query(list_expired_leases_sql(), expired_lease_params(app_name, channel))?
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    builder = array_push(builder, int_value(expired_lease_run_id_tx(tx, rows.row(index)?)?))
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn workflow_run_ids_json_tx(tx: Transaction, app_name: String, channel: String) -> Result<Json, String> {
+  let rows = tx.query(list_active_run_ids_sql(), two_string_params(app_name, channel))?
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    builder = array_push(builder, int_value(rows.row(index)?.get_int("run_id")?))
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn workflow_run_ids_for_release_json_tx(tx: Transaction,
+                                        app_name: String,
+                                        channel: String,
+                                        release_revision_id: Int) -> Result<Json, String> {
+  let rows = tx.query(list_active_release_run_ids_sql(), three_release_params(app_name, channel, release_revision_id))?
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    builder = array_push(builder, int_value(rows.row(index)?.get_int("run_id")?))
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn refresh_run_ids_tx(tx: Transaction, run_ids: Json) -> Result<Bool, String> {
+  let count = array_len(run_ids)?
+  let index = 0
+  while index < count {
+    let run_id = as_int(array_get(run_ids, index)?)?
+    refresh_workflow_run_tx(tx, run_id)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn refresh_workflow_scope_tx(tx: Transaction, app_name: String, channel: String) -> Result<Bool, String> {
+  expired_lease_run_ids_tx(tx, app_name, channel)?
+  let run_ids = workflow_run_ids_json_tx(tx, app_name, channel)?
+  refresh_run_ids_tx(tx, run_ids)?
+  return Ok(true)
+}
+
+fn refresh_workflow_scope(app_name: String, channel: String) -> Result<Bool, String> {
+  validate_workflow_scope(app_name, channel)?
+  let tx = open_workflow_tx()?
+  refresh_workflow_scope_tx(tx, app_name, channel)?
+  tx.commit()?
+  return Ok(true)
+}
+
+fn reconcile_workflow_runs_for_release(app_name: String,
+                                       channel: String,
+                                       release_revision_id: Int) -> Result<Bool, String> {
+  let tx = open_workflow_tx()?
+  let run_ids = workflow_run_ids_for_release_json_tx(tx, app_name, channel, release_revision_id)?
+  refresh_run_ids_tx(tx, run_ids)?
+  tx.commit()?
+  return Ok(true)
+}
+
+fn ensure_default_workflow_definition_tx(tx: Transaction,
+                                         app_name: String,
+                                         channel: String,
+                                         updated_by: String) -> Result<WorkflowDefinition, String> {
+  let lookup = workflow_definition_lookup_tx(tx, app_name, channel)?
+  if lookup.found {
+    return Ok(lookup.definition)
+  }
+  let definition = default_workflow_definition(app_name, channel, updated_by)
+  tx.execute(insert_workflow_definition_sql(), workflow_definition_params(definition))?
+  return Ok(definition)
+}
+
+fn ensure_default_workflow_definition(app_name: String,
+                                      channel: String,
+                                      updated_by: String) -> Result<WorkflowDefinition, String> {
+  validate_workflow_scope(app_name, channel)?
+  validate_actor_segment(updated_by)?
+  let tx = open_workflow_tx()?
+  let definition = ensure_default_workflow_definition_tx(tx, app_name, channel, updated_by)?
+  tx.commit()?
+  return Ok(definition)
+}
+
+fn load_workflow_definition(app_name: String, channel: String) -> Result<WorkflowDefinition, String> {
+  validate_workflow_scope(app_name, channel)?
+  let tx = open_workflow_tx()?
+  let definition = workflow_definition_required_tx(tx, app_name, channel)?
+  tx.commit()?
+  return Ok(definition)
+}
+
+fn created_workflow_definition(app_name: String,
+                               channel: String,
+                               request: WorkflowPutRequest,
+                               updated_by: String) -> WorkflowDefinition {
+  return WorkflowDefinition(app_name,
+                            channel,
+                            request.trigger_kind,
+                            request.event_kind,
+                            request.stages,
+                            1,
+                            updated_by,
+                            unix_millis())
+}
+
+fn updated_workflow_definition(current: WorkflowDefinition,
+                               request: WorkflowPutRequest,
+                               updated_by: String) -> WorkflowDefinition {
+  return WorkflowDefinition(current.app,
+                            current.channel,
+                            request.trigger_kind,
+                            request.event_kind,
+                            request.stages,
+                            current.revision_id + 1,
+                            updated_by,
+                            unix_millis())
+}
+
+fn create_workflow_definition_tx(tx: Transaction,
+                                 app_name: String,
+                                 channel: String,
+                                 request: WorkflowPutRequest,
+                                 expected_revision_id: Int,
+                                 updated_by: String) -> Result<Json, String> {
+  if expected_revision_id != -1 {
+    return Ok(workflow_definition_conflict_outcome(expected_revision_id, 0))
+  }
+  let definition = created_workflow_definition(app_name, channel, request, updated_by)
+  tx.execute(insert_workflow_definition_sql(), workflow_definition_params(definition))?
+  return Ok(workflow_definition_applied_outcome(definition))
+}
+
+fn update_workflow_definition_tx(tx: Transaction,
+                                 current: WorkflowDefinition,
+                                 request: WorkflowPutRequest,
+                                 expected_revision_id: Int,
+                                 updated_by: String) -> Result<Json, String> {
+  if expected_revision_id == -1 {
+    return Ok(workflow_definition_precondition_required_outcome(current.revision_id))
+  }
+  if expected_revision_id != current.revision_id {
+    return Ok(workflow_definition_conflict_outcome(expected_revision_id, current.revision_id))
+  }
+  let definition = updated_workflow_definition(current, request, updated_by)
+  tx.execute(update_workflow_definition_sql(), workflow_definition_update_params(definition))?
+  return Ok(workflow_definition_applied_outcome(definition))
+}
+
+fn workflow_definition_write_outcome_tx(tx: Transaction,
+                                        app_name: String,
+                                        channel: String,
+                                        request: WorkflowPutRequest,
+                                        expected_revision_id: Int,
+                                        updated_by: String) -> Result<Json, String> {
+  let lookup = workflow_definition_lookup_tx(tx, app_name, channel)?
+  if !lookup.found {
+    return create_workflow_definition_tx(tx, app_name, channel, request, expected_revision_id, updated_by)
+  }
+  return update_workflow_definition_tx(tx, lookup.definition, request, expected_revision_id, updated_by)
+}
+
+fn validate_workflow_definition_write_request(app_name: String,
+                                              channel: String,
+                                              request: WorkflowPutRequest,
+                                              updated_by: String) -> Result<Bool, String> {
+  validate_workflow_scope(app_name, channel)?
+  validate_workflow_put_request(request)?
+  validate_shell_task_definition_enabled(request.stages)?
+  validate_actor_segment(updated_by)?
+  return Ok(true)
+}
+
+fn write_workflow_definition(app_name: String,
+                             channel: String,
+                             request: WorkflowPutRequest,
+                             expected_revision_id: Int,
+                             updated_by: String) -> Result<Json, String> {
+  validate_workflow_definition_write_request(app_name, channel, request, updated_by)?
+  let tx = open_workflow_tx()?
+  let outcome = workflow_definition_write_outcome_tx(tx,
+                                                     app_name,
+                                                     channel,
+                                                     request,
+                                                     expected_revision_id,
+                                                     updated_by)?
+  tx.commit()?
+  return Ok(outcome)
+}
+
+fn workflow_run_seed(queued: WorkflowRun,
+                     run_id: Int,
+                     app_name: String,
+                     channel: String,
+                     definition: WorkflowDefinition,
+                     request: WorkflowEventSubmitRequest) -> WorkflowRun {
+  return WorkflowRun(run_id,
+                     app_name,
+                     channel,
+                     definition.revision_id,
+                     request.event_id,
+                     request.event_kind,
+                     request.release_revision_id,
+                     queued.status,
+                     queued.current_stage_index,
+                     queued.requested_by,
+                     queued.requested_unix_ms,
+                     queued.finished_unix_ms,
+                     queued.result_message,
+                     array_build(array_builder()))
+}
+
+fn seed_workflow_run_tx(tx: Transaction,
+                        app_name: String,
+                        channel: String,
+                        definition: WorkflowDefinition,
+                        request: WorkflowEventSubmitRequest,
+                        requested_by: String) -> Result<WorkflowRun, String> {
+  let queued = workflow_run_projection(0, app_name, channel, definition, request, requested_by)
+  tx.execute(insert_workflow_run_sql(), workflow_run_params(queued))?
+  return Ok(workflow_run_seed(queued, last_insert_row_id(tx)?, app_name, channel, definition, request))
+}
+
+fn append_workflow_run_creation_audits_tx(tx: Transaction,
+                                          app_name: String,
+                                          channel: String,
+                                          requested_by: String,
+                                          request: WorkflowEventSubmitRequest,
+                                          refreshed: WorkflowRun) -> Result<Bool, String> {
+  append_audit_event_tx(tx,
+                        workflow_event_received_audit_event(app_name,
+                                                            channel,
+                                                            requested_by,
+                                                            request.release_revision_id,
+                                                            request.event_id,
+                                                            request.event_kind))?
+  append_audit_event_tx(tx, workflow_run_created_audit_event(refreshed))?
+  return Ok(true)
+}
+
+fn create_workflow_run_tx(tx: Transaction,
+                          app_name: String,
+                          channel: String,
+                          definition: WorkflowDefinition,
+                          request: WorkflowEventSubmitRequest,
+                          requested_by: String) -> Result<WorkflowRun, String> {
+  let run = seed_workflow_run_tx(tx, app_name, channel, definition, request, requested_by)?
+  insert_initial_workflow_stage_runs_tx(tx, run.run_id, definition.stages)?
+  let refreshed = refresh_workflow_run_tx(tx, run.run_id)?
+  append_created_workflow_side_effects_tx(tx, app_name, channel, requested_by, request, refreshed)?
+  tx.execute(insert_event_receipt_sql(),
+             workflow_event_receipt_params(app_name,
+                                           channel,
+                                           request.event_id,
+                                           run.run_id,
+                                           request.event_kind,
+                                           request.payload,
+                                           unix_millis()))?
+  return Ok(refreshed)
+}
+
+fn append_created_workflow_side_effects_tx(tx: Transaction,
+                                           app_name: String,
+                                           channel: String,
+                                           requested_by: String,
+                                           request: WorkflowEventSubmitRequest,
+                                           refreshed: WorkflowRun) -> Result<Bool, String> {
+  append_workflow_run_creation_audits_tx(tx, app_name, channel, requested_by, request, refreshed)?
+  insert_workflow_run_created_outbox_tx(tx, refreshed)?
+  return Ok(true)
+}
+
+fn required_event_submit_definition_tx(tx: Transaction,
+                                       app_name: String,
+                                       channel: String,
+                                       request: WorkflowEventSubmitRequest) -> Result<WorkflowDefinition, String> {
+  let definition = workflow_definition_required_tx(tx, app_name, channel)?
+  if request.event_kind != definition.event_kind {
+    return Err("workflow event kind is not enabled for this definition")
+  }
+  load_release_revision_entry_tx(tx, app_name, channel, request.release_revision_id)?
+  validate_deploy_event_enabled(definition, request)?
+  validate_shell_task_event_enabled(definition, request)?
+  return Ok(definition)
+}
+
+fn workflow_event_run_lookup_tx(tx: Transaction,
+                                app_name: String,
+                                channel: String,
+                                event_id: String) -> Result<WorkflowRunLookup, String> {
+  let existing_run_id = event_receipt_run_id_tx(tx, app_name, channel, event_id)?
+  if existing_run_id <= 0 {
+    return Ok(WorkflowRunLookup(false, workflow_run_not_found()))
+  }
+  let existing = workflow_run_lookup_by_id_tx(tx, existing_run_id)?
+  if !existing.found {
+    return Err("workflow event receipt refers to a missing run")
+  }
+  return Ok(existing)
+}
+
+fn workflow_event_payload_tx(tx: Transaction, run: WorkflowRun) -> Result<Json, String> {
+  let rows = tx.query(select_event_receipt_payload_sql(), three_workflow_text_params(run.app, run.channel, run.event_id))?
+  if rows.len()? == 0 {
+    return Ok(null_value())
+  }
+  return parse(rows.row(0)?.get_string("payload")?)
+}
+
+fn validate_workflow_event_submit_call(app_name: String,
+                                       channel: String,
+                                       request: WorkflowEventSubmitRequest,
+                                       requested_by: String) -> Result<Bool, String> {
+  validate_workflow_scope(app_name, channel)?
+  validate_workflow_event_submit_request(request)?
+  validate_actor_segment(requested_by)?
+  return Ok(true)
+}
+
+fn workflow_event_submit_outcome_tx(tx: Transaction,
+                                    app_name: String,
+                                    channel: String,
+                                    request: WorkflowEventSubmitRequest,
+                                    requested_by: String) -> Result<Json, String> {
+  let definition = required_event_submit_definition_tx(tx, app_name, channel, request)?
+  let existing = workflow_event_run_lookup_tx(tx, app_name, channel, request.event_id)?
+  if existing.found {
+    return Ok(workflow_event_submit_outcome("existing", existing.run))
+  }
+  let run = create_workflow_run_tx(tx, app_name, channel, definition, request, requested_by)?
+  return Ok(workflow_event_submit_outcome("created", run))
+}
+
+fn submit_workflow_event_tx(tx: Transaction,
+                            app_name: String,
+                            channel: String,
+                            request: WorkflowEventSubmitRequest,
+                            requested_by: String) -> Result<Json, String> {
+  return workflow_event_submit_outcome_tx(tx, app_name, channel, request, requested_by)
+}
+
+fn submit_workflow_event(app_name: String,
+                         channel: String,
+                         request: WorkflowEventSubmitRequest,
+                         requested_by: String) -> Result<Json, String> {
+  validate_workflow_event_submit_call(app_name, channel, request, requested_by)?
+  let tx = open_workflow_tx()?
+  let outcome = submit_workflow_event_tx(tx, app_name, channel, request, requested_by)?
+  tx.commit()?
+  return Ok(outcome)
+}
+
+fn workflow_runs_json(rows: ResultSet, tx: Transaction) -> Result<Json, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let run = workflow_run_from_row_tx(tx, rows.row(index)?)?
+    builder = array_push(builder, run.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn load_workflow_runs_tx(tx: Transaction, app_name: String, channel: String) -> Result<Json, String> {
+  let rows = tx.query(list_workflow_runs_sql(), two_string_params(app_name, channel))?
+  return workflow_runs_json(rows, tx)
+}
+
+fn load_workflow_runs(app_name: String, channel: String) -> Result<Json, String> {
+  validate_workflow_scope(app_name, channel)?
+  refresh_workflow_scope(app_name, channel)?
+  let tx = open_workflow_tx()?
+  let runs = load_workflow_runs_tx(tx, app_name, channel)?
+  tx.commit()?
+  return Ok(runs)
+}
+
+fn workflow_run_required_in_scope_tx(tx: Transaction,
+                                     app_name: String,
+                                     channel: String,
+                                     run_id: Int) -> Result<WorkflowRun, String> {
+  let lookup = workflow_run_lookup_tx(tx, app_name, channel, run_id)?
+  if !lookup.found {
+    return Err("workflow run not found")
+  }
+  return Ok(lookup.run)
+}
+
+fn load_workflow_run(app_name: String, channel: String, run_id: Int) -> Result<WorkflowRun, String> {
+  validate_workflow_scope(app_name, channel)?
+  if run_id <= 0 {
+    return Err("workflow run_id must be positive")
+  }
+  refresh_workflow_scope(app_name, channel)?
+  let tx = open_workflow_tx()?
+  let run = workflow_run_required_in_scope_tx(tx, app_name, channel, run_id)?
+  tx.commit()?
+  return Ok(run)
+}
+
+fn release_apply_compat_event_id(current: ReleaseEntry) -> String {
+  return text_concat3("release-apply-",
+                      int_text(current.revision_id),
+                      text_concat("-", int_text(unix_millis())))
+}
+
+fn workflow_run_to_apply_run(run: WorkflowRun) -> Result<ApplyRun, String> {
+  let status = "pending"
+  if run.status == "completed" {
+    status = "applied"
+  }
+  if run.status == "failed" {
+    status = "failed"
+  }
+  let runner_id = text_concat("", "")
+  // Keep this as an Int-shaped zero so later timestamp assignment cannot narrow.
+  let started_unix_ms = run.finished_unix_ms - run.finished_unix_ms
+  let count = workflow_run_stage_count(run)?
+  let index = 0
+  while index < count {
+    let stage = workflow_stage_run_at(run, index)?
+    if stage.started_unix_ms > 0 && started_unix_ms == 0 {
+      started_unix_ms = stage.started_unix_ms
+    }
+    if stage.worker_id != "" {
+      runner_id = stage.worker_id
+    }
+    index += 1
+  }
+  return Ok(ApplyRun(run.run_id,
+                     run.app,
+                     run.channel,
+                     run.release_revision_id,
+                     status,
+                     run.requested_by,
+                     run.requested_unix_ms,
+                     started_unix_ms,
+                     run.finished_unix_ms,
+                     runner_id,
+                     run.result_message))
+}
+
+fn release_apply_compat_outcome(kind: String, run: WorkflowRun) -> Result<Json, String> {
+  let compat = workflow_run_to_apply_run(run)?
+  return Ok(object2("kind", string_value(kind), "run", compat.as_json()))
+}
+
+fn existing_release_apply_outcome(run: WorkflowRun) -> Result<Json, String> {
+  if run.status == "completed" {
+    return release_apply_compat_outcome("already_applied", run)
+  }
+  if run.status != "failed" {
+    return release_apply_compat_outcome("already_inflight", run)
+  }
+  return Err("release apply run can be retried")
+}
+
+fn queue_release_apply_workflow_tx(tx: Transaction,
+                                   app_name: String,
+                                   channel: String,
+                                   current: ReleaseEntry,
+                                   requested_by: String) -> Result<WorkflowRun, String> {
+  let definition = workflow_definition_required_tx(tx, app_name, channel)?
+  let request = WorkflowEventSubmitRequest(release_apply_compat_event_id(current),
+                                           "release_apply_requested",
+                                           current.revision_id,
+                                           default_workflow_event_payload(current))
+  let run = create_workflow_run_tx(tx, app_name, channel, definition, request, requested_by)?
+  append_audit_event_tx(tx, apply_requested_audit_event(workflow_run_to_apply_run(run)?))?
+  return Ok(run)
+}
+
+fn release_apply_workflow_queue_outcome(tx: Transaction,
+                                        app_name: String,
+                                        channel: String,
+                                        current: ReleaseEntry,
+                                        requested_by: String) -> Result<Json, String> {
+  let decision = current_approval_decision_tx(tx, current)?
+  if decision.decision != "approved" {
+    return Ok(apply_run_not_approved_outcome(decision))
+  }
+  let latest = latest_release_apply_run_tx(tx, app_name, channel, current.revision_id)?
+  if latest.found {
+    match existing_release_apply_outcome(latest.run) {
+      Ok(outcome) => {
+        return Ok(outcome)
+      }
+      Err(message) => {
+        if message != "release apply run can be retried" {
+          return Err(message)
+        }
+      }
+    }
+  }
+  let run = queue_release_apply_workflow_tx(tx, app_name, channel, current, requested_by)?
+  return release_apply_compat_outcome("queued", run)
+}
+
+fn request_release_apply_workflow_outcome_tx(tx: Transaction,
+                                             app_name: String,
+                                             channel: String,
+                                             expected_revision_id: Int,
+                                             requested_by: String) -> Result<Json, String> {
+  expired_lease_run_ids_tx(tx, app_name, channel)?
+  let gate = release_gate_from_tx(tx, app_name, channel, expected_revision_id)?
+  if !gate.allowed {
+    return Ok(gate.outcome)
+  }
+  return release_apply_workflow_queue_outcome(tx, app_name, channel, gate.current, requested_by)
+}
+
+fn request_release_apply_workflow(app_name: String,
+                                  channel: String,
+                                  expected_revision_id: Int,
+                                  requested_by: String) -> Result<Json, String> {
+  validate_apply_run_request(app_name, channel, requested_by)?
+  let tx = open_workflow_tx()?
+  let outcome = request_release_apply_workflow_outcome_tx(tx, app_name, channel, expected_revision_id, requested_by)?
+  tx.commit()?
+  return Ok(outcome)
+}
+
+fn ready_stage_claim_rows_tx(tx: Transaction, task_kind: String) -> Result<ResultSet, String> {
+  if task_kind != "" {
+    return tx.query(ready_stage_claim_with_task_sql(), one_string_param(task_kind))
+  }
+  return tx.query0(ready_stage_claim_sql())
+}
+
+fn ready_stage_selection_from_row_tx(tx: Transaction, row: Row) -> Result<ReadyStageSelection, String> {
+  let run_id = row.get_int("run_id")?
+  let stage_index = row.get_int("stage_index")?
+  return Ok(ReadyStageSelection(run_id, workflow_stage_run_tx(tx, run_id, stage_index)?))
+}
+
+fn scoped_ready_stage_selection_tx(tx: Transaction,
+                                   task_kind: String,
+                                   app_scope: Json,
+                                   channel_scope: Json,
+                                   row: Row) -> Result<ReadyStageSelection, String> {
+  let selection = ready_stage_selection_from_row_tx(tx, row)?
+  if !workflow_stage_claimable(selection.stage, task_kind) {
+    return Err("worker lease not found")
+  }
+  let run = workflow_run_required_by_id_tx(tx, selection.run_id)?
+  if workflow_scope_matches(app_scope, channel_scope, run.app, run.channel)? {
+    return Ok(selection)
+  }
+  return Err("worker lease not found")
+}
+
+fn selected_ready_stage_tx(tx: Transaction,
+                           task_kind: String,
+                           app_scope: Json,
+                           channel_scope: Json) -> Result<ReadyStageSelection, String> {
+  let rows = ready_stage_claim_rows_tx(tx, task_kind)?
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    match scoped_ready_stage_selection_tx(tx, task_kind, app_scope, channel_scope, rows.row(index)?) {
+      Ok(selection) => { return Ok(selection) }
+      Err(_) => {}
+    }
+    index += 1
+  }
+  return Err("worker lease not found")
+}
+
+fn worker_lease_for_stage_tx(tx: Transaction, run: WorkflowRun, stage: WorkflowStageRun) -> Result<WorkerLease, String> {
+  let release_entry = load_release_revision_entry_tx(tx, run.app, run.channel, run.release_revision_id)?
+  let payload = default_workflow_event_payload(release_entry)
+  if stage.task_kind == "shell_command" {
+    payload = shell_workflow_event_payload(release_entry, workflow_event_payload_tx(tx, run)?)?
+  }
+  return Ok(WorkerLease(stage.lease_id,
+                        run.run_id,
+                        run.app,
+                        run.channel,
+                        stage.stage_index,
+                        stage.stage_name,
+                        stage.task_kind,
+                        run.release_revision_id,
+                        payload,
+                        stage.lease_expires_unix_ms))
+}
+
+fn workflow_scope_refresh_sql() -> String {
+  return "SELECT app, channel FROM workflow_runs WHERE status != 'completed' AND status != 'failed' GROUP BY app, channel"
+}
+
+fn workflow_scope_from_row(row: Row) -> Result<WorkflowScope, String> {
+  return Ok(WorkflowScope(row.get_string("app")?, row.get_string("channel")?))
+}
+
+fn refresh_known_workflow_scope_row(row: Row) -> Result<Bool, String> {
+  let scope = workflow_scope_from_row(row)?
+  return refresh_workflow_scope(scope.app, scope.channel)
+}
+
+fn refresh_known_workflow_scopes() -> Result<Bool, String> {
+  let conn = open(workflow_state_store_path())?
+  let rows = conn.query0(workflow_scope_refresh_sql())?
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    refresh_known_workflow_scope_row(rows.row(index)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn lease_expiration_unix_ms(tx: Transaction, run: WorkflowRun, stage_index: Int) -> Result<Int, String> {
+  let definition = workflow_definition_required_tx(tx, run.app, run.channel)?
+  let spec = workflow_stage_spec_at(definition, stage_index)?
+  return Ok(unix_millis() + spec.timeout_s * 1000)
+}
+
+fn worker_lease_selection_tx(tx: Transaction, lease_id: String) -> Result<ReadyStageSelection, String> {
+  let rows = tx.query(select_worker_lease_sql(), one_string_param(lease_id))?
+  if rows.len()? == 0 {
+    return Err("worker lease not found")
+  }
+  let row = rows.row(0)?
+  let run_id = row.get_int("run_id")?
+  return Ok(ReadyStageSelection(run_id, workflow_stage_run_from_row(row)?))
+}
+
+fn apply_started_audit_if_needed_tx(tx: Transaction,
+                                    run_id: Int,
+                                    leased_stage: WorkflowStageRun) -> Result<Bool, String> {
+  if leased_stage.task_kind == "apply_release" {
+    let run = workflow_run_required_by_id_tx(tx, run_id)?
+    append_audit_event_tx(tx, apply_started_audit_event(workflow_run_to_apply_run(run)?))?
+  }
+  return Ok(true)
+}
+
+fn lease_id_for_stage(run: WorkflowRun, stage: WorkflowStageRun) -> String {
+  let suffix = text_concat3("-", int_text(stage.stage_index), text_concat("-", int_text(stage.attempt)))
+  return text_concat3("lease-", int_text(run.run_id), suffix)
+}
+
+fn leased_stage_for_context(run: WorkflowRun,
+                            stage: WorkflowStageRun,
+                            worker_id: String,
+                            lease_expires_unix_ms: Int) -> WorkflowStageRun {
+  return workflow_stage_leased(stage, worker_id, lease_id_for_stage(run, stage), lease_expires_unix_ms)
+}
+
+fn leased_stage_update_tx(tx: Transaction,
+                          run: WorkflowRun,
+                          stage: WorkflowStageRun,
+                          worker_id: String) -> Result<WorkflowStageRun, String> {
+  let lease_expires_unix_ms = lease_expiration_unix_ms(tx, run, stage.stage_index)?
+  let leased_stage = leased_stage_for_context(run, stage, worker_id, lease_expires_unix_ms)
+  if !claim_ready_workflow_stage_run_tx(tx, run.run_id, leased_stage)? {
+    return Err("worker lease was already claimed")
+  }
+  return Ok(leased_stage)
+}
+
+fn leased_run_context_tx(tx: Transaction,
+                         run: WorkflowRun,
+                         leased_stage: WorkflowStageRun,
+                         worker_id: String) -> Result<WorkerLeaseContext, String> {
+  let leased_run = workflow_run_leased(run, leased_stage.stage_index)
+  update_workflow_run_tx(tx, leased_run)?
+  append_audit_event_tx(tx, workflow_stage_leased_audit_event(leased_run, leased_stage, worker_id))?
+  apply_started_audit_if_needed_tx(tx, run.run_id, leased_stage)?
+  let refreshed = refresh_workflow_run_tx(tx, run.run_id)?
+  return Ok(WorkerLeaseContext(refreshed, leased_stage))
+}
+
+fn leased_stage_context_tx(tx: Transaction,
+                           worker_id: String,
+                           selection: ReadyStageSelection) -> Result<WorkerLeaseContext, String> {
+  let run = workflow_run_required_by_id_tx(tx, selection.run_id)?
+  let stage = selection.stage
+  let leased_stage = leased_stage_update_tx(tx, run, stage, worker_id)?
+  return leased_run_context_tx(tx, run, leased_stage, worker_id)
+}
+
+fn claim_selected_stage_tx(tx: Transaction,
+                           worker_id: String,
+                           selection: ReadyStageSelection) -> Result<WorkerLease, String> {
+  let context = leased_stage_context_tx(tx, worker_id, selection)?
+  return worker_lease_for_stage_tx(tx, context.run, context.stage)
+}
+
+fn claim_worker_lease_tx(tx: Transaction,
+                         worker_id: String,
+                         task_kind: String,
+                         app_scope: Json,
+                         channel_scope: Json) -> Result<Json, String> {
+  match selected_ready_stage_tx(tx, task_kind, app_scope, channel_scope) {
+    Ok(selection) => {
+      match claim_selected_stage_tx(tx, worker_id, selection) {
+        Ok(lease) => {
+          return Ok(worker_claim_outcome("claimed", lease))
+        }
+        Err(msg) => {
+          if msg == "worker lease was already claimed" {
+            return Ok(workflow_idle_claim_outcome())
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(_) => {
+      return Ok(workflow_idle_claim_outcome())
+    }
+  }
+}
+
+fn validate_claim_worker_lease_request(worker_id: String, task_kind: String) -> Result<Bool, String> {
+  validate_actor_segment(worker_id)?
+  if task_kind != "" {
+    validate_workflow_task_kind(task_kind)?
+  }
+  return validate_shell_task_claim_enabled(task_kind)
+}
+
+fn validate_scoped_claim_worker_lease_request(worker_id: String,
+                                              task_kind: String,
+                                              app_scope: Json,
+                                              channel_scope: Json) -> Result<Bool, String> {
+  validate_claim_worker_lease_request(worker_id, task_kind)?
+  validate_app_scope(app_scope)?
+  validate_channel_scope(channel_scope)?
+  return Ok(true)
+}
+
+fn claim_worker_lease(worker_id: String, task_kind: String) -> Result<Json, String> {
+  validate_claim_worker_lease_request(worker_id, task_kind)?
+  refresh_known_workflow_scopes()?
+  let tx = open_workflow_tx()?
+  let outcome = claim_worker_lease_tx(tx, worker_id, task_kind, wildcard_scope(), wildcard_scope())?
+  tx.commit()?
+  return Ok(outcome)
+}
+
+fn claim_worker_lease_scoped(worker_id: String,
+                             task_kind: String,
+                             app_scope: Json,
+                             channel_scope: Json) -> Result<Json, String> {
+  validate_scoped_claim_worker_lease_request(worker_id, task_kind, app_scope, channel_scope)?
+  refresh_known_workflow_scopes()?
+  let tx = open_workflow_tx()?
+  let outcome = claim_worker_lease_tx(tx, worker_id, task_kind, app_scope, channel_scope)?
+  tx.commit()?
+  return Ok(outcome)
+}
+
+fn load_active_worker_lease_context_tx(tx: Transaction,
+                                       lease_id: String,
+                                       worker_id: String,
+                                       app_scope: Json,
+                                       channel_scope: Json) -> Result<WorkerLeaseContext, String> {
+  let selection = worker_lease_selection_tx(tx, lease_id)?
+  let run = workflow_run_required_by_id_tx(tx, selection.run_id)?
+  if !workflow_scope_matches(app_scope, channel_scope, run.app, run.channel)? {
+    return Err("worker lease not found")
+  }
+  let stage = selection.stage
+  if stage.status != "leased" {
+    return Err("worker lease is not active")
+  }
+  if stage.worker_id != worker_id {
+    return Err("worker lease belongs to a different worker")
+  }
+  return Ok(WorkerLeaseContext(run, stage))
+}
+
+fn validate_worker_lease_actor_request(lease_id: String, worker_id: String) -> Result<Bool, String> {
+  if lease_id == "" {
+    return Err("worker lease_id must be non-empty")
+  }
+  validate_actor_segment(worker_id)?
+  return Ok(true)
+}
+
+fn validate_scoped_worker_lease_actor_request(lease_id: String,
+                                              worker_id: String,
+                                              app_scope: Json,
+                                              channel_scope: Json) -> Result<Bool, String> {
+  validate_worker_lease_actor_request(lease_id, worker_id)?
+  validate_app_scope(app_scope)?
+  validate_channel_scope(channel_scope)?
+  return Ok(true)
+}
+
+fn worker_heartbeat_outcome(lease: WorkerLease) -> Json {
+  return object2("kind", string_value("heartbeat"), "lease", lease.as_json())
+}
+
+fn heartbeat_worker_lease_context_tx(tx: Transaction,
+                                     context: WorkerLeaseContext,
+                                     worker_id: String) -> Result<WorkerLease, String> {
+  let lease_expires_unix_ms = lease_expiration_unix_ms(tx, context.run, context.stage.stage_index)?
+  let heartbeat_stage = workflow_stage_heartbeat(context.stage, lease_expires_unix_ms)
+  if !update_active_workflow_stage_run_tx(tx, context.run.run_id, heartbeat_stage)? {
+    return Err("worker lease is not active")
+  }
+  append_audit_event_tx(tx, workflow_stage_heartbeat_audit_event(context.run, heartbeat_stage, worker_id))?
+  return worker_lease_for_stage_tx(tx, context.run, heartbeat_stage)
+}
+
+fn heartbeat_worker_lease_tx(tx: Transaction, lease_id: String, worker_id: String) -> Result<WorkerLease, String> {
+  let context = load_active_worker_lease_context_tx(tx, lease_id, worker_id, wildcard_scope(), wildcard_scope())?
+  return heartbeat_worker_lease_context_tx(tx, context, worker_id)
+}
+
+fn heartbeat_worker_lease_scoped_tx(tx: Transaction,
+                                    lease_id: String,
+                                    worker_id: String,
+                                    app_scope: Json,
+                                    channel_scope: Json) -> Result<WorkerLease, String> {
+  let context = load_active_worker_lease_context_tx(tx, lease_id, worker_id, app_scope, channel_scope)?
+  return heartbeat_worker_lease_context_tx(tx, context, worker_id)
+}
+
+fn heartbeat_worker_lease(lease_id: String, worker_id: String) -> Result<Json, String> {
+  validate_worker_lease_actor_request(lease_id, worker_id)?
+  let tx = open_workflow_tx()?
+  let lease = heartbeat_worker_lease_tx(tx, lease_id, worker_id)?
+  tx.commit()?
+  return Ok(worker_heartbeat_outcome(lease))
+}
+
+fn heartbeat_worker_lease_scoped(lease_id: String,
+                                 worker_id: String,
+                                 app_scope: Json,
+                                 channel_scope: Json) -> Result<Json, String> {
+  validate_scoped_worker_lease_actor_request(lease_id, worker_id, app_scope, channel_scope)?
+  let tx = open_workflow_tx()?
+  let lease = heartbeat_worker_lease_scoped_tx(tx, lease_id, worker_id, app_scope, channel_scope)?
+  tx.commit()?
+  return Ok(worker_heartbeat_outcome(lease))
+}
+
+fn finalized_completed_stage(stage: WorkflowStageRun,
+                             status: String,
+                             result_message: String,
+                             result_payload: Json) -> Result<WorkflowStageRun, String> {
+  let final_status = workflow_complete_stage_status(status)?
+  let message = workflow_complete_result_message(status, result_message)?
+  if final_status == "failed" {
+    return Ok(workflow_stage_failed_with_payload(stage, message, result_payload))
+  }
+  return Ok(workflow_stage_completed_with_payload(stage, message, result_payload))
+}
+
+fn apply_completed_audit_if_needed_tx(tx: Transaction,
+                                      finished_stage: WorkflowStageRun,
+                                      refreshed: WorkflowRun) -> Result<Bool, String> {
+  if finished_stage.task_kind == "apply_release" {
+    append_audit_event_tx(tx, apply_completed_audit_event(workflow_run_to_apply_run(refreshed)?))?
+  }
+  return Ok(true)
+}
+
+fn complete_worker_lease_context_tx(tx: Transaction,
+                                    context: WorkerLeaseContext,
+                                    worker_id: String,
+                                    status: String,
+                                    result_message: String,
+                                    result_payload: Json) -> Result<WorkflowRun, String> {
+  let finished_stage = finalized_completed_stage(context.stage, status, result_message, result_payload)?
+  if !update_active_workflow_stage_run_tx(tx, context.run.run_id, finished_stage)? {
+    return Err("worker lease is not active")
+  }
+  append_audit_event_tx(tx, workflow_stage_completed_audit_event(context.run, finished_stage, worker_id))?
+  let refreshed = refresh_workflow_run_tx(tx, context.run.run_id)?
+  apply_completed_audit_if_needed_tx(tx, finished_stage, refreshed)?
+  return Ok(refreshed)
+}
+
+fn complete_worker_lease_tx(tx: Transaction,
+                            lease_id: String,
+                            worker_id: String,
+                            status: String,
+                            result_message: String,
+                            result_payload: Json) -> Result<WorkflowRun, String> {
+  let context = load_active_worker_lease_context_tx(tx, lease_id, worker_id, wildcard_scope(), wildcard_scope())?
+  return complete_worker_lease_context_tx(tx, context, worker_id, status, result_message, result_payload)
+}
+
+fn validate_complete_worker_lease_request(lease_id: String,
+                                          worker_id: String,
+                                          status: String) -> Result<Bool, String> {
+  validate_worker_lease_actor_request(lease_id, worker_id)?
+  validate_worker_complete_status(status)?
+  return Ok(true)
+}
+
+fn validate_scoped_complete_worker_lease_request(lease_id: String,
+                                                 worker_id: String,
+                                                 status: String,
+                                                 app_scope: Json,
+                                                 channel_scope: Json) -> Result<Bool, String> {
+  validate_complete_worker_lease_request(lease_id, worker_id, status)?
+  validate_app_scope(app_scope)?
+  validate_channel_scope(channel_scope)?
+  return Ok(true)
+}
+
+fn complete_worker_lease(lease_id: String,
+                         worker_id: String,
+                         status: String,
+                         result_message: String,
+                         result_payload: Json) -> Result<Json, String> {
+  validate_complete_worker_lease_request(lease_id, worker_id, status)?
+  let tx = open_workflow_tx()?
+  let refreshed = complete_worker_lease_tx(tx, lease_id, worker_id, status, result_message, result_payload)?
+  tx.commit()?
+  return Ok(worker_complete_outcome(refreshed))
+}
+
+fn complete_worker_lease_scoped_tx(tx: Transaction,
+                                   lease_id: String,
+                                   worker_id: String,
+                                   status: String,
+                                   result_message: String,
+                                   result_payload: Json,
+                                   app_scope: Json,
+                                   channel_scope: Json) -> Result<WorkflowRun, String> {
+  let context = load_active_worker_lease_context_tx(tx, lease_id, worker_id, app_scope, channel_scope)?
+  return complete_worker_lease_context_tx(tx, context, worker_id, status, result_message, result_payload)
+}
+
+fn complete_worker_lease_scoped(lease_id: String,
+                                worker_id: String,
+                                status: String,
+                                result_message: String,
+                                result_payload: Json,
+                                app_scope: Json,
+                                channel_scope: Json) -> Result<Json, String> {
+  validate_scoped_complete_worker_lease_request(lease_id, worker_id, status, app_scope, channel_scope)?
+  let tx = open_workflow_tx()?
+  let refreshed = complete_worker_lease_scoped_tx(tx,
+                                                  lease_id,
+                                                  worker_id,
+                                                  status,
+                                                  result_message,
+                                                  result_payload,
+                                                  app_scope,
+                                                  channel_scope)?
+  tx.commit()?
+  return Ok(worker_complete_outcome(refreshed))
+}
+
+fn run_apply_once_outcome_from_lease(lease: WorkerLease) -> Result<ApplyRunnerCompatOutcome, String> {
+  let outcome = complete_worker_lease(lease.lease_id, "local-runner", "succeeded", "release applied locally", null_value())?
+  let run = workflow_run_from_json(get_value(outcome, "run")?)?
+  return Ok(ApplyRunnerCompatOutcome("processed", workflow_run_to_apply_run(run)?))
+}
+
+fn run_apply_once_via_workflow() -> Result<ApplyRunnerCompatOutcome, String> {
+  let claim = claim_worker_lease("local-runner", "apply_release")?
+  let kind = get_string(claim, "kind")?
+  if kind == "idle" {
+    return Ok(ApplyRunnerCompatOutcome("idle", idle_apply_run()))
+  }
+  let lease = worker_lease_from_json(get_value(claim, "lease")?)?
+  return run_apply_once_outcome_from_lease(lease)
+}

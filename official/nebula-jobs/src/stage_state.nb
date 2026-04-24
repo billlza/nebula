@@ -1,0 +1,79 @@
+module stage_state
+import std::result
+
+fn job_stage_kind_approval_gate() -> String {
+  return "approval_gate"
+}
+
+fn job_stage_kind_leased_task() -> String {
+  return "leased_task"
+}
+
+fn job_stage_claimable(kind: String,
+                       status: String,
+                       task_kind: String,
+                       requested_task_kind: String) -> Bool {
+  if kind != job_stage_kind_leased_task() {
+    return false
+  }
+  if status != "ready" {
+    return false
+  }
+  if requested_task_kind == "" {
+    return true
+  }
+  return task_kind == requested_task_kind
+}
+
+fn job_stage_complete_status(worker_status: String) -> Result<String, String> {
+  if worker_status == "succeeded" {
+    return Ok("completed")
+  }
+  if worker_status == "failed" {
+    return Ok("failed")
+  }
+  return Err("worker complete status must be succeeded or failed")
+}
+
+fn job_approval_gate_resolvable(kind: String, status: String) -> Bool {
+  if kind != job_stage_kind_approval_gate() {
+    return false
+  }
+  return status == "ready" || status == "blocked"
+}
+
+fn job_approval_gate_status(decision: String) -> Result<String, String> {
+  if decision == "approved" {
+    return Ok("completed")
+  }
+  if decision == "rejected" {
+    return Ok("failed")
+  }
+  return Err("approval gate decision must be approved or rejected")
+}
+
+fn job_approval_gate_result_message(decision: String, result_message: String) -> Result<String, String> {
+  if result_message != "" {
+    return Ok(result_message)
+  }
+  if decision == "approved" {
+    return Ok("approval gate approved")
+  }
+  if decision == "rejected" {
+    return Ok("approval gate rejected")
+  }
+  return Err("approval gate decision must be approved or rejected")
+}
+
+fn job_stage_result_message(worker_status: String, result_message: String) -> Result<String, String> {
+  if result_message != "" {
+    return Ok(result_message)
+  }
+  if worker_status == "succeeded" {
+    return Ok("workflow stage completed")
+  }
+  if worker_status == "failed" {
+    return Ok("workflow stage failed")
+  }
+  return Err("worker complete status must be succeeded or failed")
+}

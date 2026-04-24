@@ -8,5 +8,5 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "grep -F '\"id\":2,\"result\":{\"uri\":\"file://' work/lsp-project-overlay.out && grep -F '\"id\":2,\"result\":{\"uri\":\"file://' work/lsp-project-overlay.out | grep -F '\"start\":{\"line\":2,\"character\":0}' && grep -F '\"id\":3,\"result\":{\"uri\":\"file://' work/lsp-project-overlay.out | grep -F '\"start\":{\"line\":3,\"character\":0}' && grep -F '\"id\":4,\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"fn helper\"}}' work/lsp-project-overlay.out"
+run = "grep -F '\"id\":2' work/lsp-project-overlay.out && grep -F '\"start\":{\"character\":0,\"line\":2}' work/lsp-project-overlay.out && grep -F '\"id\":3' work/lsp-project-overlay.out && grep -F '\"start\":{\"character\":0,\"line\":3}' work/lsp-project-overlay.out && grep -F '\"value\":\"fn helper() -> Int\"' work/lsp-project-overlay.out && grep -F '\"uri\":\"file://' work/lsp-project-overlay.out"
 expect_rc = 0

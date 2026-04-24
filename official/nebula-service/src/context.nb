@@ -1,0 +1,262 @@
+module context
+import std::json
+import std::result
+
+struct Principal {
+  subject: String
+  claims: Json
+}
+
+struct RequestContext {
+  service_name: String
+  request_id: Int
+  request_id_text: String
+  request_id_from_header: Bool
+  started_at_ms: Int
+  received_at_unix_ms: Int
+  draining: Bool
+  principal_present: Bool
+  principal_subject: String
+  principal_claims: Json
+  tls_peer_present: Bool
+  tls_peer_verified: Bool
+  tls_peer_subject: String
+  tls_peer_fingerprint_sha256: String
+  tls_peer_san_claims: Json
+  transport_debug: Json
+}
+
+fn principal(subject: String, claims: Json) -> Principal {
+  return Principal(subject, claims)
+}
+
+fn RequestContext_principal_json(self: RequestContext) -> Json {
+  if self.principal_present {
+    return object2(
+      "subject",
+      string_value(self.principal_subject),
+      "claims",
+      self.principal_claims
+    )
+  }
+  return null_value()
+}
+
+fn RequestContext_transport_json(self: RequestContext) -> Json {
+  if self.tls_peer_present {
+    return object6(
+      "tls_peer_present",
+      bool_value(self.tls_peer_present),
+      "tls_peer_verified",
+      bool_value(self.tls_peer_verified),
+      "tls_peer_subject",
+      string_value(self.tls_peer_subject),
+      "tls_peer_fingerprint_sha256",
+      string_value(self.tls_peer_fingerprint_sha256),
+      "tls_peer_san_claims",
+      self.tls_peer_san_claims,
+      "debug",
+      self.transport_debug
+    )
+  }
+  match get_string(self.transport_debug, "alpn_protocol") {
+    Ok(alpn_protocol) => {
+      if alpn_protocol != "" {
+        return object2(
+          "alpn_protocol",
+          string_value(alpn_protocol),
+          "debug",
+          self.transport_debug
+        )
+      }
+    }
+    Err(_) => {}
+  }
+  return null_value()
+}
+
+fn RequestContext_as_json(self: RequestContext) -> Json {
+  return object7(
+    "service",
+    string_value(self.service_name),
+    "request_id",
+    int_value(self.request_id),
+    "request_id_text",
+    string_value(self.request_id_text),
+    "request_id_from_header",
+    bool_value(self.request_id_from_header),
+    "received_at_unix_ms",
+    int_value(self.received_at_unix_ms),
+    "draining",
+    bool_value(self.draining),
+    "state",
+    object3(
+      "started_at_ms",
+      int_value(self.started_at_ms),
+      "principal",
+      self.principal_json(),
+      "transport",
+      self.transport_json()
+    )
+  )
+}
+
+fn RequestContext_is_draining(self: RequestContext) -> Bool {
+  return self.draining
+}
+
+fn RequestContext_has_principal(self: RequestContext) -> Bool {
+  return self.principal_present
+}
+
+fn RequestContext_principal(self: RequestContext) -> Result<Principal, String> {
+  if !self.principal_present {
+    return Err("request context has no principal")
+  }
+  return Ok(Principal(self.principal_subject, self.principal_claims))
+}
+
+fn RequestContext_with_principal(self: RequestContext, value: Principal) -> RequestContext {
+  return RequestContext(self.service_name,
+                        self.request_id,
+                        self.request_id_text,
+                        self.request_id_from_header,
+                        self.started_at_ms,
+                        self.received_at_unix_ms,
+                        self.draining,
+                        true,
+                        value.subject,
+                        value.claims,
+                        self.tls_peer_present,
+                        self.tls_peer_verified,
+                        self.tls_peer_subject,
+                        self.tls_peer_fingerprint_sha256,
+                        self.tls_peer_san_claims,
+                        self.transport_debug)
+}
+
+fn RequestContext_tls_peer_present(self: RequestContext) -> Bool {
+  return self.tls_peer_present
+}
+
+fn RequestContext_tls_peer_verified(self: RequestContext) -> Bool {
+  return self.tls_peer_verified
+}
+
+fn RequestContext_tls_peer_subject(self: RequestContext) -> Result<String, String> {
+  if !self.tls_peer_present {
+    return Err("request context has no TLS peer")
+  }
+  return Ok(self.tls_peer_subject)
+}
+
+fn RequestContext_tls_peer_fingerprint_sha256(self: RequestContext) -> Result<String, String> {
+  if !self.tls_peer_present {
+    return Err("request context has no TLS peer")
+  }
+  if self.tls_peer_fingerprint_sha256 == "" {
+    return Err("request context has no TLS peer fingerprint")
+  }
+  return Ok(self.tls_peer_fingerprint_sha256)
+}
+
+fn RequestContext_tls_peer_san_claims(self: RequestContext) -> Result<Json, String> {
+  if !self.tls_peer_present {
+    return Err("request context has no TLS peer")
+  }
+  return Ok(self.tls_peer_san_claims)
+}
+
+fn RequestContext_transport_debug(self: RequestContext) -> Json {
+  return self.transport_debug
+}
+
+fn RequestContext_tls_peer_identity_debug(self: RequestContext) -> Json {
+  match get_value(self.transport_debug, "tls_peer_identity") {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn RequestContext_http2_debug_state(self: RequestContext) -> Json {
+  match get_value(self.transport_debug, "http2") {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn latest_phase_classification_from_recent_events(recent_events: Json) -> Json {
+  match array_len(recent_events) {
+    Ok(count) => {
+      let index = count - 1
+      while index >= 0 {
+        match array_get(recent_events, index) {
+          Ok(event) => {
+            match get_value(event, "classification") {
+              Ok(value) => {
+                match get_string(value, "reason") {
+                  Ok(_) => {
+                    return value
+                  }
+                  Err(_) => {}
+                }
+              }
+              Err(_) => {}
+            }
+          }
+          Err(_) => {}
+        }
+        index = index - 1
+      }
+      return null_value()
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn transport_debug_phase_classification(transport_debug: Json) -> Json {
+  match get_value(transport_debug, "http2") {
+    Ok(http2_debug) => {
+      match get_value(http2_debug, "timeline") {
+        Ok(timeline) => {
+          match get_value(timeline, "recent_events") {
+            Ok(recent_events) => {
+              return latest_phase_classification_from_recent_events(recent_events)
+            }
+            Err(_) => {
+              return null_value()
+            }
+          }
+        }
+        Err(_) => {
+          return null_value()
+        }
+      }
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn transport_debug_phase_classification_or(transport_debug: Json, fallback: Json) -> Json {
+  let current = transport_debug_phase_classification(transport_debug)
+  match get_string(current, "reason") {
+    Ok(_) => {
+      return current
+    }
+    Err(_) => {
+      return fallback
+    }
+  }
+}

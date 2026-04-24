@@ -1,0 +1,29 @@
+module server
+import std::bytes
+import std::net
+import std::result
+
+async fn serve_once(listener: TcpListener) -> Void {
+  match await listener.accept() {
+    Ok(stream) => {
+      match await stream.read(64) {
+        Ok(bytes) => {
+          match await stream.write_all(bytes) {
+            Ok(_) => {
+              stream.close()
+            }
+            Err(msg) => {
+              print(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}

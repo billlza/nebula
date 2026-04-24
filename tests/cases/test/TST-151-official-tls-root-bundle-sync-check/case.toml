@@ -1,0 +1,12 @@
+id = "TST-151-official-tls-root-bundle-sync-check"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 \"$NEBULA_REPO_ROOT/scripts/sync_tls_root_bundle.py\" --check > work/tls-root-bundle-check.out"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'tls-root-bundle-ok' work/tls-root-bundle-check.out >/dev/null && grep -F 'https://curl.se/ca/cacert-2026-03-19.pem' work/tls-root-bundle-check.out >/dev/null"
+expect_rc = 0

@@ -1,0 +1,158 @@
+id = "TST-277-release-control-plane-token-scope-authz-smoke"
+suite = "test"
+description = "release control plane enforces app/channel scoped authz for token principals"
+
+[[steps]]
+kind = "shell"
+timeout = 240
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/release_control_plane_token_scope_authz")
+state_dir = root / "state"
+ctl_out_dir = root / ".ctl-out"
+scope_file = root / "scopes.json"
+
+copy_example(repo_root, root)
+scope_file.write_text(
+    json.dumps(
+        {
+            "bindings": [
+                {"subject": "reader", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "writer", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "admin", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+            ]
+        }
+    ),
+    encoding="utf-8",
+)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(
+    binary,
+    root,
+    {
+        "APP_STATE_DIR": str(state_dir),
+        "APP_AUTH_REQUIRED": "1",
+        "APP_READ_TOKEN": "reader-token",
+        "APP_WRITE_TOKEN": "writer-token",
+        "APP_ADMIN_TOKEN": "admin-token",
+        "APP_WORKER_TOKEN": "worker-token",
+        "APP_AUTH_SCOPE_FILE": str(scope_file),
+        "APP_SCHEDULES_PREVIEW": "1",
+    },
+)
+
+def require_denied(result, permission_text: str, scope_text: str, label: str) -> None:
+    if result.returncode != 1:
+        print_completed(result)
+        raise SystemExit(f"{label} unexpectedly succeeded")
+    if permission_text not in result.stdout or scope_text not in result.stdout:
+        print_completed(result)
+        raise SystemExit(f"{label} missing scoped denial detail")
+
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f"http://127.0.0.1:{port}"
+    prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out_dir)
+    require_success(prewarm, "prewarm ctl")
+
+    writer_put_prod = run_ctl(
+        binary, root,
+        "config", "put",
+        "--app", "control-plane",
+        "--channel", "prod",
+        "--key", "feature.flag",
+        "--bool", "true",
+        "--description", "flag",
+        "--url", base_url,
+        "--token", "writer-token",
+        "--json",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_success(writer_put_prod, "writer put prod")
+
+    writer_put_stage = run_ctl(
+        binary, root,
+        "config", "put",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--key", "feature.flag",
+        "--bool", "true",
+        "--description", "flag",
+        "--url", base_url,
+        "--token", "writer-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(writer_put_stage, "permission=config.write", "scope=control-plane/stage", "writer put stage")
+
+    reader_release_stage = run_ctl(
+        binary, root,
+        "release", "get",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--url", base_url,
+        "--token", "reader-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(reader_release_stage, "permission=release.read", "scope=control-plane/stage", "reader release get stage")
+
+    admin_schedule_stage = run_ctl(
+        binary, root,
+        "schedule", "put",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--schedule-id", "nightly",
+        "--event-kind", "release_apply_requested",
+        "--release-revision", "1",
+        "--interval-ms", "60000",
+        "--next-due-unix-ms", "1000",
+        "--url", base_url,
+        "--token", "admin-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(admin_schedule_stage, "permission=schedule.write", "scope=control-plane/stage", "admin schedule put stage")
+
+    writer_workflow_stage = run_ctl(
+        binary, root,
+        "workflow", "event", "submit",
+        "--app", "control-plane",
+        "--channel", "stage",
+        "--event-id", "evt-stage-1",
+        "--event-kind", "release_apply_requested",
+        "--release-revision", "1",
+        "--url", base_url,
+        "--token", "writer-token",
+        out_dir=ctl_out_dir,
+        no_build=True,
+    )
+    require_denied(writer_workflow_stage, "permission=jobs.run.trigger", "scope=control-plane/stage", "writer workflow submit stage")
+finally:
+    terminate_process(proc)
+
+print("release-control-plane-token-scope-authz-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-token-scope-authz-ok"]

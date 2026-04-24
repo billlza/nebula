@@ -1,0 +1,99 @@
+module ui
+import std::json
+
+struct View {
+  value: Json
+}
+
+struct UiTree {
+  value: Json
+}
+
+fn schema() -> String {
+  return "nebula-ui.tree.v1"
+}
+
+fn View_as_json(self: View) -> Json {
+  return self.value
+}
+
+fn UiTree_as_json(self: UiTree) -> Json {
+  return self.value
+}
+
+fn empty_children() -> Json {
+  return array_build(array_builder())
+}
+
+fn child1(first: View) -> Json {
+  let children = array_builder()
+  children = array_push(children, first.as_json())
+  return array_build(children)
+}
+
+fn child2(first: View, second: View) -> Json {
+  let children = array_builder()
+  children = array_push(children, first.as_json())
+  children = array_push(children, second.as_json())
+  return array_build(children)
+}
+
+fn child3(first: View, second: View, third: View) -> Json {
+  let children = array_builder()
+  children = array_push(children, first.as_json())
+  children = array_push(children, second.as_json())
+  children = array_push(children, third.as_json())
+  return array_build(children)
+}
+
+fn view_node(component: String, props: Json, children: Json) -> View {
+  return View(object4("schema",
+                      string_value(schema()),
+                      "component",
+                      string_value(component),
+                      "props",
+                      props,
+                      "children",
+                      children))
+}
+
+fn tree(root: View) -> UiTree {
+  return UiTree(object2("schema", string_value(schema()), "root", root.as_json()))
+}
+
+fn window(title: String, children: Json) -> View {
+  return view_node("Window", object1("title", string_value(title)), children)
+}
+
+fn column(spacing: Int, children: Json) -> View {
+  return view_node("Column", object1("spacing", int_value(spacing)), children)
+}
+
+fn row(spacing: Int, children: Json) -> View {
+  return view_node("Row", object1("spacing", int_value(spacing)), children)
+}
+
+fn text(value: String) -> View {
+  return view_node("Text", object1("text", string_value(value)), empty_children())
+}
+
+fn button(value: String, action: String) -> View {
+  return view_node("Button",
+                   object2("text", string_value(value), "action", string_value(action)),
+                   empty_children())
+}
+
+fn input(value: String, action: String, label: String) -> View {
+  return view_node("Input",
+                   object3("value",
+                           string_value(value),
+                           "action",
+                           string_value(action),
+                           "accessibility_label",
+                           string_value(label)),
+                   empty_children())
+}
+
+fn spacer() -> View {
+  return view_node("Spacer", object1("kind", string_value("flex")), empty_children())
+}

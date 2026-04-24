@@ -1,0 +1,216 @@
+id = "TST-258-release-control-plane-schedule-tick-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/release_control_plane_schedule_tick')
+state_dir = root / 'state'
+ctl_out = root / '.ctl-out'
+admin_token = 'admin-schedule-token'
+writer_token = 'writer-schedule-token'
+reader_token = 'reader-schedule-token'
+worker_token = 'worker-schedule-token'
+service_env = {
+    'APP_STATE_DIR': str(state_dir),
+    'APP_SCHEDULES_PREVIEW': '1',
+    'APP_AUTH_REQUIRED': '1',
+    'APP_ADMIN_TOKEN': admin_token,
+    'APP_WRITE_TOKEN': writer_token,
+    'APP_READ_TOKEN': reader_token,
+    'APP_WORKER_TOKEN': worker_token,
+}
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, service_env)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+    prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    config_put = run_ctl(
+        binary, root,
+        'config', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--key', 'feature.flag',
+        '--bool', 'true',
+        '--description', 'schedule tick',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(config_put, 'config put')
+
+    release_put = run_ctl(
+        binary, root,
+        'release', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--version', '2026.04.23',
+        '--config-revision', '1',
+        '--description', 'schedule tick',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(release_put, 'release put')
+
+    schedule_put = run_ctl(
+        binary, root,
+        'schedule', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--schedule-id', 'nightly',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--interval-ms', '60000',
+        '--next-due-unix-ms', '1000',
+        '--url', base_url,
+        '--token', admin_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(schedule_put, 'schedule put')
+    put_payload = json.loads(schedule_put.stdout)
+    if put_payload.get('definition', {}).get('next_due_unix_ms') != 1000:
+        raise SystemExit(f'schedule put next due drifted: {put_payload!r}')
+
+    before_due = run_ctl(
+        binary, root,
+        'schedule', 'tick',
+        '--now-unix-ms', '999',
+        '--url', base_url,
+        '--token', admin_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(before_due, 'schedule tick before due')
+    before_payload = json.loads(before_due.stdout)
+    if before_payload.get('checked') != 0 or before_payload.get('triggered') != []:
+        raise SystemExit(f'before-due tick should be empty: {before_payload!r}')
+
+    due = run_ctl(
+        binary, root,
+        'schedule', 'tick',
+        '--now-unix-ms', '1000',
+        '--url', base_url,
+        '--token', admin_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(due, 'schedule tick due')
+    due_payload = json.loads(due.stdout)
+    triggered = due_payload.get('triggered', [])
+    if due_payload.get('checked') != 1 or len(triggered) != 1:
+        raise SystemExit(f'due tick should trigger exactly one schedule: {due_payload!r}')
+    first = triggered[0]
+    if (
+        first.get('event_id') != 'schedule-control-plane-prod-nightly-1000'
+        or first.get('outcome') != 'created'
+        or first.get('next_due_unix_ms') != 61000
+    ):
+        raise SystemExit(f'due tick event payload drifted: {first!r}')
+
+    replay = run_ctl(
+        binary, root,
+        'schedule', 'tick',
+        '--now-unix-ms', '1000',
+        '--url', base_url,
+        '--token', admin_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(replay, 'schedule tick replay same clock')
+    replay_payload = json.loads(replay.stdout)
+    if replay_payload.get('checked') != 0 or replay_payload.get('triggered') != []:
+        raise SystemExit(f'replayed tick should not create another run: {replay_payload!r}')
+
+    unauthorized = run_ctl(
+        binary, root,
+        'schedule', 'tick',
+        '--now-unix-ms', '61000',
+        '--url', base_url,
+        '--token', reader_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if unauthorized.returncode == 0 or 'required role: admin' not in unauthorized.stdout:
+        print(unauthorized.stdout, end='')
+        print(unauthorized.stderr, end='')
+        raise SystemExit('reader token unexpectedly ticked schedules')
+
+    runs = run_ctl(
+        binary, root,
+        'workflow', 'runs',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--url', base_url,
+        '--token', reader_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(runs, 'workflow runs after schedule tick')
+    runs_payload = json.loads(runs.stdout)
+    scheduled_runs = [
+        run for run in runs_payload.get('runs', [])
+        if run.get('event_id') == 'schedule-control-plane-prod-nightly-1000'
+    ]
+    if len(scheduled_runs) != 1:
+        raise SystemExit(f'expected one scheduled workflow run, got: {runs_payload!r}')
+finally:
+    terminate_process(proc)
+
+service_binary = root / '.service-out' / 'main.out'
+fail_env = {
+    **os.environ,
+    'NEBULA_BIND_HOST': '127.0.0.1',
+    'NEBULA_PORT': '0',
+    'APP_STATE_DIR': str(root / 'state-preview-fail'),
+    'APP_SCHEDULES_PREVIEW': '1',
+}
+failed = subprocess.run([str(service_binary)], capture_output=True, text=True, env=fail_env, timeout=10)
+if failed.returncode == 0:
+    raise SystemExit('schedule preview unexpectedly started without auth')
+if 'startup preflight failed: cron_schedule preview requires APP_AUTH_REQUIRED=1' not in failed.stdout:
+    print(failed.stdout, end='')
+    print(failed.stderr, end='')
+    raise SystemExit('schedule preview missing default-off auth diagnostic')
+
+print('release-control-plane-schedule-tick-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-schedule-tick-ok"]

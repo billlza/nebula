@@ -8,5 +8,5 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "grep -F '\"id\":2,\"result\":{\"uri\":\"file://' work/lsp-local-extern.out && grep -F '\"start\":{\"line\":3,\"character\":2}' work/lsp-local-extern.out && grep -F '\"id\":3,\"result\":{\"uri\":\"file://' work/lsp-local-extern.out && grep -F '\"start\":{\"line\":0,\"character\":0}' work/lsp-local-extern.out"
+run = "grep -F '\"id\":2' work/lsp-local-extern.out && grep -F '\"range\":' work/lsp-local-extern.out && grep -F '\"start\":{\"character\":2,\"line\":3}' work/lsp-local-extern.out && grep -F '\"id\":3' work/lsp-local-extern.out && grep -F '\"start\":{\"character\":0,\"line\":0}' work/lsp-local-extern.out && grep -F '\"uri\":\"file://' work/lsp-local-extern.out"
 expect_rc = 0

@@ -1,0 +1,38 @@
+module aead
+import std::bytes
+import std::result
+
+struct ChaCha20Poly1305Key {}
+
+extern fn __nebula_crypto_chacha20_poly1305_key_to_bytes(self: ChaCha20Poly1305Key) -> Bytes
+extern fn __nebula_crypto_chacha20_poly1305_key_from_bytes(bytes: Bytes) -> Result<ChaCha20Poly1305Key, String>
+extern fn __nebula_crypto_chacha20_poly1305_seal(key: ChaCha20Poly1305Key,
+                                                 nonce: Bytes,
+                                                 aad: Bytes,
+                                                 plaintext: Bytes) -> Result<Bytes, String>
+extern fn __nebula_crypto_chacha20_poly1305_open(key: ChaCha20Poly1305Key,
+                                                 nonce: Bytes,
+                                                 aad: Bytes,
+                                                 ciphertext: Bytes) -> Result<Bytes, String>
+
+fn ChaCha20Poly1305Key_to_bytes(self: ChaCha20Poly1305Key) -> Bytes {
+  return __nebula_crypto_chacha20_poly1305_key_to_bytes(self)
+}
+
+fn chacha20_poly1305_key_from_bytes(bytes: Bytes) -> Result<ChaCha20Poly1305Key, String> {
+  return __nebula_crypto_chacha20_poly1305_key_from_bytes(bytes)
+}
+
+fn seal(key: ChaCha20Poly1305Key,
+        nonce: Bytes,
+        aad: Bytes,
+        plaintext: Bytes) -> Result<Bytes, String> {
+  return __nebula_crypto_chacha20_poly1305_seal(key, nonce, aad, plaintext)
+}
+
+fn open(key: ChaCha20Poly1305Key,
+        nonce: Bytes,
+        aad: Bytes,
+        ciphertext: Bytes) -> Result<Bytes, String> {
+  return __nebula_crypto_chacha20_poly1305_open(key, nonce, aad, ciphertext)
+}

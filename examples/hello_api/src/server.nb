@@ -1,0 +1,55 @@
+module server
+import service::context
+import service::errors
+import service::health
+import service::middleware
+import service::routing
+import std::http
+import std::result
+
+fn service_name() -> String {
+  return "hello-api"
+}
+
+async fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await dispatch_ctx3_result(
+    ctx,
+    request,
+    Get,
+    "/healthz",
+    handle_health_route,
+    Get,
+    "/readyz",
+    handle_ready_route,
+    Get,
+    "/hello/:name",
+    handle_hello_route,
+    not_found_text("not found")
+  )
+}
+
+async fn handle_health_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(live_response_with_context(ctx))
+}
+
+async fn handle_ready_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if ctx.is_draining() {
+    return Ok(draining_response_with_context(ctx))
+  }
+  return Ok(ready_response_with_context(ctx))
+}
+
+async fn handle_hello_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_hello_route_inner)
+}
+
+async fn handle_hello_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match route_param1("/hello/:name", request) {
+    Ok(name) => {
+      return Ok(ok_text(name))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}

@@ -1,0 +1,106 @@
+id = "TST-133-hosted-registry-immutable-rejects-drift"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport socket\nfrom pathlib import Path\nwith socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:\n    sock.bind(('127.0.0.1', 0))\n    port = sock.getsockname()[1]\nroot = Path('work/hosted_registry_immutable')\n(root / 'dep' / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'runtime').mkdir(parents=True, exist_ok=True)\n(root / 'port.txt').write_text(str(port), encoding='utf-8')\n(root / 'token.txt').write_text('dev-token\\n', encoding='utf-8')\n(root / 'dep' / 'nebula.toml').write_text('''schema_version = 1\\n\\n[package]\\nname = \"immutable-hosted\"\\nversion = \"1.0.0\"\\nentry = \"src/lib.nb\"\\nsrc_dir = \"src\"\\n''', encoding='utf-8')\n(root / 'dep' / 'src' / 'lib.nb').write_text('''module lib\\n\\nfn value() -> Int {\\n  return 1\\n}\\n''', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path('work/hosted_registry_immutable')
+port = (root / 'port.txt').read_text(encoding='utf-8').strip()
+token = (root / 'token.txt').read_text(encoding='utf-8').strip()
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+server_script = repo_root / 'tooling' / 'registry' / 'server.py'
+log_path = root / 'server.log'
+
+command = [
+    sys.executable,
+    str(server_script),
+    'serve',
+    '--root',
+    str((root / 'runtime').resolve()),
+    '--host',
+    '127.0.0.1',
+    '--port',
+    port,
+    '--token',
+    token,
+    '--port-file',
+    str((root / 'runtime' / 'server.port').resolve()),
+]
+
+with log_path.open('ab') as log_file:
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+(root / 'server.pid').write_text(str(proc.pid), encoding='utf-8')
+PY
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import time
+from pathlib import Path
+from urllib import request
+
+root = Path('work/hosted_registry_immutable')
+port_file = root / 'runtime' / 'server.port'
+
+for _ in range(100):
+    if port_file.exists():
+        port = port_file.read_text(encoding='utf-8').strip()
+        if port:
+            try:
+                with request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=0.2) as response:
+                    if response.status == 200:
+                        raise SystemExit(0)
+            except Exception:
+                pass
+    time.sleep(0.05)
+
+raise SystemExit('server health probe did not succeed in time')
+PY
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "port=$(cat work/hosted_registry_immutable/port.txt) && token=$(cat work/hosted_registry_immutable/token.txt) && \"$NEBULA_BINARY\" publish work/hosted_registry_immutable/dep --registry-url \"http://127.0.0.1:$port\" --registry-token \"$token\""
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\npath = Path('work/hosted_registry_immutable/dep/src/lib.nb')\npath.write_text('''module lib\\n\\nfn value() -> Int {\\n  return 2\\n}\\n''', encoding='utf-8')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "port=$(cat work/hosted_registry_immutable/port.txt) && token=$(cat work/hosted_registry_immutable/token.txt) && \"$NEBULA_BINARY\" publish work/hosted_registry_immutable/dep --registry-url \"http://127.0.0.1:$port\" --registry-token \"$token\" > work/hosted_registry_immutable/push.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'package version is immutable' work/hosted_registry_immutable/push.out"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "kill $(cat work/hosted_registry_immutable/server.pid)"
+expect_rc = 0

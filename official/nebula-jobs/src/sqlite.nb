@@ -1,0 +1,1391 @@
+module sqlite
+import contracts
+import db_sqlite::sqlite
+import std::bytes
+import std::json
+import std::result
+import stage_state
+import validate
+
+fn sqlite_text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+struct JobDefinitionLookup {
+  found: Bool
+  definition: JobDefinition
+}
+
+struct JobRunLookup {
+  found: Bool
+  run: JobRun
+}
+
+struct StageSelection {
+  found: Bool
+  stage: JobStageRun
+}
+
+struct OutboxLookup {
+  found: Bool
+  message: OutboxMessage
+}
+
+struct DefinitionRowCore {
+  name: String
+  trigger_kind: String
+  event_kind: String
+  stages: Json
+}
+
+struct DefinitionRowMeta {
+  revision_id: Int
+  updated_by: String
+  updated_unix_ms: Int
+}
+
+struct StageRowCore {
+  run_id: Int
+  stage_index: Int
+  stage_name: String
+  kind: String
+  task_kind: String
+  status: String
+  attempt: Int
+}
+
+struct StageRowMeta {
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct StageRowLease {
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+}
+
+struct StageRowResult {
+  started_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  result_payload: Json
+}
+
+struct RunRowCore {
+  run_id: Int
+  name: String
+  definition_revision_id: Int
+  event_id: String
+  event_kind: String
+  status: String
+}
+
+struct RunRowMeta {
+  current_stage_index: Int
+  requested_by: String
+  requested_unix_ms: Int
+  finished_unix_ms: Int
+  result_message: String
+  payload: Json
+}
+
+struct OutboxRowCore {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+  payload: Json
+  status: String
+  attempt: Int
+}
+
+struct OutboxRowIdentity {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+}
+
+struct OutboxRowState {
+  payload: Json
+  status: String
+  attempt: Int
+}
+
+struct OutboxRowMeta {
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+struct OutboxRowLease {
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+}
+
+struct OutboxRowTiming {
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+fn int_text(value: Int) -> String {
+  return stringify(int_value(value))
+}
+
+fn text_concat3(first: String, second: String, third: String) -> String {
+  return sqlite_text_concat(sqlite_text_concat(first, second), third)
+}
+
+fn one_int_param(value: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(value))
+  return array_build(builder)
+}
+
+fn one_string_param(value: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(value))
+  return array_build(builder)
+}
+
+fn two_string_params(first: String, second: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(first))
+  builder = array_push(builder, string_value(second))
+  return array_build(builder)
+}
+
+fn migrations() -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, migration(1, "create_jobs_definitions", "CREATE TABLE IF NOT EXISTS jobs_definitions (name TEXT PRIMARY KEY, trigger_kind TEXT NOT NULL, event_kind TEXT NOT NULL, stages TEXT NOT NULL, revision_id INTEGER NOT NULL, updated_by TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL)"))
+  builder = array_push(builder, migration(2, "create_jobs_runs", "CREATE TABLE IF NOT EXISTS jobs_runs (run_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, definition_revision_id INTEGER NOT NULL, event_id TEXT NOT NULL, event_kind TEXT NOT NULL, status TEXT NOT NULL, current_stage_index INTEGER NOT NULL, requested_by TEXT NOT NULL, requested_unix_ms INTEGER NOT NULL, finished_unix_ms INTEGER NOT NULL, result_message TEXT NOT NULL, payload TEXT NOT NULL)"))
+  builder = array_push(builder, migration(3, "create_jobs_stage_runs", "CREATE TABLE IF NOT EXISTS jobs_stage_runs (run_id INTEGER NOT NULL, stage_index INTEGER NOT NULL, stage_name TEXT NOT NULL, task_kind TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL, lease_id TEXT NOT NULL, worker_id TEXT NOT NULL, lease_expires_unix_ms INTEGER NOT NULL, started_unix_ms INTEGER NOT NULL, finished_unix_ms INTEGER NOT NULL, result_message TEXT NOT NULL, result_payload TEXT NOT NULL, PRIMARY KEY (run_id, stage_index))"))
+  builder = array_push(builder, migration(4, "create_jobs_event_receipts", "CREATE TABLE IF NOT EXISTS jobs_event_receipts (event_id TEXT PRIMARY KEY, run_id INTEGER NOT NULL)"))
+  builder = array_push(builder, migration(5, "create_jobs_outbox_messages", "CREATE TABLE IF NOT EXISTS jobs_outbox_messages (message_id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, key TEXT NOT NULL, dedupe_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL, max_attempts INTEGER NOT NULL, lease_id TEXT NOT NULL, worker_id TEXT NOT NULL, lease_expires_unix_ms INTEGER NOT NULL, next_attempt_unix_ms INTEGER NOT NULL, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL, result_message TEXT NOT NULL)"))
+  builder = array_push(builder, migration(6, "add_jobs_stage_kind", "ALTER TABLE jobs_stage_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'leased_task'"))
+  return array_build(builder)
+}
+
+fn initialize(path: String) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.run_migrations(migrations())?
+  return Ok(true)
+}
+
+fn open_tx(path: String) -> Result<Transaction, String> {
+  initialize(path)?
+  let conn = open(path)?
+  return conn.begin_transaction()
+}
+
+fn last_insert_id(tx: Transaction) -> Result<Int, String> {
+  let rows = tx.query0("SELECT last_insert_rowid() AS id")?
+  if rows.len()? == 0 {
+    return Err("last_insert_rowid returned no rows")
+  }
+  return rows.row(0)?.get_int("id")
+}
+
+fn definition_params(definition: JobDefinition) -> Json {
+  let builder = array_builder()
+  builder = definition_params_core(builder, definition)
+  builder = definition_params_meta(builder, definition)
+  return array_build(builder)
+}
+
+fn definition_params_core(builder: JsonArrayBuilder, definition: JobDefinition) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(definition.name))
+  builder = array_push(builder, string_value(definition.trigger_kind))
+  builder = array_push(builder, string_value(definition.event_kind))
+  builder = array_push(builder, string_value(stringify(definition.stages)))
+  return builder
+}
+
+fn definition_params_meta(builder: JsonArrayBuilder, definition: JobDefinition) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(definition.revision_id))
+  builder = array_push(builder, string_value(definition.updated_by))
+  builder = array_push(builder, int_value(definition.updated_unix_ms))
+  return builder
+}
+
+fn definition_from_row(row: Row) -> Result<JobDefinition, String> {
+  let core = definition_row_core(row)?
+  let meta = definition_row_meta(row)?
+  return Ok(JobDefinition(core.name,
+                          core.trigger_kind,
+                          core.event_kind,
+                          core.stages,
+                          meta.revision_id,
+                          meta.updated_by,
+                          meta.updated_unix_ms))
+}
+
+fn definition_row_core(row: Row) -> Result<DefinitionRowCore, String> {
+  return Ok(DefinitionRowCore(row.get_string("name")?,
+                              row.get_string("trigger_kind")?,
+                              row.get_string("event_kind")?,
+                              parse(row.get_string("stages")?)?))
+}
+
+fn definition_row_meta(row: Row) -> Result<DefinitionRowMeta, String> {
+  return Ok(DefinitionRowMeta(row.get_int("revision_id")?,
+                              row.get_string("updated_by")?,
+                              row.get_int("updated_unix_ms")?))
+}
+
+fn write_definition(path: String, definition: JobDefinition) -> Result<JobDefinition, String> {
+  validate_job_definition(definition)?
+  let tx = open_tx(path)?
+  tx.execute("INSERT OR REPLACE INTO jobs_definitions(name, trigger_kind, event_kind, stages, revision_id, updated_by, updated_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?)", definition_params(definition))?
+  tx.commit()?
+  return Ok(definition)
+}
+
+fn load_definition_tx(tx: Transaction, name: String) -> Result<JobDefinition, String> {
+  let rows = tx.query("SELECT name, trigger_kind, event_kind, stages, revision_id, updated_by, updated_unix_ms FROM jobs_definitions WHERE name = ?", one_string_param(name))?
+  if rows.len()? == 0 {
+    return Err("job definition not found")
+  }
+  return definition_from_row(rows.row(0)?)
+}
+
+fn load_definition(path: String, name: String) -> Result<JobDefinition, String> {
+  let tx = open_tx(path)?
+  let definition = load_definition_tx(tx, name)?
+  tx.commit()?
+  return Ok(definition)
+}
+
+fn stage_initial_status(stage: JobStageSpec) -> Result<String, String> {
+  if array_len(stage.depends_on)? == 0 {
+    return Ok("ready")
+  }
+  return Ok("blocked")
+}
+
+fn stage_insert_params(run_id: Int, index: Int, stage: JobStageSpec) -> Result<Json, String> {
+  let builder = array_builder()
+  builder = stage_insert_identity_params(builder, run_id, index, stage)
+  builder = stage_insert_state_params(builder, stage)?
+  builder = stage_insert_empty_result_params(builder)
+  return Ok(array_build(builder))
+}
+
+fn stage_insert_identity_params(builder: JsonArrayBuilder, run_id: Int, index: Int, stage: JobStageSpec) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(index))
+  builder = array_push(builder, string_value(stage.name))
+  builder = array_push(builder, string_value(stage.kind))
+  builder = array_push(builder, string_value(stage.task_kind))
+  return builder
+}
+
+fn stage_insert_state_params(builder: JsonArrayBuilder, stage: JobStageSpec) -> Result<JsonArrayBuilder, String> {
+  builder = array_push(builder, string_value(stage_initial_status(stage)?))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, int_value(0))
+  return Ok(builder)
+}
+
+fn stage_insert_empty_result_params(builder: JsonArrayBuilder) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, string_value("null"))
+  return builder
+}
+
+fn insert_stage_runs_tx(tx: Transaction, run_id: Int, stages: Json) -> Result<Bool, String> {
+  let count = array_len(stages)?
+  let index = 0
+  while index < count {
+    let stage = job_stage_spec_from_json(array_get(stages, index)?)?
+    tx.execute("INSERT INTO jobs_stage_runs(run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", stage_insert_params(run_id, index, stage)?)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn run_insert_params(definition: JobDefinition,
+                     event_id: String,
+                     payload: Json,
+                     requested_by: String,
+                     now_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = run_insert_identity_params(builder, definition, event_id)
+  builder = run_insert_state_params(builder, requested_by, now_unix_ms)
+  builder = array_push(builder, string_value(stringify(payload)))
+  return array_build(builder)
+}
+
+fn run_insert_identity_params(builder: JsonArrayBuilder, definition: JobDefinition, event_id: String) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(definition.name))
+  builder = array_push(builder, int_value(definition.revision_id))
+  builder = array_push(builder, string_value(event_id))
+  builder = array_push(builder, string_value(definition.event_kind))
+  return builder
+}
+
+fn run_insert_state_params(builder: JsonArrayBuilder, requested_by: String, now_unix_ms: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value("ready"))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, string_value(requested_by))
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, string_value(""))
+  return builder
+}
+
+fn event_receipt_run_id_tx(tx: Transaction, event_id: String) -> Result<Int, String> {
+  let rows = tx.query("SELECT run_id FROM jobs_event_receipts WHERE event_id = ?", one_string_param(event_id))?
+  if rows.len()? == 0 {
+    return Ok(0)
+  }
+  return rows.row(0)?.get_int("run_id")
+}
+
+fn insert_event_receipt_tx(tx: Transaction, event_id: String, run_id: Int) -> Result<Bool, String> {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(event_id))
+  builder = array_push(builder, int_value(run_id))
+  tx.execute("INSERT INTO jobs_event_receipts(event_id, run_id) VALUES (?, ?)", array_build(builder))?
+  return Ok(true)
+}
+
+fn stage_run_from_row(row: Row) -> Result<JobStageRun, String> {
+  let core = stage_row_core(row)?
+  let meta = stage_row_meta(row)?
+  return Ok(JobStageRun(core.run_id,
+                        core.stage_index,
+                        core.stage_name,
+                        core.kind,
+                        core.task_kind,
+                        core.status,
+                        core.attempt,
+                        meta.lease_id,
+                        meta.worker_id,
+                        meta.lease_expires_unix_ms,
+                        meta.started_unix_ms,
+                        meta.finished_unix_ms,
+                        meta.result_message,
+                        meta.result_payload))
+}
+
+fn stage_row_core(row: Row) -> Result<StageRowCore, String> {
+  return Ok(StageRowCore(row.get_int("run_id")?,
+                         row.get_int("stage_index")?,
+                         row.get_string("stage_name")?,
+                         row.get_string("kind")?,
+                         row.get_string("task_kind")?,
+                         row.get_string("status")?,
+                         row.get_int("attempt")?))
+}
+
+fn stage_row_meta(row: Row) -> Result<StageRowMeta, String> {
+  let lease = stage_row_lease(row)?
+  let result = stage_row_result(row)?
+  return Ok(StageRowMeta(lease.lease_id,
+                         lease.worker_id,
+                         lease.lease_expires_unix_ms,
+                         result.started_unix_ms,
+                         result.finished_unix_ms,
+                         result.result_message,
+                         result.result_payload))
+}
+
+fn stage_row_lease(row: Row) -> Result<StageRowLease, String> {
+  return Ok(StageRowLease(row.get_string("lease_id")?,
+                          row.get_string("worker_id")?,
+                          row.get_int("lease_expires_unix_ms")?))
+}
+
+fn stage_row_result(row: Row) -> Result<StageRowResult, String> {
+  return Ok(StageRowResult(row.get_int("started_unix_ms")?,
+                           row.get_int("finished_unix_ms")?,
+                           row.get_string("result_message")?,
+                           parse(row.get_string("result_payload")?)?))
+}
+
+fn stages_for_run_tx(tx: Transaction, run_id: Int) -> Result<Json, String> {
+  let rows = tx.query("SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE run_id = ? ORDER BY stage_index ASC", one_int_param(run_id))?
+  let builder = array_builder()
+  let index = 0
+  while index < rows.len()? {
+    builder = array_push(builder, stage_run_from_row(rows.row(index)?)?.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn run_from_row_tx(tx: Transaction, row: Row) -> Result<JobRun, String> {
+  let core = run_row_core(row)?
+  let meta = run_row_meta(row)?
+  return Ok(JobRun(core.run_id,
+                   core.name,
+                   core.definition_revision_id,
+                   core.event_id,
+                   core.event_kind,
+                   core.status,
+                   meta.current_stage_index,
+                   meta.requested_by,
+                   meta.requested_unix_ms,
+                   meta.finished_unix_ms,
+                   meta.result_message,
+                   meta.payload,
+                   stages_for_run_tx(tx, core.run_id)?))
+}
+
+fn run_row_core(row: Row) -> Result<RunRowCore, String> {
+  return Ok(RunRowCore(row.get_int("run_id")?,
+                       row.get_string("name")?,
+                       row.get_int("definition_revision_id")?,
+                       row.get_string("event_id")?,
+                       row.get_string("event_kind")?,
+                       row.get_string("status")?))
+}
+
+fn run_row_meta(row: Row) -> Result<RunRowMeta, String> {
+  return Ok(RunRowMeta(row.get_int("current_stage_index")?,
+                       row.get_string("requested_by")?,
+                       row.get_int("requested_unix_ms")?,
+                       row.get_int("finished_unix_ms")?,
+                       row.get_string("result_message")?,
+                       parse(row.get_string("payload")?)?))
+}
+
+fn load_run_tx(tx: Transaction, run_id: Int) -> Result<JobRun, String> {
+  let rows = tx.query("SELECT run_id, name, definition_revision_id, event_id, event_kind, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message, payload FROM jobs_runs WHERE run_id = ?", one_int_param(run_id))?
+  if rows.len()? == 0 {
+    return Err("job run not found")
+  }
+  return run_from_row_tx(tx, rows.row(0)?)
+}
+
+fn load_run(path: String, run_id: Int) -> Result<JobRun, String> {
+  let tx = open_tx(path)?
+  let run = load_run_tx(tx, run_id)?
+  tx.commit()?
+  return Ok(run)
+}
+
+fn create_run(path: String,
+              name: String,
+              event_id: String,
+              payload: Json,
+              requested_by: String,
+              now_unix_ms: Int) -> Result<JobRun, String> {
+  validate_non_empty("event_id", event_id)?
+  let tx = open_tx(path)?
+  let run = create_run_tx(tx, name, event_id, payload, requested_by, now_unix_ms)?
+  tx.commit()?
+  return Ok(run)
+}
+
+fn create_run_tx(tx: Transaction,
+                 name: String,
+                 event_id: String,
+                 payload: Json,
+                 requested_by: String,
+                 now_unix_ms: Int) -> Result<JobRun, String> {
+  let existing = event_receipt_run_id_tx(tx, event_id)?
+  if existing > 0 {
+    return load_run_tx(tx, existing)
+  }
+  let definition = load_definition_tx(tx, name)?
+  return create_new_run_tx(tx, definition, event_id, payload, requested_by, now_unix_ms)
+}
+
+fn create_new_run_tx(tx: Transaction,
+                     definition: JobDefinition,
+                     event_id: String,
+                     payload: Json,
+                     requested_by: String,
+                     now_unix_ms: Int) -> Result<JobRun, String> {
+  tx.execute("INSERT INTO jobs_runs(name, definition_revision_id, event_id, event_kind, status, current_stage_index, requested_by, requested_unix_ms, finished_unix_ms, result_message, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", run_insert_params(definition, event_id, payload, requested_by, now_unix_ms))?
+  let run_id = last_insert_id(tx)?
+  insert_stage_runs_tx(tx, run_id, definition.stages)?
+  insert_event_receipt_tx(tx, event_id, run_id)?
+  return load_run_tx(tx, run_id)
+}
+
+fn ready_stage_query(task_kind: String) -> String {
+  if task_kind == "" {
+    return "SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE kind = 'leased_task' AND status = 'ready' ORDER BY run_id ASC, stage_index ASC LIMIT 1"
+  }
+  return "SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE kind = 'leased_task' AND status = 'ready' AND task_kind = ? ORDER BY run_id ASC, stage_index ASC LIMIT 1"
+}
+
+fn ready_stage_params(task_kind: String) -> Json {
+  if task_kind == "" {
+    return no_params()
+  }
+  return one_string_param(task_kind)
+}
+
+fn ready_stage_selection_tx(tx: Transaction, task_kind: String) -> Result<StageSelection, String> {
+  let rows = tx.query(ready_stage_query(task_kind), ready_stage_params(task_kind))?
+  if rows.len()? == 0 {
+    return Ok(StageSelection(false, JobStageRun(0, 0, "", "leased_task", "", "blocked", 0, "", "", 0, 0, 0, "", null_value())))
+  }
+  return Ok(StageSelection(true, stage_run_from_row(rows.row(0)?)?))
+}
+
+fn lease_id_for_stage(stage: JobStageRun, attempt: Int) -> String {
+  return text_concat3("job-lease-", int_text(stage.run_id), text_concat3("-", int_text(stage.stage_index), sqlite_text_concat("-", int_text(attempt))))
+}
+
+fn claim_stage_params(stage: JobStageRun, request: WorkerClaimRequest, lease_ttl_ms: Int) -> Json {
+  let attempt = stage.attempt + 1
+  let builder = array_builder()
+  builder = claim_stage_state_params(builder, stage, request, attempt, lease_ttl_ms)
+  builder = claim_stage_cas_params(builder, stage)
+  return array_build(builder)
+}
+
+fn claim_stage_state_params(builder: JsonArrayBuilder,
+                            stage: JobStageRun,
+                            request: WorkerClaimRequest,
+                            attempt: Int,
+                            lease_ttl_ms: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value("leased"))
+  builder = array_push(builder, int_value(attempt))
+  builder = array_push(builder, string_value(lease_id_for_stage(stage, attempt)))
+  builder = array_push(builder, string_value(request.worker_id))
+  builder = array_push(builder, int_value(request.now_unix_ms + lease_ttl_ms))
+  builder = array_push(builder, int_value(request.now_unix_ms))
+  return builder
+}
+
+fn claim_stage_cas_params(builder: JsonArrayBuilder, stage: JobStageRun) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(stage.run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  builder = array_push(builder, int_value(stage.attempt))
+  return builder
+}
+
+fn update_run_status_tx(tx: Transaction, run_id: Int, status: String, current_stage_index: Int, finished_unix_ms: Int, result_message: String) -> Result<Bool, String> {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(status))
+  builder = array_push(builder, int_value(current_stage_index))
+  builder = array_push(builder, int_value(finished_unix_ms))
+  builder = array_push(builder, string_value(result_message))
+  builder = array_push(builder, int_value(run_id))
+  tx.execute("UPDATE jobs_runs SET status = ?, current_stage_index = ?, finished_unix_ms = ?, result_message = ? WHERE run_id = ?", array_build(builder))?
+  return Ok(true)
+}
+
+fn worker_lease_for_stage_tx(tx: Transaction, stage: JobStageRun) -> Result<WorkerLease, String> {
+  let run = load_run_tx(tx, stage.run_id)?
+  return Ok(WorkerLease(stage.lease_id,
+                        stage.run_id,
+                        run.name,
+                        stage.stage_index,
+                        stage.stage_name,
+                        stage.task_kind,
+                        run.payload,
+                        stage.lease_expires_unix_ms))
+}
+
+fn stage_timeout_ms_tx(tx: Transaction, stage: JobStageRun) -> Result<Int, String> {
+  let run = load_run_tx(tx, stage.run_id)?
+  let spec = stage_spec_for_run_stage(tx, run, stage)?
+  return Ok(spec.timeout_s * 1000)
+}
+
+fn claim_stage_update_tx(tx: Transaction, stage: JobStageRun, request: WorkerClaimRequest) -> Result<Bool, String> {
+  let lease_ttl_ms = stage_timeout_ms_tx(tx, stage)?
+  let changed = tx.execute("UPDATE jobs_stage_runs SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, started_unix_ms = ? WHERE run_id = ? AND stage_index = ? AND status = 'ready' AND attempt = ? AND lease_id = ''",
+                           claim_stage_params(stage, request, lease_ttl_ms))?
+  return Ok(changed == 1)
+}
+
+fn claimed_worker_envelope_tx(tx: Transaction, stage: JobStageRun) -> Result<WorkerClaimEnvelope, String> {
+  let leased = stage_by_run_index_tx(tx, stage.run_id, stage.stage_index)?
+  update_run_status_tx(tx, stage.run_id, "leased", stage.stage_index, 0, "")?
+  return Ok(WorkerClaimEnvelope("claimed", worker_lease_for_stage_tx(tx, leased)?))
+}
+
+fn claim_stage_tx(tx: Transaction, stage: JobStageRun, request: WorkerClaimRequest) -> Result<WorkerClaimEnvelope, String> {
+  if !job_stage_claimable(stage.kind, stage.status, stage.task_kind, request.task_kind) {
+    return Ok(WorkerClaimEnvelope("idle", idle_worker_lease()))
+  }
+  if !claim_stage_update_tx(tx, stage, request)? {
+    return Ok(WorkerClaimEnvelope("idle", idle_worker_lease()))
+  }
+  return claimed_worker_envelope_tx(tx, stage)
+}
+
+fn requeue_expired_worker_leases_tx(tx: Transaction, now_unix_ms: Int) -> Result<Bool, String> {
+  tx.execute("UPDATE jobs_stage_runs SET status = 'ready', lease_id = '', worker_id = '', lease_expires_unix_ms = 0 WHERE status = 'leased' AND lease_expires_unix_ms > 0 AND lease_expires_unix_ms <= ?", one_int_param(now_unix_ms))?
+  return Ok(true)
+}
+
+fn claim_worker(path: String, request: WorkerClaimRequest) -> Result<WorkerClaimEnvelope, String> {
+  validate_worker_claim_request(request)?
+  let tx = open_tx(path)?
+  let envelope = claim_worker_tx(tx, request)?
+  tx.commit()?
+  return Ok(envelope)
+}
+
+fn claim_worker_tx(tx: Transaction, request: WorkerClaimRequest) -> Result<WorkerClaimEnvelope, String> {
+  requeue_expired_worker_leases_tx(tx, request.now_unix_ms)?
+  let selection = ready_stage_selection_tx(tx, request.task_kind)?
+  if !selection.found {
+    return Ok(WorkerClaimEnvelope("idle", idle_worker_lease()))
+  }
+  return claim_stage_tx(tx, selection.stage, request)
+}
+
+fn stage_by_lease_tx(tx: Transaction, lease_id: String) -> Result<JobStageRun, String> {
+  let rows = tx.query("SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE lease_id = ?", one_string_param(lease_id))?
+  if rows.len()? == 0 {
+    return Err("worker lease not found")
+  }
+  return stage_run_from_row(rows.row(0)?)
+}
+
+fn stage_by_run_index_tx(tx: Transaction, run_id: Int, stage_index: Int) -> Result<JobStageRun, String> {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, int_value(stage_index))
+  let rows = tx.query("SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE run_id = ? AND stage_index = ?", array_build(builder))?
+  if rows.len()? == 0 {
+    return Err("job stage run not found")
+  }
+  return stage_run_from_row(rows.row(0)?)
+}
+
+fn stage_by_run_name_tx(tx: Transaction, run_id: Int, stage_name: String) -> Result<JobStageRun, String> {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, string_value(stage_name))
+  let rows = tx.query("SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE run_id = ? AND stage_name = ?", array_build(builder))?
+  if rows.len()? == 0 {
+    return Err("job stage run not found")
+  }
+  return stage_run_from_row(rows.row(0)?)
+}
+
+fn stage_for_approval_gate_request_tx(tx: Transaction, request: ApprovalGateResolveRequest) -> Result<JobStageRun, String> {
+  if request.stage_name != "" {
+    return stage_by_run_name_tx(tx, request.run_id, request.stage_name)
+  }
+  return stage_by_run_index_tx(tx, request.run_id, request.stage_index)
+}
+
+fn complete_stage_params(stage: JobStageRun, status: String, result_message: String, result_payload: Json, now_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = complete_stage_state_params(builder, status, result_message, result_payload, now_unix_ms)
+  builder = complete_stage_cas_params(builder, stage)
+  return array_build(builder)
+}
+
+fn complete_stage_state_params(builder: JsonArrayBuilder, status: String, result_message: String, result_payload: Json, now_unix_ms: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(status))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, string_value(result_message))
+  builder = array_push(builder, string_value(stringify(result_payload)))
+  return builder
+}
+
+fn complete_stage_cas_params(builder: JsonArrayBuilder, stage: JobStageRun) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(stage.run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  builder = array_push(builder, string_value(stage.lease_id))
+  builder = array_push(builder, string_value(stage.worker_id))
+  return builder
+}
+
+fn stage_spec_for_run_stage(tx: Transaction, run: JobRun, stage: JobStageRun) -> Result<JobStageSpec, String> {
+  let definition = load_definition_tx(tx, run.name)?
+  return stage_at(definition.stages, stage.stage_index)
+}
+
+fn fail_exhausted_stage_tx(tx: Transaction,
+                           run: JobRun,
+                           stage: JobStageRun,
+                           request: WorkerCompleteRequest,
+                           result_message: String) -> Result<Bool, String> {
+  tx.execute("UPDATE jobs_stage_runs SET status = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, finished_unix_ms = ?, result_message = ?, result_payload = ? WHERE run_id = ? AND stage_index = ? AND status = 'leased' AND lease_id = ? AND worker_id = ?",
+             complete_stage_params(stage, "failed", result_message, request.result_payload, request.now_unix_ms))?
+  update_run_status_tx(tx, run.run_id, "failed", stage.stage_index, request.now_unix_ms, result_message)?
+  return Ok(true)
+}
+
+fn requeue_failed_stage_tx(tx: Transaction,
+                           run: JobRun,
+                           stage: JobStageRun,
+                           request: WorkerCompleteRequest,
+                           result_message: String) -> Result<Bool, String> {
+  tx.execute("UPDATE jobs_stage_runs SET status = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, finished_unix_ms = ?, result_message = ?, result_payload = ? WHERE run_id = ? AND stage_index = ? AND status = 'leased' AND lease_id = ? AND worker_id = ?",
+             complete_stage_params(stage, "ready", result_message, request.result_payload, request.now_unix_ms))?
+  update_run_status_tx(tx, run.run_id, "ready", stage.stage_index, 0, "")?
+  return Ok(true)
+}
+
+fn requeue_or_fail_stage_tx(tx: Transaction, run: JobRun, stage: JobStageRun, request: WorkerCompleteRequest) -> Result<Bool, String> {
+  let spec = stage_spec_for_run_stage(tx, run, stage)?
+  let result_message = job_stage_result_message(request.status, request.result_message)?
+  if stage.attempt >= spec.max_attempts {
+    return fail_exhausted_stage_tx(tx, run, stage, request, result_message)
+  }
+  return requeue_failed_stage_tx(tx, run, stage, request, result_message)
+}
+
+fn approval_gate_result_payload(request: ApprovalGateResolveRequest) -> Json {
+  return object2("actor",
+                 string_value(request.actor),
+                 "decision",
+                 string_value(request.decision))
+}
+
+fn approval_gate_resolve_params(stage: JobStageRun,
+                                request: ApprovalGateResolveRequest,
+                                status: String,
+                                result_message: String) -> Json {
+  let builder = array_builder()
+  builder = complete_stage_state_params(builder,
+                                        status,
+                                        result_message,
+                                        approval_gate_result_payload(request),
+                                        request.now_unix_ms)
+  builder = array_push(builder, int_value(stage.run_id))
+  builder = array_push(builder, int_value(stage.stage_index))
+  return array_build(builder)
+}
+
+fn update_approval_gate_stage_tx(tx: Transaction,
+                                 stage: JobStageRun,
+                                 request: ApprovalGateResolveRequest,
+                                 status: String,
+                                 result_message: String) -> Result<Bool, String> {
+  let changed = tx.execute("UPDATE jobs_stage_runs SET status = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, finished_unix_ms = ?, result_message = ?, result_payload = ? WHERE run_id = ? AND stage_index = ? AND kind = 'approval_gate' AND (status = 'ready' OR status = 'blocked')",
+                           approval_gate_resolve_params(stage, request, status, result_message))?
+  return Ok(changed == 1)
+}
+
+fn update_run_after_approval_gate_tx(tx: Transaction,
+                                     stage: JobStageRun,
+                                     status: String,
+                                     result_message: String,
+                                     now_unix_ms: Int) -> Result<Bool, String> {
+  if status == "failed" {
+    return update_run_status_tx(tx, stage.run_id, "failed", stage.stage_index, now_unix_ms, result_message)
+  }
+  refresh_readyable_stages_tx(tx, stage.run_id)?
+  if all_stages_completed_tx(tx, stage.run_id)? {
+    return update_run_status_tx(tx, stage.run_id, "completed", stage.stage_index, now_unix_ms, result_message)
+  }
+  return update_run_status_tx(tx, stage.run_id, run_status_after_success_tx(tx, stage.run_id)?, stage.stage_index, 0, "")
+}
+
+fn resolve_approval_gate_stage_tx(tx: Transaction,
+                                  stage: JobStageRun,
+                                  request: ApprovalGateResolveRequest) -> Result<JobRun, String> {
+  if !job_approval_gate_resolvable(stage.kind, stage.status) {
+    return Err("approval gate stage is not resolvable")
+  }
+  let status = job_approval_gate_status(request.decision)?
+  let result_message = job_approval_gate_result_message(request.decision, request.message)?
+  if !update_approval_gate_stage_tx(tx, stage, request, status, result_message)? {
+    return Err("approval gate stage is not resolvable")
+  }
+  update_run_after_approval_gate_tx(tx, stage, status, result_message, request.now_unix_ms)?
+  return load_run_tx(tx, stage.run_id)
+}
+
+fn resolve_approval_gate_tx(tx: Transaction, request: ApprovalGateResolveRequest) -> Result<JobRun, String> {
+  let stage = stage_for_approval_gate_request_tx(tx, request)?
+  return resolve_approval_gate_stage_tx(tx, stage, request)
+}
+
+fn resolve_approval_gate(path: String, request: ApprovalGateResolveRequest) -> Result<JobRun, String> {
+  validate_approval_gate_resolve_request(request)?
+  let tx = open_tx(path)?
+  let run = resolve_approval_gate_tx(tx, request)?
+  tx.commit()?
+  return Ok(run)
+}
+
+fn all_stages_completed_tx(tx: Transaction, run_id: Int) -> Result<Bool, String> {
+  let rows = tx.query("SELECT status FROM jobs_stage_runs WHERE run_id = ?", one_int_param(run_id))?
+  let index = 0
+  while index < rows.len()? {
+    if rows.row(index)?.get_string("status")? != "completed" {
+      return Ok(false)
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn two_int_params(first: Int, second: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(first))
+  builder = array_push(builder, int_value(second))
+  return array_build(builder)
+}
+
+fn run_status_params(run_id: Int, status: String) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, string_value(status))
+  return array_build(builder)
+}
+
+fn first_stage_index_with_status_tx(tx: Transaction, run_id: Int, status: String) -> Result<Int, String> {
+  let rows = tx.query("SELECT stage_index FROM jobs_stage_runs WHERE run_id = ? AND status = ? ORDER BY stage_index ASC LIMIT 1", run_status_params(run_id, status))?
+  if rows.len()? == 0 {
+    return Ok(-1)
+  }
+  return rows.row(0)?.get_int("stage_index")
+}
+
+fn stage_status_by_name_tx(tx: Transaction, run_id: Int, stage_name: String) -> Result<String, String> {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(run_id))
+  builder = array_push(builder, string_value(stage_name))
+  let rows = tx.query("SELECT status FROM jobs_stage_runs WHERE run_id = ? AND stage_name = ?", array_build(builder))?
+  if rows.len()? == 0 {
+    return Err(sqlite_text_concat("job stage dependency not found in run: ", stage_name))
+  }
+  return rows.row(0)?.get_string("status")
+}
+
+fn stage_dependency_completed_tx(tx: Transaction,
+                                 run_id: Int,
+                                 depends_on: Json,
+                                 index: Int) -> Result<Bool, String> {
+  let dependency = as_string(array_get(depends_on, index)?)?
+  return Ok(stage_status_by_name_tx(tx, run_id, dependency)? == "completed")
+}
+
+fn stage_dependencies_completed_tx(tx: Transaction,
+                                   run_id: Int,
+                                   definition: JobDefinition,
+                                   stage_index: Int) -> Result<Bool, String> {
+  let depends_on = stage_at(definition.stages, stage_index)?.depends_on
+  let count = array_len(depends_on)?
+  let index = 0
+  while index < count {
+    if !stage_dependency_completed_tx(tx, run_id, depends_on, index)? {
+      return Ok(false)
+    }
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn mark_stage_ready_tx(tx: Transaction, run_id: Int, stage_index: Int) -> Result<Bool, String> {
+  let changed = tx.execute("UPDATE jobs_stage_runs SET status = 'ready' WHERE run_id = ? AND stage_index = ? AND status = 'blocked'",
+                           two_int_params(run_id, stage_index))?
+  return Ok(changed == 1)
+}
+
+fn refresh_readyable_stage_tx(tx: Transaction,
+                              run_id: Int,
+                              definition: JobDefinition,
+                              stage: JobStageRun) -> Result<Bool, String> {
+  if stage.status != "blocked" {
+    return Ok(false)
+  }
+  if !stage_dependencies_completed_tx(tx, run_id, definition, stage.stage_index)? {
+    return Ok(false)
+  }
+  return mark_stage_ready_tx(tx, run_id, stage.stage_index)
+}
+
+fn ready_refresh_stage_rows_tx(tx: Transaction, run_id: Int) -> Result<ResultSet, String> {
+  return tx.query("SELECT run_id, stage_index, stage_name, kind, task_kind, status, attempt, lease_id, worker_id, lease_expires_unix_ms, started_unix_ms, finished_unix_ms, result_message, result_payload FROM jobs_stage_runs WHERE run_id = ? ORDER BY stage_index ASC",
+                  one_int_param(run_id))
+}
+
+fn refresh_readyable_stage_row_tx(tx: Transaction,
+                                  run_id: Int,
+                                  definition: JobDefinition,
+                                  row: Row) -> Result<Bool, String> {
+  return refresh_readyable_stage_tx(tx, run_id, definition, stage_run_from_row(row)?)
+}
+
+fn refresh_readyable_stages_pass_tx(tx: Transaction,
+                                    run_id: Int,
+                                    definition: JobDefinition) -> Result<Bool, String> {
+  let rows = ready_refresh_stage_rows_tx(tx, run_id)?
+  let changed = false
+  let index = 0
+  while index < rows.len()? {
+    if refresh_readyable_stage_row_tx(tx, run_id, definition, rows.row(index)?)? {
+      changed = true
+    }
+    index += 1
+  }
+  return Ok(changed)
+}
+
+fn refresh_readyable_stages_tx(tx: Transaction, run_id: Int) -> Result<Bool, String> {
+  let run = load_run_tx(tx, run_id)?
+  let definition = load_definition_tx(tx, run.name)?
+  let max_passes = array_len(definition.stages)?
+  let pass = 0
+  while pass < max_passes {
+    if !refresh_readyable_stages_pass_tx(tx, run_id, definition)? {
+      return Ok(true)
+    }
+    pass += 1
+  }
+  return Ok(true)
+}
+
+fn run_status_after_success_tx(tx: Transaction, run_id: Int) -> Result<String, String> {
+  if all_stages_completed_tx(tx, run_id)? {
+    return Ok("completed")
+  }
+  if first_stage_index_with_status_tx(tx, run_id, "ready")? >= 0 {
+    return Ok("ready")
+  }
+  if first_stage_index_with_status_tx(tx, run_id, "leased")? >= 0 {
+    return Ok("leased")
+  }
+  if first_stage_index_with_status_tx(tx, run_id, "blocked")? >= 0 {
+    return Ok("blocked")
+  }
+  return Err("job run has no refreshable state")
+}
+
+fn complete_worker(path: String, request: WorkerCompleteRequest) -> Result<JobRun, String> {
+  validate_worker_complete_request(request)?
+  let tx = open_tx(path)?
+  let updated = complete_worker_tx(tx, request)?
+  tx.commit()?
+  return Ok(updated)
+}
+
+fn complete_worker_tx(tx: Transaction, request: WorkerCompleteRequest) -> Result<JobRun, String> {
+  let stage = stage_by_lease_tx(tx, request.lease_id)?
+  if stage.status != "leased" || stage.worker_id != request.worker_id {
+    return Err("worker lease is not active")
+  }
+  return complete_active_worker_stage_tx(tx, stage, request)
+}
+
+fn complete_active_worker_stage_tx(tx: Transaction, stage: JobStageRun, request: WorkerCompleteRequest) -> Result<JobRun, String> {
+  let run = load_run_tx(tx, stage.run_id)?
+  if request.status == "failed" {
+    requeue_or_fail_stage_tx(tx, run, stage, request)?
+    return load_run_tx(tx, stage.run_id)
+  }
+  return succeed_worker_stage_tx(tx, stage, request)
+}
+
+fn succeed_worker_stage_tx(tx: Transaction, stage: JobStageRun, request: WorkerCompleteRequest) -> Result<JobRun, String> {
+  let status = job_stage_complete_status(request.status)?
+  let result_message = job_stage_result_message(request.status, request.result_message)?
+  let changed = tx.execute("UPDATE jobs_stage_runs SET status = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, finished_unix_ms = ?, result_message = ?, result_payload = ? WHERE run_id = ? AND stage_index = ? AND status = 'leased' AND lease_id = ? AND worker_id = ?",
+                           complete_stage_params(stage, status, result_message, request.result_payload, request.now_unix_ms))?
+  if changed != 1 {
+    return Err("worker lease is not active")
+  }
+  update_run_after_success_tx(tx, stage, request)?
+  return load_run_tx(tx, stage.run_id)
+}
+
+fn update_run_after_success_tx(tx: Transaction, stage: JobStageRun, request: WorkerCompleteRequest) -> Result<Bool, String> {
+  refresh_readyable_stages_tx(tx, stage.run_id)?
+  if all_stages_completed_tx(tx, stage.run_id)? {
+    return update_run_status_tx(tx, stage.run_id, "completed", stage.stage_index, request.now_unix_ms, job_stage_result_message(request.status, request.result_message)?)
+  }
+  return update_run_status_tx(tx, stage.run_id, run_status_after_success_tx(tx, stage.run_id)?, stage.stage_index, 0, "")
+}
+
+fn heartbeat_worker(path: String, lease_id: String, worker_id: String, now_unix_ms: Int) -> Result<WorkerLease, String> {
+  let tx = open_tx(path)?
+  let lease = heartbeat_worker_tx(tx, lease_id, worker_id, now_unix_ms)?
+  tx.commit()?
+  return Ok(lease)
+}
+
+fn heartbeat_worker_tx(tx: Transaction, lease_id: String, worker_id: String, now_unix_ms: Int) -> Result<WorkerLease, String> {
+  let stage = stage_by_lease_tx(tx, lease_id)?
+  if stage.status != "leased" || stage.worker_id != worker_id {
+    return Err("worker lease is not active")
+  }
+  update_heartbeat_tx(tx, lease_id, worker_id, now_unix_ms + stage_timeout_ms_tx(tx, stage)?)?
+  return worker_lease_for_stage_tx(tx, stage_by_lease_tx(tx, lease_id)?)
+}
+
+fn heartbeat_params(lease_id: String, worker_id: String, expires: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(expires))
+  builder = array_push(builder, string_value(lease_id))
+  builder = array_push(builder, string_value(worker_id))
+  return array_build(builder)
+}
+
+fn update_heartbeat_tx(tx: Transaction, lease_id: String, worker_id: String, expires: Int) -> Result<Bool, String> {
+  let changed = tx.execute("UPDATE jobs_stage_runs SET lease_expires_unix_ms = ? WHERE lease_id = ? AND worker_id = ? AND status = 'leased'", heartbeat_params(lease_id, worker_id, expires))?
+  if changed != 1 {
+    return Err("worker lease is not active")
+  }
+  return Ok(true)
+}
+
+fn outbox_insert_params(topic: String,
+                        key: String,
+                        dedupe_key: String,
+                        payload: Json,
+                        max_attempts: Int,
+                        now_unix_ms: Int) -> Json {
+  let builder = array_builder()
+  builder = outbox_insert_identity_params(builder, topic, key, dedupe_key, payload)
+  builder = outbox_insert_state_params(builder, max_attempts, now_unix_ms)
+  return array_build(builder)
+}
+
+fn outbox_insert_identity_params(builder: JsonArrayBuilder, topic: String, key: String, dedupe_key: String, payload: Json) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(topic))
+  builder = array_push(builder, string_value(key))
+  builder = array_push(builder, string_value(dedupe_key))
+  builder = array_push(builder, string_value(stringify(payload)))
+  return builder
+}
+
+fn outbox_insert_state_params(builder: JsonArrayBuilder, max_attempts: Int, now_unix_ms: Int) -> JsonArrayBuilder {
+  builder = outbox_insert_lease_params(builder, max_attempts)
+  builder = outbox_insert_timing_params(builder, now_unix_ms)
+  return builder
+}
+
+fn outbox_insert_lease_params(builder: JsonArrayBuilder, max_attempts: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value("pending"))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, int_value(max_attempts))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, int_value(0))
+  return builder
+}
+
+fn outbox_insert_timing_params(builder: JsonArrayBuilder, now_unix_ms: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, string_value(""))
+  return builder
+}
+
+fn outbox_from_row(row: Row) -> Result<OutboxMessage, String> {
+  let core = outbox_row_core(row)?
+  let meta = outbox_row_meta(row)?
+  return Ok(OutboxMessage(core.message_id,
+                          core.topic,
+                          core.key,
+                          core.dedupe_key,
+                          core.payload,
+                          core.status,
+                          core.attempt,
+                          meta.max_attempts,
+                          meta.lease_id,
+                          meta.worker_id,
+                          meta.lease_expires_unix_ms,
+                          meta.next_attempt_unix_ms,
+                          meta.created_unix_ms,
+                          meta.updated_unix_ms,
+                          meta.result_message))
+}
+
+fn outbox_row_core(row: Row) -> Result<OutboxRowCore, String> {
+  let identity = outbox_row_identity(row)?
+  let state = outbox_row_state(row)?
+  return Ok(OutboxRowCore(identity.message_id,
+                          identity.topic,
+                          identity.key,
+                          identity.dedupe_key,
+                          state.payload,
+                          state.status,
+                          state.attempt))
+}
+
+fn outbox_row_identity(row: Row) -> Result<OutboxRowIdentity, String> {
+  return Ok(OutboxRowIdentity(row.get_int("message_id")?,
+                              row.get_string("topic")?,
+                              row.get_string("key")?,
+                              row.get_string("dedupe_key")?))
+}
+
+fn outbox_row_state(row: Row) -> Result<OutboxRowState, String> {
+  return Ok(OutboxRowState(parse(row.get_string("payload")?)?,
+                           row.get_string("status")?,
+                           row.get_int("attempt")?))
+}
+
+fn outbox_row_meta(row: Row) -> Result<OutboxRowMeta, String> {
+  let lease = outbox_row_lease(row)?
+  let timing = outbox_row_timing(row)?
+  return Ok(OutboxRowMeta(lease.max_attempts,
+                          lease.lease_id,
+                          lease.worker_id,
+                          lease.lease_expires_unix_ms,
+                          timing.next_attempt_unix_ms,
+                          timing.created_unix_ms,
+                          timing.updated_unix_ms,
+                          timing.result_message))
+}
+
+fn outbox_row_lease(row: Row) -> Result<OutboxRowLease, String> {
+  return Ok(OutboxRowLease(row.get_int("max_attempts")?,
+                           row.get_string("lease_id")?,
+                           row.get_string("worker_id")?,
+                           row.get_int("lease_expires_unix_ms")?))
+}
+
+fn outbox_row_timing(row: Row) -> Result<OutboxRowTiming, String> {
+  return Ok(OutboxRowTiming(row.get_int("next_attempt_unix_ms")?,
+                            row.get_int("created_unix_ms")?,
+                            row.get_int("updated_unix_ms")?,
+                            row.get_string("result_message")?))
+}
+
+fn outbox_columns() -> String {
+  return "message_id, topic, key, dedupe_key, payload, status, attempt, max_attempts, lease_id, worker_id, lease_expires_unix_ms, next_attempt_unix_ms, created_unix_ms, updated_unix_ms, result_message"
+}
+
+fn load_outbox_by_id_tx(tx: Transaction, message_id: Int) -> Result<OutboxMessage, String> {
+  let rows = tx.query(sqlite_text_concat("SELECT ", sqlite_text_concat(outbox_columns(), " FROM jobs_outbox_messages WHERE message_id = ?")), one_int_param(message_id))?
+  if rows.len()? == 0 {
+    return Err("outbox message not found")
+  }
+  return outbox_from_row(rows.row(0)?)
+}
+
+fn load_outbox(path: String, message_id: Int) -> Result<OutboxMessage, String> {
+  let tx = open_tx(path)?
+  let message = load_outbox_by_id_tx(tx, message_id)?
+  tx.commit()?
+  return Ok(message)
+}
+
+fn enqueue_outbox(path: String,
+                  topic: String,
+                  key: String,
+                  dedupe_key: String,
+                  payload: Json,
+                  max_attempts: Int,
+                  now_unix_ms: Int) -> Result<OutboxMessage, String> {
+  validate_enqueue_outbox(topic, key, dedupe_key, max_attempts)?
+  let tx = open_tx(path)?
+  let message = enqueue_outbox_tx(tx, topic, key, dedupe_key, payload, max_attempts, now_unix_ms)?
+  tx.commit()?
+  return Ok(message)
+}
+
+fn validate_enqueue_outbox(topic: String, key: String, dedupe_key: String, max_attempts: Int) -> Result<Bool, String> {
+  validate_non_empty("outbox topic", topic)?
+  validate_non_empty("outbox key", key)?
+  validate_non_empty("outbox dedupe_key", dedupe_key)?
+  if max_attempts <= 0 {
+    return Err("outbox max_attempts must be positive")
+  }
+  return Ok(true)
+}
+
+fn enqueue_outbox_tx(tx: Transaction,
+                     topic: String,
+                     key: String,
+                     dedupe_key: String,
+                     payload: Json,
+                     max_attempts: Int,
+                     now_unix_ms: Int) -> Result<OutboxMessage, String> {
+  tx.execute("INSERT OR IGNORE INTO jobs_outbox_messages(topic, key, dedupe_key, payload, status, attempt, max_attempts, lease_id, worker_id, lease_expires_unix_ms, next_attempt_unix_ms, created_unix_ms, updated_unix_ms, result_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             outbox_insert_params(topic, key, dedupe_key, payload, max_attempts, now_unix_ms))?
+  let rows = tx.query(sqlite_text_concat("SELECT ", sqlite_text_concat(outbox_columns(), " FROM jobs_outbox_messages WHERE dedupe_key = ?")), one_string_param(dedupe_key))?
+  if rows.len()? == 0 {
+    return Err("outbox enqueue failed")
+  }
+  return outbox_from_row(rows.row(0)?)
+}
+
+fn outbox_claim_query(topic: String) -> String {
+  if topic == "" {
+    return sqlite_text_concat("SELECT ", sqlite_text_concat(outbox_columns(), " FROM jobs_outbox_messages WHERE status = 'pending' AND next_attempt_unix_ms <= ? ORDER BY created_unix_ms ASC, message_id ASC LIMIT 1"))
+  }
+  return sqlite_text_concat("SELECT ", sqlite_text_concat(outbox_columns(), " FROM jobs_outbox_messages WHERE status = 'pending' AND next_attempt_unix_ms <= ? AND topic = ? ORDER BY created_unix_ms ASC, message_id ASC LIMIT 1"))
+}
+
+fn outbox_claim_params(request: OutboxClaimRequest) -> Json {
+  if request.topic == "" {
+    return one_int_param(request.now_unix_ms)
+  }
+  let builder = array_builder()
+  builder = array_push(builder, int_value(request.now_unix_ms))
+  builder = array_push(builder, string_value(request.topic))
+  return array_build(builder)
+}
+
+fn pending_outbox_tx(tx: Transaction, request: OutboxClaimRequest) -> Result<OutboxLookup, String> {
+  let rows = tx.query(outbox_claim_query(request.topic), outbox_claim_params(request))?
+  if rows.len()? == 0 {
+    return Ok(OutboxLookup(false, idle_outbox_message()))
+  }
+  return Ok(OutboxLookup(true, outbox_from_row(rows.row(0)?)?))
+}
+
+fn outbox_lease_id(message_id: Int, attempt: Int) -> String {
+  return text_concat3("outbox-lease-", int_text(message_id), sqlite_text_concat("-", int_text(attempt)))
+}
+
+fn outbox_lease_params(message: OutboxMessage, request: OutboxClaimRequest) -> Json {
+  let attempt = message.attempt + 1
+  let builder = array_builder()
+  builder = outbox_lease_state_params(builder, message, request, attempt)
+  builder = outbox_lease_cas_params(builder, message, request)
+  return array_build(builder)
+}
+
+fn outbox_lease_state_params(builder: JsonArrayBuilder,
+                             message: OutboxMessage,
+                             request: OutboxClaimRequest,
+                             attempt: Int) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value("leased"))
+  builder = array_push(builder, int_value(attempt))
+  builder = array_push(builder, string_value(outbox_lease_id(message.message_id, attempt)))
+  builder = array_push(builder, string_value(request.worker_id))
+  builder = array_push(builder, int_value(request.now_unix_ms + 30000))
+  builder = array_push(builder, int_value(request.now_unix_ms))
+  return builder
+}
+
+fn outbox_lease_cas_params(builder: JsonArrayBuilder, message: OutboxMessage, request: OutboxClaimRequest) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(message.message_id))
+  builder = array_push(builder, int_value(message.attempt))
+  builder = array_push(builder, int_value(request.now_unix_ms))
+  return builder
+}
+
+fn requeue_expired_outbox_tx(tx: Transaction, now_unix_ms: Int) -> Result<Bool, String> {
+  let builder = array_builder()
+  builder = array_push(builder, int_value(now_unix_ms))
+  builder = array_push(builder, int_value(now_unix_ms))
+  tx.execute("UPDATE jobs_outbox_messages SET status = 'pending', lease_id = '', worker_id = '', lease_expires_unix_ms = 0, updated_unix_ms = ? WHERE status = 'leased' AND lease_expires_unix_ms > 0 AND lease_expires_unix_ms <= ?", array_build(builder))?
+  return Ok(true)
+}
+
+fn claim_outbox(path: String, request: OutboxClaimRequest) -> Result<OutboxClaimEnvelope, String> {
+  validate_non_empty("outbox worker_id", request.worker_id)?
+  if request.now_unix_ms < 0 {
+    return Err("outbox claim now_unix_ms must be non-negative")
+  }
+  let tx = open_tx(path)?
+  let envelope = claim_outbox_tx(tx, request)?
+  tx.commit()?
+  return Ok(envelope)
+}
+
+fn claim_outbox_tx(tx: Transaction, request: OutboxClaimRequest) -> Result<OutboxClaimEnvelope, String> {
+  requeue_expired_outbox_tx(tx, request.now_unix_ms)?
+  let lookup = pending_outbox_tx(tx, request)?
+  if !lookup.found {
+    return Ok(OutboxClaimEnvelope("empty", idle_outbox_message()))
+  }
+  return claim_outbox_message_tx(tx, lookup.message, request)
+}
+
+fn claim_outbox_message_tx(tx: Transaction, message: OutboxMessage, request: OutboxClaimRequest) -> Result<OutboxClaimEnvelope, String> {
+  let changed = tx.execute("UPDATE jobs_outbox_messages SET status = ?, attempt = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, updated_unix_ms = ? WHERE message_id = ? AND status = 'pending' AND attempt = ? AND next_attempt_unix_ms <= ?",
+                           outbox_lease_params(message, request))?
+  if changed != 1 {
+    return Ok(OutboxClaimEnvelope("empty", idle_outbox_message()))
+  }
+  return Ok(OutboxClaimEnvelope("claimed", load_outbox_by_id_tx(tx, message.message_id)?))
+}
+
+fn outbox_complete_status(message: OutboxMessage, request: OutboxCompleteRequest) -> String {
+  if request.status == "published" {
+    return "published"
+  }
+  if message.attempt >= message.max_attempts {
+    return "dead_letter"
+  }
+  return "pending"
+}
+
+fn outbox_complete_next_attempt(request: OutboxCompleteRequest) -> Int {
+  if request.status == "published" {
+    return 0
+  }
+  return request.next_attempt_unix_ms
+}
+
+fn outbox_complete_params(message: OutboxMessage, request: OutboxCompleteRequest) -> Json {
+  let status = outbox_complete_status(message, request)
+  let builder = array_builder()
+  builder = outbox_complete_state_params(builder, status, request)
+  builder = outbox_complete_cas_params(builder, message, request)
+  return array_build(builder)
+}
+
+fn outbox_complete_state_params(builder: JsonArrayBuilder, status: String, request: OutboxCompleteRequest) -> JsonArrayBuilder {
+  builder = array_push(builder, string_value(status))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, string_value(""))
+  builder = array_push(builder, int_value(0))
+  builder = array_push(builder, int_value(outbox_complete_next_attempt(request)))
+  builder = array_push(builder, int_value(request.now_unix_ms))
+  builder = array_push(builder, string_value(request.result_message))
+  return builder
+}
+
+fn outbox_complete_cas_params(builder: JsonArrayBuilder, message: OutboxMessage, request: OutboxCompleteRequest) -> JsonArrayBuilder {
+  builder = array_push(builder, int_value(message.message_id))
+  builder = array_push(builder, string_value(request.worker_id))
+  builder = array_push(builder, string_value(request.lease_id))
+  return builder
+}
+
+fn complete_outbox(path: String, message_id: Int, request: OutboxCompleteRequest) -> Result<OutboxMessage, String> {
+  if message_id <= 0 {
+    return Err("outbox message_id must be positive")
+  }
+  validate_outbox_complete_request(request)?
+  let tx = open_tx(path)?
+  let updated = complete_outbox_tx(tx, message_id, request)?
+  tx.commit()?
+  return Ok(updated)
+}
+
+fn complete_outbox_tx(tx: Transaction, message_id: Int, request: OutboxCompleteRequest) -> Result<OutboxMessage, String> {
+  let current = load_outbox_by_id_tx(tx, message_id)?
+  if current.status != "leased" || current.worker_id != request.worker_id || current.lease_id != request.lease_id {
+    return Err("outbox message is not leased by this worker")
+  }
+  return complete_active_outbox_tx(tx, current, request)
+}
+
+fn complete_active_outbox_tx(tx: Transaction, current: OutboxMessage, request: OutboxCompleteRequest) -> Result<OutboxMessage, String> {
+  let changed = tx.execute("UPDATE jobs_outbox_messages SET status = ?, lease_id = ?, worker_id = ?, lease_expires_unix_ms = ?, next_attempt_unix_ms = ?, updated_unix_ms = ?, result_message = ? WHERE message_id = ? AND status = 'leased' AND worker_id = ? AND lease_id = ?",
+                           outbox_complete_params(current, request))?
+  if changed != 1 {
+    return Err("outbox message is not leased by this worker")
+  }
+  return load_outbox_by_id_tx(tx, current.message_id)
+}

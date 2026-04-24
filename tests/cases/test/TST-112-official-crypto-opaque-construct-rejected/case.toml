@@ -1,0 +1,23 @@
+id = "TST-112-official-crypto-opaque-construct-rejected"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/official-crypto-ctor && mkdir -p work/official-crypto-ctor && cp -R \"$NEBULA_REPO_ROOT/official/nebula-crypto\" work/official-crypto-ctor/pkg && mkdir -p work/official-crypto-ctor/app/src && cat > work/official-crypto-ctor/app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"official-crypto-ctor-app\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\n\n[dependencies]\ncrypto = { path = \"../pkg\" }\nEOF\ncat > work/official-crypto-ctor/app/src/main.nb <<'EOF'\nmodule main\nimport crypto::pqc.kem\n\nfn main() -> Void {\n  let bad = MlKem768PublicKey()\n  print(bad.to_bytes())\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-crypto-ctor/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "$NEBULA_BINARY check work/official-crypto-ctor/app > work/official-crypto-ctor.out 2>&1"
+expect_rc = 1
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'NBL-T135' work/official-crypto-ctor.out && grep -F 'runtime-backed crypto type' work/official-crypto-ctor.out && grep -F 'MlKem768PublicKey' work/official-crypto-ctor.out"
+expect_rc = 0

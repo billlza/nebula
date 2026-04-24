@@ -1,0 +1,17 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates libpq5 libsqlite3-0 libstdc++6 \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --create-home --home-dir /srv/release-control-plane nebula
+
+WORKDIR /srv/release-control-plane
+
+COPY .service-out/main.out /srv/release-control-plane/main.out
+
+RUN mkdir -p /var/lib/release-control-plane /run/release-control-plane /run/release-control-plane-secrets \
+ && chown -R nebula:nebula /srv/release-control-plane /var/lib/release-control-plane /run/release-control-plane /run/release-control-plane-secrets
+
+USER nebula
+
+ENTRYPOINT ["/srv/release-control-plane/main.out"]

@@ -1,0 +1,233 @@
+module auth
+import args
+import auth_pkg::jwt
+import client
+import core::contracts
+import core::validate
+import errors
+import std::fs
+import std::json
+import std::result
+
+struct JwtVerifyArgs {
+  token_file: String
+  jwks_file: String
+  issuer: String
+  audience: String
+  now_text: String
+}
+
+fn print_error_exit(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn empty_jwt_verify_args() -> JwtVerifyArgs {
+  return JwtVerifyArgs("", "", "", "", "")
+}
+
+fn rebuild_jwt_verify_args(token_file: String,
+                           jwks_file: String,
+                           issuer: String,
+                           audience: String,
+                           now_text: String) -> JwtVerifyArgs {
+  return JwtVerifyArgs(token_file, jwks_file, issuer, audience, now_text)
+}
+
+fn reject_duplicate_arg(current: String, flag: String) -> Result<Bool, String> {
+  if current != "" {
+    return Err(text_concat(flag, " may only be provided once"))
+  }
+  return Ok(true)
+}
+
+fn with_token_file(args: JwtVerifyArgs, value: String) -> Result<JwtVerifyArgs, String> {
+  reject_duplicate_arg(args.token_file, "--token-file")?
+  return Ok(rebuild_jwt_verify_args(value, args.jwks_file, args.issuer, args.audience, args.now_text))
+}
+
+fn with_jwks_file(args: JwtVerifyArgs, value: String) -> Result<JwtVerifyArgs, String> {
+  reject_duplicate_arg(args.jwks_file, "--jwks-file")?
+  return Ok(rebuild_jwt_verify_args(args.token_file, value, args.issuer, args.audience, args.now_text))
+}
+
+fn with_issuer(args: JwtVerifyArgs, value: String) -> Result<JwtVerifyArgs, String> {
+  reject_duplicate_arg(args.issuer, "--issuer")?
+  return Ok(rebuild_jwt_verify_args(args.token_file, args.jwks_file, value, args.audience, args.now_text))
+}
+
+fn with_audience(args: JwtVerifyArgs, value: String) -> Result<JwtVerifyArgs, String> {
+  reject_duplicate_arg(args.audience, "--audience")?
+  return Ok(rebuild_jwt_verify_args(args.token_file, args.jwks_file, args.issuer, value, args.now_text))
+}
+
+fn with_now_text(args: JwtVerifyArgs, value: String) -> Result<JwtVerifyArgs, String> {
+  reject_duplicate_arg(args.now_text, "--now-unix-s")?
+  return Ok(rebuild_jwt_verify_args(args.token_file, args.jwks_file, args.issuer, args.audience, value))
+}
+
+fn jwt_verify_arg_at(argv: Json, index: Int) -> Result<String, String> {
+  return as_string(array_get(argv, index)?)
+}
+
+fn jwt_verify_arg_value(argv: Json, index: Int, flag: String) -> Result<String, String> {
+  let count = array_len(argv)?
+  if index + 1 >= count {
+    return Err(text_concat("missing value for ", flag))
+  }
+  return jwt_verify_arg_at(argv, index + 1)
+}
+
+fn apply_jwt_verify_flag(args: JwtVerifyArgs, argv: Json, index: Int, flag: String) -> Result<JwtVerifyArgs, String> {
+  let value = jwt_verify_arg_value(argv, index, flag)?
+  if flag == "--token-file" {
+    return with_token_file(args, value)
+  }
+  if flag == "--jwks-file" {
+    return with_jwks_file(args, value)
+  }
+  if flag == "--issuer" {
+    return with_issuer(args, value)
+  }
+  if flag == "--audience" {
+    return with_audience(args, value)
+  }
+  if flag == "--now-unix-s" {
+    return with_now_text(args, value)
+  }
+  return Err("unexpected auth jwt-verify argument")
+}
+
+fn require_jwt_verify_args(args: JwtVerifyArgs) -> Result<Bool, String> {
+  require_flag_value(args.token_file, "--token-file")?
+  require_flag_value(args.jwks_file, "--jwks-file")?
+  require_flag_value(args.issuer, "--issuer")?
+  require_flag_value(args.audience, "--audience")?
+  require_flag_value(args.now_text, "--now-unix-s")?
+  return Ok(true)
+}
+
+fn parse_jwt_verify_args(parsed: ParsedArgs) -> Result<JwtVerifyArgs, String> {
+  let argv = array_build(parsed.command_argv)
+  let count = array_len(argv)?
+  let index = 0
+  let parsed_args = empty_jwt_verify_args()
+  while index < count {
+    let flag = jwt_verify_arg_at(argv, index)?
+    parsed_args = apply_jwt_verify_flag(parsed_args, argv, index, flag)?
+    index += 2
+  }
+  require_jwt_verify_args(parsed_args)?
+  return Ok(parsed_args)
+}
+
+fn parse_now_unix_s(text: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value < 0 {
+    return Err("--now-unix-s must be non-negative")
+  }
+  return Ok(value)
+}
+
+fn print_jwt_claims_text(claims: JwtClaims) -> Void {
+  print(text_concat("subject=", claims.subject))
+  print(text_concat("issuer=", claims.issuer))
+  print(text_concat("audience=", claims.audience))
+  print(text_concat("expires_unix_s=", int_text(claims.expires_unix_s)))
+  print(text_concat("not_before_unix_s=", int_text(claims.not_before_unix_s)))
+  print(text_concat("roles=", stringify(claims.roles)))
+}
+
+fn emit_jwt_claims(claims: JwtClaims, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(claims.as_json()))
+    return 0
+  }
+  print_jwt_claims_text(claims)
+  return 0
+}
+
+fn verify_jwt_claims_from_args(args: JwtVerifyArgs) -> Result<JwtClaims, String> {
+  let token = read_string(args.token_file)?
+  let jwks_text = read_string(args.jwks_file)?
+  let now_unix_s = parse_now_unix_s(args.now_text)?
+  return verify_rs256_jwt(token,
+                          JwtValidationConfig(args.issuer,
+                                              args.audience,
+                                              jwks_text,
+                                              now_unix_s))
+}
+
+fn run_jwt_verify(parsed: ParsedArgs) -> Int {
+  match parse_jwt_verify_args(parsed) {
+    Ok(args) => {
+      match verify_jwt_claims_from_args(args) {
+        Ok(claims) => {
+          return emit_jwt_claims(claims, parsed.json_mode)
+        }
+        Err(msg) => {
+          return print_error_exit(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 2
+    }
+  }
+}
+
+fn print_whoami_text(envelope: WhoAmIEnvelope) -> Void {
+  print(text_concat("auth_enabled=", bool_text(envelope.auth_enabled)))
+  print(text_concat("actor=", envelope.actor))
+  print(text_concat("role=", envelope.role))
+  print(text_concat("request_id=", envelope.request_id))
+  print(text_concat("unix_ms=", int_text(envelope.unix_ms)))
+}
+
+fn emit_whoami(envelope: WhoAmIEnvelope, json_mode: Bool) -> Int {
+  if json_mode {
+    print(stringify(envelope.as_json()))
+    return 0
+  }
+  print_whoami_text(envelope)
+  return 0
+}
+
+fn parse_whoami_reply(reply: JsonResponse) -> Result<WhoAmIEnvelope, String> {
+  if reply.status != 200 {
+    return Err(reply_error_text(reply))
+  }
+  let envelope = whoami_envelope_from_json(reply.payload)?
+  validate_whoami_envelope(envelope)?
+  return Ok(envelope)
+}
+
+async fn fetch_whoami(base_url: String, options: ClientOptions) -> Result<WhoAmIEnvelope, String> {
+  match await get_json(base_url, "/v1/auth/whoami", options) {
+    Ok(reply) => {
+      return parse_whoami_reply(reply)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn run_auth_command(base_url: String, options: ClientOptions, parsed: ParsedArgs) -> Int {
+  if parsed.subcommand == "jwt-verify" {
+    return run_jwt_verify(parsed)
+  }
+  if parsed.subcommand == "whoami" {
+    match await fetch_whoami(base_url, options) {
+      Ok(envelope) => {
+        return emit_whoami(envelope, parsed.json_mode)
+      }
+      Err(msg) => {
+        return print_error_exit(msg)
+      }
+    }
+  }
+  print("unknown auth subcommand")
+  return 2
+}

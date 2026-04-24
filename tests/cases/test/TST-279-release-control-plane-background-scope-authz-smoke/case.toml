@@ -1,0 +1,284 @@
+id = "TST-279-release-control-plane-background-scope-authz-smoke"
+suite = "test"
+description = "worker and broker lanes respect app/channel scoped authz"
+
+[[steps]]
+kind = "shell"
+timeout = 300
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/release_control_plane_background_scope_authz")
+state_dir = root / "state"
+ctl_out = root / ".ctl-out"
+scope_file = root / "scopes.json"
+admin_token = "admin-broker-token"
+writer_token = "writer-broker-token"
+reader_token = "reader-broker-token"
+worker_token = "worker-broker-token"
+
+base_service_env = {
+    "APP_STATE_DIR": str(state_dir),
+    "APP_EXTERNAL_BROKER_PREVIEW": "1",
+    "APP_EXTERNAL_BROKER_URL": "http://127.0.0.1:1",
+    "APP_AUTH_REQUIRED": "1",
+    "APP_ADMIN_TOKEN": admin_token,
+    "APP_WRITE_TOKEN": writer_token,
+    "APP_READ_TOKEN": reader_token,
+    "APP_WORKER_TOKEN": worker_token,
+}
+
+def require_denied_not_found(result, text: str, label: str) -> None:
+    if result.returncode != 1 or text not in result.stdout:
+        print_completed(result)
+        raise SystemExit(f"{label} missing not-found denial")
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+
+stage_worker_lease_id = ""
+stage_broker_message_id = 0
+stage_broker_lease_id = ""
+
+proc, stderr_lines, port = start_service(binary, root, base_service_env)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f"http://127.0.0.1:{port}"
+    prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out)
+    require_success(prewarm, "prewarm ctl binary")
+
+    for channel in ("stage", "prod"):
+        config_put = run_ctl(
+            binary, root,
+            "config", "put",
+            "--app", "control-plane",
+            "--channel", channel,
+            "--key", "feature.flag",
+            "--bool", "true",
+            "--description", f"{channel} config",
+            "--url", base_url,
+            "--token", writer_token,
+            "--json",
+            out_dir=ctl_out,
+            no_build=True,
+        )
+        require_success(config_put, f"config put {channel}")
+        config_revision = json.loads(config_put.stdout).get("entry", {}).get("revision_id")
+
+        release_put = run_ctl(
+            binary, root,
+            "release", "put",
+            "--app", "control-plane",
+            "--channel", channel,
+            "--version", f"2026.04.24-{channel}",
+            "--config-revision", str(config_revision),
+            "--description", f"{channel} release",
+            "--url", base_url,
+            "--token", writer_token,
+            "--json",
+            out_dir=ctl_out,
+            no_build=True,
+        )
+        require_success(release_put, f"release put {channel}")
+        release_revision = json.loads(release_put.stdout).get("entry", {}).get("revision_id")
+        submit = run_ctl(
+            binary, root,
+            "workflow", "event", "submit",
+            "--app", "control-plane",
+            "--channel", channel,
+            "--event-id", f"background-{channel}-1",
+            "--event-kind", "release_apply_requested",
+            "--release-revision", "1",
+            "--url", base_url,
+            "--token", writer_token,
+            "--json",
+            out_dir=ctl_out,
+            no_build=True,
+        )
+        require_success(submit, f"workflow submit {channel}")
+
+        if channel == "stage":
+            approval = run_ctl(
+                binary, root,
+                "approval", "decide",
+                "--app", "control-plane",
+                "--channel", channel,
+                "--if-match", str(release_revision),
+                "--decision", "approved",
+                "--reason", f"{channel} ready",
+                "--url", base_url,
+                "--token", admin_token,
+                "--json",
+                out_dir=ctl_out,
+                no_build=True,
+            )
+            require_success(approval, f"approval decide {channel}")
+
+            worker_claim = run_ctl(
+                binary, root,
+                "worker", "claim",
+                "--worker-id", "scope-worker",
+                "--task-kind", "apply_release",
+                "--url", base_url,
+                "--token", worker_token,
+                "--json",
+                out_dir=ctl_out,
+                no_build=True,
+            )
+            require_success(worker_claim, "stage worker claim")
+            stage_worker_lease = json.loads(worker_claim.stdout).get("lease", {})
+            stage_worker_lease_id = stage_worker_lease.get("lease_id", "")
+            if stage_worker_lease.get("channel") != "stage":
+                raise SystemExit(f"expected stage lease before scoped restart: {worker_claim.stdout!r}")
+
+            broker_claim = run_ctl(
+                binary, root,
+                "broker", "outbox", "claim",
+                "--worker-id", "scope-worker",
+                "--topic", "workflow.run.created",
+                "--now-unix-ms", "1000",
+                "--url", base_url,
+                "--token", worker_token,
+                "--json",
+                out_dir=ctl_out,
+                no_build=True,
+            )
+            require_success(broker_claim, "stage broker claim")
+            broker_message = json.loads(broker_claim.stdout).get("message", {})
+            stage_broker_message_id = broker_message.get("message_id", 0)
+            stage_broker_lease_id = broker_message.get("meta", {}).get("lease_id", "")
+            if broker_message.get("key") != "control-plane/stage/1":
+                raise SystemExit(f"expected stage broker message before scoped restart: {broker_claim.stdout!r}")
+finally:
+    terminate_process(proc)
+
+scope_file.write_text(
+    json.dumps(
+        {
+            "bindings": [
+                {"subject": "reader", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "writer", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "admin", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+                {"subject": "worker", "app_scope": ["control-plane"], "channel_scope": ["prod"]},
+            ]
+        }
+    ),
+    encoding="utf-8",
+)
+
+scoped_env = {**base_service_env, "APP_AUTH_SCOPE_FILE": str(scope_file)}
+proc, stderr_lines, port = start_service(binary, root, scoped_env)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f"http://127.0.0.1:{port}"
+
+    prod_worker_claim = run_ctl(
+        binary, root,
+        "worker", "claim",
+        "--worker-id", "scope-worker",
+        "--task-kind", "apply_release",
+        "--url", base_url,
+        "--token", worker_token,
+        "--json",
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(prod_worker_claim, "scoped prod worker claim")
+    prod_lease = json.loads(prod_worker_claim.stdout).get("lease", {})
+    if json.loads(prod_worker_claim.stdout).get("outcome") != "idle" or prod_lease.get("lease_id", "") != "":
+        raise SystemExit(f"scoped worker claim should stay idle when only out-of-scope work is ready: {prod_worker_claim.stdout!r}")
+
+    stage_heartbeat = run_ctl(
+        binary, root,
+        "worker", "heartbeat",
+        "--worker-id", "scope-worker",
+        "--lease-id", stage_worker_lease_id,
+        "--url", base_url,
+        "--token", worker_token,
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_denied_not_found(stage_heartbeat, "worker lease not found", "scoped stage heartbeat")
+
+    stage_complete = run_ctl(
+        binary, root,
+        "worker", "complete",
+        "--worker-id", "scope-worker",
+        "--lease-id", stage_worker_lease_id,
+        "--status", "failed",
+        "--message", "out of scope",
+        "--url", base_url,
+        "--token", worker_token,
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_denied_not_found(stage_complete, "worker lease not found", "scoped stage complete")
+
+    prod_broker_claim = run_ctl(
+        binary, root,
+        "broker", "outbox", "claim",
+        "--worker-id", "scope-worker",
+        "--topic", "workflow.run.created",
+        "--now-unix-ms", "2000",
+        "--url", base_url,
+        "--token", worker_token,
+        "--json",
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(prod_broker_claim, "scoped prod broker claim")
+    prod_message = json.loads(prod_broker_claim.stdout).get("message", {})
+    if prod_message.get("key") != "control-plane/prod/2":
+        raise SystemExit(f"scoped broker claim did not skip stage message: {prod_broker_claim.stdout!r}")
+
+    stage_broker_get = run_ctl(
+        binary, root,
+        "broker", "outbox", "get",
+        "--message-id", str(stage_broker_message_id),
+        "--url", base_url,
+        "--token", reader_token,
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_denied_not_found(stage_broker_get, "broker outbox message not found", "scoped stage broker get")
+
+    stage_broker_complete = run_ctl(
+        binary, root,
+        "broker", "outbox", "complete",
+        "--worker-id", "scope-worker",
+        "--message-id", str(stage_broker_message_id),
+        "--lease-id", stage_broker_lease_id,
+        "--status", "published",
+        "--message", "out of scope",
+        "--url", base_url,
+        "--token", worker_token,
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_denied_not_found(stage_broker_complete, "broker outbox message not found", "scoped stage broker complete")
+finally:
+    terminate_process(proc)
+
+print("release-control-plane-background-scope-authz-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-background-scope-authz-ok"]

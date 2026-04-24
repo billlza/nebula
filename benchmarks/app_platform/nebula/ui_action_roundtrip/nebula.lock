@@ -1,0 +1,37 @@
+schema_version = 2
+root_package = "app-platform-ui-action-roundtrip"
+root_manifest_hash = "887b6b1278f08849"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "app-platform-ui-action-roundtrip"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "887b6b1278f08849"
+source_fingerprint = "40da0c9a2670e7fb"
+integrity_fingerprint = "e07043767ad54b25"
+is_root = 1
+dependencies = ["ui=nebula-ui"]
+
+[[package]]
+name = "nebula-ui"
+version = "0.1.0"
+root = "../../../../official/nebula-ui"
+manifest = "../../../../official/nebula-ui/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../../../official/nebula-ui"
+resolved_rev = ""
+manifest_hash = "7cf5c999299b15a7"
+source_fingerprint = "a5ce53c0b57e3f28"
+integrity_fingerprint = "8058b6c58f7b85aa"
+is_root = 0
+dependencies = []

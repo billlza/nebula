@@ -1,0 +1,345 @@
+id = "TST-260-release-control-plane-webhook-ingress-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import hmac
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+from service_probe import wait_for_listener_bound
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/release_control_plane_webhook_ingress')
+state_dir = root / 'state'
+ctl_out = root / '.ctl-out'
+secret = 'webhook-secret'
+admin_token = 'admin-webhook-token'
+writer_token = 'writer-webhook-token'
+reader_token = 'reader-webhook-token'
+worker_token = 'worker-webhook-token'
+
+def sign(timestamp_ms: int, body_text: str) -> str:
+    data = f'{timestamp_ms}.{body_text}'.encode('utf-8')
+    return hmac.new(secret.encode('utf-8'), data, hashlib.sha256).hexdigest()
+
+def write_body(path: Path, event_id: str, event_kind: str = 'release_apply_requested') -> str:
+    text = json.dumps({
+        'event_id': event_id,
+        'event_kind': event_kind,
+        'release_revision_id': 1,
+        'payload': {'source': 'webhook'},
+    }, separators=(',', ':'))
+    path.write_text(text, encoding='utf-8')
+    return text
+
+service_env = {
+    'APP_STATE_DIR': str(state_dir),
+    'APP_PUBLIC_WEBHOOKS_PREVIEW': '1',
+    'APP_PUBLIC_WEBHOOK_SECRET': secret,
+    'APP_EXTERNAL_BROKER_PREVIEW': '1',
+    'APP_EXTERNAL_BROKER_URL': 'http://127.0.0.1:1',
+    'APP_AUTH_REQUIRED': '1',
+    'APP_ADMIN_TOKEN': admin_token,
+    'APP_WRITE_TOKEN': writer_token,
+    'APP_READ_TOKEN': reader_token,
+    'APP_WORKER_TOKEN': worker_token,
+}
+
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+proc, stderr_lines, port = start_service(binary, root, service_env)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f'http://127.0.0.1:{port}'
+    prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out)
+    require_success(prewarm, 'prewarm ctl binary')
+
+    config_put = run_ctl(
+        binary, root,
+        'config', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--key', 'feature.flag',
+        '--bool', 'true',
+        '--description', 'webhook ingress',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(config_put, 'config put')
+
+    release_put = run_ctl(
+        binary, root,
+        'release', 'put',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--version', '2026.04.23',
+        '--config-revision', '1',
+        '--description', 'webhook ingress',
+        '--url', base_url,
+        '--token', writer_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(release_put, 'release put')
+
+    now_ms = int(time.time() * 1000)
+    body_path = root / 'webhook-body.json'
+    body_text = write_body(body_path, 'webhook-event-1')
+    signature = sign(now_ms, body_text)
+    cli_env = {'APP_PUBLIC_WEBHOOK_SECRET': secret}
+
+    verify = run_ctl(
+        binary, root,
+        'webhook', 'verify',
+        '--provider', 'generic',
+        '--event-id', 'webhook-event-1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(body_path),
+        '--signature', signature,
+        '--json',
+        env=cli_env,
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(verify, 'webhook verify')
+    if json.loads(verify.stdout).get('verified') is not True:
+        raise SystemExit(f'webhook verify did not pass: {verify.stdout!r}')
+
+    bad_verify = run_ctl(
+        binary, root,
+        'webhook', 'verify',
+        '--provider', 'generic',
+        '--event-id', 'webhook-event-1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(body_path),
+        '--signature', '00',
+        '--json',
+        env=cli_env,
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(bad_verify, 'webhook verify bad signature')
+    if json.loads(bad_verify.stdout).get('verified') is not False:
+        raise SystemExit(f'webhook bad verify unexpectedly passed: {bad_verify.stdout!r}')
+
+    submit = run_ctl(
+        binary, root,
+        'webhook', 'submit-local',
+        '--provider', 'generic',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'webhook-event-1',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(body_path),
+        '--signature', signature,
+        '--url', base_url,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(submit, 'webhook submit-local')
+    submit_payload = json.loads(submit.stdout)
+    if submit_payload.get('outcome') != 'created' or submit_payload.get('run', {}).get('event_id') != 'webhook-event-1':
+        raise SystemExit(f'webhook submit did not create run: {submit_payload!r}')
+
+    duplicate = run_ctl(
+        binary, root,
+        'webhook', 'submit-local',
+        '--provider', 'generic',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'webhook-event-1',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(body_path),
+        '--signature', signature,
+        '--url', base_url,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(duplicate, 'webhook duplicate submit-local')
+    if json.loads(duplicate.stdout).get('outcome') != 'existing':
+        raise SystemExit(f'webhook duplicate did not return existing: {duplicate.stdout!r}')
+
+    invalid_signature = run_ctl(
+        binary, root,
+        'webhook', 'submit-local',
+        '--provider', 'generic',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'webhook-event-1',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(body_path),
+        '--signature', '00',
+        '--url', base_url,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if invalid_signature.returncode == 0 or 'webhook_signature_invalid' not in invalid_signature.stdout:
+        print(invalid_signature.stdout, end='')
+        print(invalid_signature.stderr, end='')
+        raise SystemExit('invalid webhook signature unexpectedly passed')
+
+    stale_ts = now_ms - 400000
+    stale_sig = sign(stale_ts, body_text)
+    stale = run_ctl(
+        binary, root,
+        'webhook', 'submit-local',
+        '--provider', 'generic',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'webhook-event-1',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--timestamp-unix-ms', str(stale_ts),
+        '--body-file', str(body_path),
+        '--signature', stale_sig,
+        '--url', base_url,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if stale.returncode == 0 or 'webhook_timestamp_invalid' not in stale.stdout:
+        print(stale.stdout, end='')
+        print(stale.stderr, end='')
+        raise SystemExit('stale webhook unexpectedly passed')
+
+    unknown_path = root / 'webhook-unknown.json'
+    unknown_text = write_body(unknown_path, 'webhook-event-2', 'unknown_event')
+    unknown_sig = sign(now_ms, unknown_text)
+    unknown = run_ctl(
+        binary, root,
+        'webhook', 'submit-local',
+        '--provider', 'generic',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'webhook-event-2',
+        '--event-kind', 'unknown_event',
+        '--release-revision', '1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(unknown_path),
+        '--signature', unknown_sig,
+        '--url', base_url,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if unknown.returncode == 0 or 'webhook_event_kind_not_enabled' not in unknown.stdout:
+        print(unknown.stdout, end='')
+        print(unknown.stderr, end='')
+        raise SystemExit('unknown webhook event kind unexpectedly passed')
+
+    claim = run_ctl(
+        binary, root,
+        'broker', 'outbox', 'claim',
+        '--worker-id', 'broker-worker',
+        '--topic', 'workflow.run.created',
+        '--now-unix-ms', str(now_ms),
+        '--url', base_url,
+        '--token', worker_token,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(claim, 'broker outbox claim after webhook')
+    claim_payload = json.loads(claim.stdout)
+    if claim_payload.get('outcome') != 'claimed' or claim_payload.get('message', {}).get('key') != 'control-plane/prod/1':
+        raise SystemExit(f'webhook did not feed broker outbox: {claim_payload!r}')
+finally:
+    terminate_process(proc)
+
+service_binary = root / '.service-out' / 'main.out'
+fail_env = {
+    **os.environ,
+    'NEBULA_BIND_HOST': '127.0.0.1',
+    'NEBULA_PORT': '0',
+    'APP_STATE_DIR': str(root / 'state-preview-fail'),
+    'APP_PUBLIC_WEBHOOKS_PREVIEW': '1',
+    'APP_AUTH_REQUIRED': '1',
+    'APP_READ_TOKEN': reader_token,
+    'APP_WRITE_TOKEN': writer_token,
+    'APP_ADMIN_TOKEN': admin_token,
+}
+failed_start = subprocess.run([str(service_binary)], capture_output=True, text=True, env=fail_env, timeout=10)
+if failed_start.returncode == 0:
+    raise SystemExit('public webhook preview unexpectedly started without secret')
+if 'startup preflight failed: public_webhook_integrations preview requires APP_PUBLIC_WEBHOOK_SECRET or APP_PUBLIC_WEBHOOK_SECRET_FILE' not in failed_start.stdout:
+    print(failed_start.stdout, end='')
+    print(failed_start.stderr, end='')
+    raise SystemExit('public webhook preview missing secret diagnostic')
+
+disabled_env = {
+    **os.environ,
+    'NEBULA_BIND_HOST': '127.0.0.1',
+    'NEBULA_PORT': '0',
+    'APP_STATE_DIR': str(root / 'state-preview-disabled'),
+    'APP_AUTH_REQUIRED': '1',
+    'APP_READ_TOKEN': reader_token,
+    'APP_WRITE_TOKEN': writer_token,
+    'APP_ADMIN_TOKEN': admin_token,
+}
+disabled_proc = subprocess.Popen([str(service_binary)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=disabled_env)
+disabled_stderr: list[str] = []
+try:
+    _, disabled_port = wait_for_listener_bound(disabled_proc, disabled_stderr)
+    wait_until_health_ok(disabled_proc, disabled_stderr, disabled_port)
+    disabled_url = f'http://127.0.0.1:{disabled_port}'
+    disabled = run_ctl(
+        binary, root,
+        'webhook', 'submit-local',
+        '--provider', 'generic',
+        '--app', 'control-plane',
+        '--channel', 'prod',
+        '--event-id', 'webhook-event-1',
+        '--event-kind', 'release_apply_requested',
+        '--release-revision', '1',
+        '--timestamp-unix-ms', str(now_ms),
+        '--body-file', str(body_path),
+        '--signature', signature,
+        '--url', disabled_url,
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if disabled.returncode == 0 or 'webhook_preview_disabled' not in disabled.stdout:
+        print(disabled.stdout, end='')
+        print(disabled.stderr, end='')
+        raise SystemExit('webhook route unexpectedly worked with preview disabled')
+finally:
+    terminate_process(disabled_proc)
+
+print('release-control-plane-webhook-ingress-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-webhook-ingress-ok"]

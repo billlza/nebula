@@ -1,0 +1,115 @@
+module jwt
+import std::json
+import std::result
+
+struct JwtValidationConfig {
+  issuer: String
+  audience: String
+  jwks_text: String
+  now_unix_s: Int
+}
+
+struct JwtClaims {
+  subject: String
+  issuer: String
+  audience: String
+  expires_unix_s: Int
+  not_before_unix_s: Int
+  roles: Json
+}
+
+struct JwtClaimTextFields {
+  subject: String
+  issuer: String
+  audience: String
+}
+
+struct JwtClaimTimeFields {
+  expires_unix_s: Int
+  not_before_unix_s: Int
+}
+
+extern fn __nebula_auth_validate_rs256_jwks(jwks_text: String) -> Result<Bool, String>
+extern fn __nebula_auth_verify_rs256_jwt(token: String,
+                                         jwks_text: String,
+                                         issuer: String,
+                                         audience: String,
+                                         now_unix_s: Int) -> Result<Json, String>
+extern fn __nebula_auth_verify_rs256_authorization_header(header_value: String,
+                                                         jwks_text: String,
+                                                         issuer: String,
+                                                         audience: String,
+                                                         now_unix_s: Int) -> Result<Json, String>
+
+fn JwtValidationConfig_as_json(self: JwtValidationConfig) -> Json {
+  return object4("issuer",
+                 string_value(self.issuer),
+                 "audience",
+                 string_value(self.audience),
+                 "jwks_text",
+                 string_value(self.jwks_text),
+                 "now_unix_s",
+                 int_value(self.now_unix_s))
+}
+
+fn JwtClaims_as_json(self: JwtClaims) -> Json {
+  return object6("subject",
+                 string_value(self.subject),
+                 "issuer",
+                 string_value(self.issuer),
+                 "audience",
+                 string_value(self.audience),
+                 "expires_unix_s",
+                 int_value(self.expires_unix_s),
+                 "not_before_unix_s",
+                 int_value(self.not_before_unix_s),
+                 "roles",
+                 self.roles)
+}
+
+fn jwt_claim_text_fields_from_json(value: Json) -> Result<JwtClaimTextFields, String> {
+  let subject = get_string(value, "subject")?
+  let issuer = get_string(value, "issuer")?
+  let audience = get_string(value, "audience")?
+  return Ok(JwtClaimTextFields(subject, issuer, audience))
+}
+
+fn jwt_claim_time_fields_from_json(value: Json) -> Result<JwtClaimTimeFields, String> {
+  let expires_unix_s = get_int(value, "expires_unix_s")?
+  let not_before_unix_s = get_int(value, "not_before_unix_s")?
+  return Ok(JwtClaimTimeFields(expires_unix_s, not_before_unix_s))
+}
+
+fn jwt_claims_from_json(value: Json) -> Result<JwtClaims, String> {
+  let text = jwt_claim_text_fields_from_json(value)?
+  let time = jwt_claim_time_fields_from_json(value)?
+  let roles = get_value(value, "roles")?
+  return Ok(JwtClaims(text.subject,
+                      text.issuer,
+                      text.audience,
+                      time.expires_unix_s,
+                      time.not_before_unix_s,
+                      roles))
+}
+
+fn validate_rs256_jwks(jwks_text: String) -> Result<Bool, String> {
+  return __nebula_auth_validate_rs256_jwks(jwks_text)
+}
+
+fn verify_rs256_jwt(token: String, config: JwtValidationConfig) -> Result<JwtClaims, String> {
+  let claims = __nebula_auth_verify_rs256_jwt(token,
+                                             config.jwks_text,
+                                             config.issuer,
+                                             config.audience,
+                                             config.now_unix_s)?
+  return jwt_claims_from_json(claims)
+}
+
+fn verify_rs256_authorization_header(header_value: String, config: JwtValidationConfig) -> Result<JwtClaims, String> {
+  let claims = __nebula_auth_verify_rs256_authorization_header(header_value,
+                                                              config.jwks_text,
+                                                              config.issuer,
+                                                              config.audience,
+                                                              config.now_unix_s)?
+  return jwt_claims_from_json(claims)
+}

@@ -1,0 +1,508 @@
+id = "TST-224-example-release-control-plane-workspace-approval-runner-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import (
+    copy_example,
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_approval_runner')
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+service_env = {
+    'APP_STATE_DIR': str((root / 'state').resolve()),
+    'APP_AUTH_REQUIRED': '1',
+    'APP_READ_TOKEN': 'reader-token',
+    'APP_WRITE_TOKEN': 'writer-token',
+    'APP_ADMIN_TOKEN': 'admin-token',
+}
+proc, stderr_lines, port = start_service(binary, root, extra_env=service_env)
+wait_until_health_ok(proc, stderr_lines, port)
+try:
+    base_url = f'http://127.0.0.1:{port}'
+    ctl_out = root / '.ctl-out'
+
+    config_create = run_ctl(
+        binary,
+        root,
+        'config',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--key',
+        'feature.flag',
+        '--bool',
+        'true',
+        '--description',
+        'release config',
+        out_dir=ctl_out,
+    )
+    require_success(config_create, 'ctl config put create')
+    config_create_payload = json.loads(config_create.stdout)
+    create_config_revision = config_create_payload.get('entry', {}).get('revision_id')
+    if create_config_revision != 1:
+        print_completed(config_create)
+        raise SystemExit(f'unexpected config create payload: {config_create_payload!r}')
+
+    create_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--version',
+        '2026.04.21',
+        '--config-revision',
+        str(create_config_revision),
+        '--description',
+        'initial desired state',
+        out_dir=ctl_out,
+    )
+    require_success(create_result, 'ctl release put create')
+    create_payload = json.loads(create_result.stdout)
+    if create_payload.get('entry', {}).get('revision_id') != 1:
+        print_completed(create_result)
+        raise SystemExit(f'unexpected release create payload: {create_payload!r}')
+
+    workflow_get = run_ctl(
+        binary,
+        root,
+        'workflow',
+        'get',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(workflow_get, 'ctl workflow get')
+    workflow_get_payload = json.loads(workflow_get.stdout)
+    definition = workflow_get_payload.get('definition', {})
+    if definition.get('event_kind') != 'release_apply_requested' or definition.get('revision_id') != 1:
+        print_completed(workflow_get)
+        raise SystemExit(f'unexpected workflow definition payload: {workflow_get_payload!r}')
+
+    approval_get = run_ctl(
+        binary,
+        root,
+        'approval',
+        'get',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(approval_get, 'ctl approval get')
+    approval_get_payload = json.loads(approval_get.stdout)
+    if approval_get_payload.get('decision', {}).get('decision') != 'pending':
+        print_completed(approval_get)
+        raise SystemExit(f'expected pending approval state, got: {approval_get_payload!r}')
+
+    apply_before_approval = run_ctl(
+        binary,
+        root,
+        'release',
+        'apply',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--if-match',
+        '1',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    if apply_before_approval.returncode == 0 or 'status=409' not in apply_before_approval.stdout or 'release_not_approved' not in apply_before_approval.stdout:
+        print_completed(apply_before_approval)
+        raise SystemExit('release apply before approval did not fail with release_not_approved')
+
+    approval_decide = run_ctl(
+        binary,
+        root,
+        'approval',
+        'decide',
+        '--url',
+        base_url,
+        '--token',
+        'admin-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--if-match',
+        '1',
+        '--decision',
+        'approved',
+        '--reason',
+        'ready to promote',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(approval_decide, 'ctl approval decide')
+    approval_decide_payload = json.loads(approval_decide.stdout)
+    if approval_decide_payload.get('decision', {}).get('decision') != 'approved':
+        print_completed(approval_decide)
+        raise SystemExit(f'unexpected approval decide payload: {approval_decide_payload!r}')
+
+    apply_request = run_ctl(
+        binary,
+        root,
+        'release',
+        'apply',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--if-match',
+        '1',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(apply_request, 'ctl release apply request')
+    apply_request_payload = json.loads(apply_request.stdout)
+    apply_run = apply_request_payload.get('run', {})
+    apply_run_id = apply_run.get('run_id', 0)
+    if apply_run.get('status') != 'pending' or apply_run_id <= 0:
+        print_completed(apply_request)
+        raise SystemExit(f'unexpected apply request payload: {apply_request_payload!r}')
+
+    workflow_run_ready = run_ctl(
+        binary,
+        root,
+        'workflow',
+        'run',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--run-id',
+        str(apply_run_id),
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(workflow_run_ready, 'ctl workflow run after apply request')
+    workflow_run_ready_payload = json.loads(workflow_run_ready.stdout)
+    ready_meta = workflow_run_ready_payload.get('run', {}).get('meta', {})
+    ready_stages = ready_meta.get('stages', [])
+    if ready_meta.get('status') != 'ready' or len(ready_stages) != 2 or ready_stages[1].get('status') != 'ready':
+        print_completed(workflow_run_ready)
+        raise SystemExit(f'unexpected ready workflow run payload: {workflow_run_ready_payload!r}')
+
+    runner_once = run_ctl(
+        binary,
+        root,
+        'runner',
+        'apply-once',
+        '--url',
+        base_url,
+        '--token',
+        'admin-token',
+        '--json',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(runner_once, 'ctl runner apply-once')
+    runner_payload = json.loads(runner_once.stdout)
+    if runner_payload.get('outcome') != 'processed' or runner_payload.get('run', {}).get('status') != 'applied':
+        print_completed(runner_once)
+        raise SystemExit(f'unexpected runner payload: {runner_payload!r}')
+
+    workflow_run_completed = run_ctl(
+        binary,
+        root,
+        'workflow',
+        'run',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--run-id',
+        str(apply_run_id),
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(workflow_run_completed, 'ctl workflow run after runner apply-once')
+    workflow_run_completed_payload = json.loads(workflow_run_completed.stdout)
+    completed_meta = workflow_run_completed_payload.get('run', {}).get('meta', {})
+    completed_stages = completed_meta.get('stages', [])
+    if completed_meta.get('status') != 'completed' or completed_stages[1].get('status') != 'completed':
+        print_completed(workflow_run_completed)
+        raise SystemExit(f'unexpected completed workflow run payload: {workflow_run_completed_payload!r}')
+
+    audit_list = run_ctl(
+        binary,
+        root,
+        'audit',
+        'list',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(audit_list, 'ctl audit list')
+    audit_payload = json.loads(audit_list.stdout)
+    event_kinds = [event.get('event_kind') for event in audit_payload.get('events', [])]
+    for expected in [
+        'release_upserted',
+        'approval_decided',
+        'release_apply_requested',
+        'release_apply_started',
+        'release_apply_completed',
+    ]:
+        if expected not in event_kinds:
+            print_completed(audit_list)
+            raise SystemExit(f'missing audit event kind: {expected!r} from {event_kinds!r}')
+
+    config_update = run_ctl(
+        binary,
+        root,
+        'config',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--key',
+        'feature.flag',
+        '--bool',
+        'false',
+        '--description',
+        'next release config',
+        '--if-match',
+        str(create_config_revision),
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(config_update, 'ctl config put update')
+    config_update_payload = json.loads(config_update.stdout)
+    update_config_revision = config_update_payload.get('entry', {}).get('revision_id')
+    if update_config_revision != 2:
+        print_completed(config_update)
+        raise SystemExit(f'unexpected config update payload: {config_update_payload!r}')
+
+    update_result = run_ctl(
+        binary,
+        root,
+        'release',
+        'put',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--version',
+        '2026.04.22',
+        '--config-revision',
+        str(update_config_revision),
+        '--description',
+        'next desired state',
+        '--if-match',
+        '1',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(update_result, 'ctl release put update')
+    update_payload = json.loads(update_result.stdout)
+    if update_payload.get('entry', {}).get('revision_id') != 2:
+        print_completed(update_result)
+        raise SystemExit(f'unexpected release update payload: {update_payload!r}')
+
+    approval_after_update = run_ctl(
+        binary,
+        root,
+        'approval',
+        'get',
+        '--url',
+        base_url,
+        '--token',
+        'reader-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(approval_after_update, 'ctl approval get after update')
+    approval_after_update_payload = json.loads(approval_after_update.stdout)
+    if approval_after_update_payload.get('decision', {}).get('decision') != 'pending' or approval_after_update_payload.get('decision', {}).get('release_revision_id') != 2:
+        print_completed(approval_after_update)
+        raise SystemExit(f'approval state did not reset for the new release revision: {approval_after_update_payload!r}')
+
+    approval_second = run_ctl(
+        binary,
+        root,
+        'approval',
+        'decide',
+        '--url',
+        base_url,
+        '--token',
+        'admin-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--if-match',
+        '2',
+        '--decision',
+        'approved',
+        '--reason',
+        'ready to promote again',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(approval_second, 'ctl approval decide for second release revision')
+
+    workflow_submit_created = run_ctl(
+        binary,
+        root,
+        'workflow',
+        'event',
+        'submit',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--event-id',
+        'event-release-2',
+        '--event-kind',
+        'release_apply_requested',
+        '--release-revision',
+        '2',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(workflow_submit_created, 'ctl workflow event submit created')
+    workflow_submit_created_payload = json.loads(workflow_submit_created.stdout)
+    created_run_id = workflow_submit_created_payload.get('run', {}).get('run_id')
+    if workflow_submit_created_payload.get('outcome') != 'created' or created_run_id <= 0:
+        print_completed(workflow_submit_created)
+        raise SystemExit(f'unexpected workflow event created payload: {workflow_submit_created_payload!r}')
+
+    workflow_submit_existing = run_ctl(
+        binary,
+        root,
+        'workflow',
+        'event',
+        'submit',
+        '--url',
+        base_url,
+        '--token',
+        'writer-token',
+        '--json',
+        '--app',
+        'control-plane',
+        '--channel',
+        'prod',
+        '--event-id',
+        'event-release-2',
+        '--event-kind',
+        'release_apply_requested',
+        '--release-revision',
+        '2',
+        out_dir=ctl_out,
+        no_build=True,
+    )
+    require_success(workflow_submit_existing, 'ctl workflow event submit existing')
+    workflow_submit_existing_payload = json.loads(workflow_submit_existing.stdout)
+    existing_run_id = workflow_submit_existing_payload.get('run', {}).get('run_id')
+    if workflow_submit_existing_payload.get('outcome') != 'existing' or existing_run_id != created_run_id:
+        print_completed(workflow_submit_existing)
+        raise SystemExit(f'unexpected workflow event existing payload: {workflow_submit_existing_payload!r}')
+
+    print('example-release-control-plane-workspace-approval-runner-ok')
+finally:
+    terminate_process(proc)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["example-release-control-plane-workspace-approval-runner-ok"]

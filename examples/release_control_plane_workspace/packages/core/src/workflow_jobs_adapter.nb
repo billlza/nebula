@@ -1,0 +1,332 @@
+module workflow_jobs_adapter
+import jobs_pkg::contracts
+import jobs_pkg::stage_state
+import workflow_contracts
+import std::bytes
+import std::json
+import std::result
+
+fn adapter_text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn adapter_text_concat3(first: String, second: String, third: String) -> String {
+  return adapter_text_concat(adapter_text_concat(first, second), third)
+}
+
+fn workflow_job_name(app_name: String, channel: String) -> String {
+  return adapter_text_concat3(app_name, "/", channel)
+}
+
+fn workflow_jobs_empty_dependency_array() -> Json {
+  return array_build(array_builder())
+}
+
+fn workflow_jobs_single_dependency_array(name: String) -> Json {
+  let builder = array_builder()
+  return array_build(array_push(builder, string_value(name)))
+}
+
+fn workflow_jobs_stage_json_at(stages: Json, index: Int) -> Result<Json, String> {
+  return array_get(stages, index)
+}
+
+fn workflow_jobs_stage_name_at(stages: Json, index: Int) -> Result<String, String> {
+  return get_string(workflow_jobs_stage_json_at(stages, index)?, "name")
+}
+
+fn workflow_jobs_stage_depends_on(stages: Json, index: Int) -> Result<Json, String> {
+  let stage_json = workflow_jobs_stage_json_at(stages, index)?
+  match get_value(stage_json, "depends_on") {
+    Ok(value) => {
+      array_len(value)?
+      return Ok(value)
+    }
+    Err(_) => {
+      if index <= 0 {
+        return Ok(workflow_jobs_empty_dependency_array())
+      }
+      return Ok(workflow_jobs_single_dependency_array(workflow_jobs_stage_name_at(stages, index - 1)?))
+    }
+  }
+}
+
+fn workflow_jobs_stage_has_explicit_depends_on(stages: Json, index: Int) -> Result<Bool, String> {
+  match get_value(workflow_jobs_stage_json_at(stages, index)?, "depends_on") {
+    Ok(_) => {
+      return Ok(true)
+    }
+    Err(_) => {
+      return Ok(false)
+    }
+  }
+}
+
+fn workflow_stage_as_job_stage_spec(stages: Json, index: Int) -> Result<JobStageSpec, String> {
+  let spec = workflow_stage_spec_from_json(workflow_jobs_stage_json_at(stages, index)?)?
+  return Ok(JobStageSpec(spec.name,
+                         spec.kind,
+                         spec.task_kind,
+                         spec.timeout_s,
+                         spec.max_attempts,
+                         workflow_jobs_stage_depends_on(stages, index)?))
+}
+
+fn workflow_stage_as_job_stage_json(stages: Json, index: Int) -> Result<Json, String> {
+  return Ok(workflow_stage_as_job_stage_spec(stages, index)?.as_json())
+}
+
+fn workflow_stages_as_job_stages_json(stages: Json) -> Result<Json, String> {
+  let count = array_len(stages)?
+  let builder = array_builder()
+  let index = 0
+  while index < count {
+    builder = array_push(builder, workflow_stage_as_job_stage_json(stages, index)?)
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn workflow_definition_as_job_definition(definition: WorkflowDefinition) -> Result<JobDefinition, String> {
+  return Ok(JobDefinition(workflow_job_name(definition.app, definition.channel),
+                          definition.trigger_kind,
+                          definition.event_kind,
+                          workflow_stages_as_job_stages_json(definition.stages)?,
+                          definition.revision_id,
+                          definition.updated_by,
+                          definition.updated_unix_ms))
+}
+
+fn workflow_stage_run_as_job_stage_run(run_id: Int, stage: WorkflowStageRun) -> JobStageRun {
+  return JobStageRun(run_id,
+                     stage.stage_index,
+                     stage.stage_name,
+                     stage.kind,
+                     stage.task_kind,
+                     stage.status,
+                     stage.attempt,
+                     stage.lease_id,
+                     stage.worker_id,
+                     stage.lease_expires_unix_ms,
+                     stage.started_unix_ms,
+                     stage.finished_unix_ms,
+                     stage.result_message,
+                     stage.result_payload)
+}
+
+fn job_stage_run_as_workflow_stage_run(stage: JobStageRun) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          stage.status,
+                          stage.attempt,
+                          stage.lease_id,
+                          stage.worker_id,
+                          stage.lease_expires_unix_ms,
+                          stage.started_unix_ms,
+                          stage.finished_unix_ms,
+                          stage.result_message,
+                          stage.result_payload)
+}
+
+fn workflow_stage_claimable(stage: WorkflowStageRun, requested_task_kind: String) -> Bool {
+  return job_stage_claimable(stage.kind, stage.status, stage.task_kind, requested_task_kind)
+}
+
+fn workflow_complete_stage_status(worker_status: String) -> Result<String, String> {
+  return job_stage_complete_status(worker_status)
+}
+
+fn workflow_complete_result_message(worker_status: String, result_message: String) -> Result<String, String> {
+  return job_stage_result_message(worker_status, result_message)
+}
+
+fn workflow_approval_gate_resolvable(stage: WorkflowStageRun) -> Bool {
+  return job_approval_gate_resolvable(stage.kind, stage.status)
+}
+
+fn workflow_approval_gate_status(decision: String) -> Result<String, String> {
+  return job_approval_gate_status(decision)
+}
+
+fn workflow_approval_gate_result_message(decision: String, result_message: String) -> Result<String, String> {
+  return job_approval_gate_result_message(decision, result_message)
+}
+
+fn workflow_run_release_payload(run: WorkflowRun) -> Json {
+  return object3("app",
+                 string_value(run.app),
+                 "channel",
+                 string_value(run.channel),
+                 "release_revision_id",
+                 int_value(run.release_revision_id))
+}
+
+fn workflow_run_stage_as_job_stage_json(run: WorkflowRun, index: Int) -> Result<Json, String> {
+  let stage = workflow_stage_run_from_json(array_get(run.stages, index)?)?
+  return Ok(workflow_stage_run_as_job_stage_run(run.run_id, stage).as_json())
+}
+
+fn workflow_run_stages_as_job_stages_json(run: WorkflowRun) -> Result<Json, String> {
+  let count = array_len(run.stages)?
+  let builder = array_builder()
+  let index = 0
+  while index < count {
+    builder = array_push(builder, workflow_run_stage_as_job_stage_json(run, index)?)
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn workflow_run_as_job_run(run: WorkflowRun) -> Result<JobRun, String> {
+  return Ok(JobRun(run.run_id,
+                   workflow_job_name(run.app, run.channel),
+                   run.workflow_revision_id,
+                   run.event_id,
+                   run.event_kind,
+                   run.status,
+                   run.current_stage_index,
+                   run.requested_by,
+                   run.requested_unix_ms,
+                   run.finished_unix_ms,
+                   run.result_message,
+                   workflow_run_release_payload(run),
+                   workflow_run_stages_as_job_stages_json(run)?))
+}
+
+fn job_run_stage_as_workflow_stage_json(stage_json: Json) -> Result<Json, String> {
+  return Ok(workflow_stage_run_from_json(stage_json)?.as_json())
+}
+
+fn job_run_stages_as_workflow_stages_json(stages: Json) -> Result<Json, String> {
+  let count = array_len(stages)?
+  let builder = array_builder()
+  let index = 0
+  while index < count {
+    builder = array_push(builder, job_run_stage_as_workflow_stage_json(array_get(stages, index)?)?)
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn job_run_as_workflow_run(job: JobRun,
+                           app_name: String,
+                           channel: String,
+                           release_revision_id: Int) -> Result<WorkflowRun, String> {
+  return Ok(WorkflowRun(job.run_id,
+                        app_name,
+                        channel,
+                        job.definition_revision_id,
+                        job.event_id,
+                        job.event_kind,
+                        release_revision_id,
+                        job.status,
+                        job.current_stage_index,
+                        job.requested_by,
+                        job.requested_unix_ms,
+                        job.finished_unix_ms,
+                        job.result_message,
+                        job_run_stages_as_workflow_stages_json(job.stages)?))
+}
+
+fn expect_second_stage_depends_on(job: JobDefinition, dependency: String) -> Result<Bool, String> {
+  let stage_json = array_get(job.stages, 1)?
+  let depends_on = get_value(stage_json, "depends_on")?
+  if as_string(array_get(depends_on, 0)?)? != dependency {
+    return Err("implicit dependency was not preserved")
+  }
+  return Ok(true)
+}
+
+fn expect_release_revision_payload(job: JobRun, release_revision_id: Int) -> Result<Bool, String> {
+  if get_int(job.payload, "release_revision_id")? != release_revision_id {
+    return Err("release revision payload drifted")
+  }
+  return Ok(true)
+}
+
+fn expect_decoded_workflow_run(decoded: WorkflowRun,
+                               app_name: String,
+                               channel: String,
+                               release_revision_id: Int,
+                               stage_count: Int) -> Result<Bool, String> {
+  if decoded.app != app_name {
+    return Err("decoded app drifted")
+  }
+  if decoded.channel != channel {
+    return Err("decoded channel drifted")
+  }
+  if decoded.release_revision_id != release_revision_id {
+    return Err("decoded release revision drifted")
+  }
+  if array_len(decoded.stages)? != stage_count {
+    return Err("decoded stages drifted")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_workflow_definition_adapter_adds_job_name_and_dependencies() -> Void {
+  let stages = array_builder()
+  stages = array_push(stages, WorkflowStageSpec("approval", "approval_gate", "", 0, 0).as_json())
+  stages = array_push(stages, WorkflowStageSpec("apply", "leased_task", "apply_release", 30, 3).as_json())
+  let definition = WorkflowDefinition("control-plane",
+                                      "prod",
+                                      "internal_event",
+                                      "release_apply_requested",
+                                      array_build(stages),
+                                      7,
+                                      "admin",
+                                      1000)
+  match workflow_definition_as_job_definition(definition) {
+    Ok(job) => {
+      assert(job.name == "control-plane/prod", "workflow job name drifted")
+      match expect_second_stage_depends_on(job, "approval") {
+        Ok(_) => {}
+        Err(msg) => { panic(msg) }
+      }
+    }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_workflow_run_adapter_roundtrip_keeps_release_fields_outside_job_core() -> Void {
+  let stages = array_builder()
+  stages = array_push(stages, WorkflowStageRun(0, "approval", "approval_gate", "", "completed", 0, "", "", 0, 0, 10, "approved", null_value()).as_json())
+  stages = array_push(stages, WorkflowStageRun(1, "apply", "leased_task", "apply_release", "ready", 1, "", "", 0, 0, 0, "", null_value()).as_json())
+  let run = WorkflowRun(42,
+                        "control-plane",
+                        "prod",
+                        7,
+                        "evt-1",
+                        "release_apply_requested",
+                        99,
+                        "ready",
+                        1,
+                        "admin",
+                        1000,
+                        0,
+                        "",
+                        array_build(stages))
+  match workflow_run_as_job_run(run) {
+    Ok(job) => {
+      assert(job.name == "control-plane/prod", "workflow run job name drifted")
+      match expect_release_revision_payload(job, 99) {
+        Ok(_) => {}
+        Err(msg) => { panic(msg) }
+      }
+      match job_run_as_workflow_run(job, "control-plane", "prod", 99) {
+        Ok(decoded) => {
+          match expect_decoded_workflow_run(decoded, "control-plane", "prod", 99, 2) {
+            Ok(_) => {}
+            Err(msg) => { panic(msg) }
+          }
+        }
+        Err(msg) => { panic(msg) }
+      }
+    }
+    Err(msg) => { panic(msg) }
+  }
+}

@@ -1,0 +1,65 @@
+module main
+import bridge::host_bridge
+import counter::counter_core
+import std::bytes
+
+fn line(prefix: String, value: String) -> String {
+  return to_string(concat(from_string(prefix), from_string(value)))
+}
+
+fn emit_snapshot(state: CounterState) -> Void {
+  print(line("render:", query_snapshot_text(state)))
+}
+
+fn emit_boot(state: CounterState) -> Void {
+  print(line("event:", boot_event_text(state)))
+  emit_snapshot(state)
+}
+
+fn emit_rejected(state: CounterState, reason: String) -> Void {
+  print(line("event:", command_rejected_event_text(state, reason)))
+  emit_snapshot(state)
+}
+
+fn emit_step(step: CounterStep) -> Void {
+  print(line("event:", step.event_text()))
+  emit_snapshot(step.state())
+}
+
+fn replay_command(state: CounterState, command_text: String) -> CounterStep {
+  print(line("command:", command_text))
+  match apply_command_text(state, command_text) {
+    Ok(step) => {
+      emit_step(step)
+      return step
+    }
+    Err(msg) => {
+      emit_rejected(state, msg)
+      return CounterStep(state, false, "command_rejected")
+    }
+  }
+}
+
+fn main() -> Int {
+  let state = initial_state()
+  print("replay-begin")
+  emit_boot(state)
+
+  let step1 = replay_command(state, increment_command_text())
+  state = step1.state()
+
+  let step2 = replay_command(state, encode_command_text("warp"))
+  state = step2.state()
+
+  let step3 = replay_command(state, decrement_command_text())
+  state = step3.state()
+
+  let step4 = replay_command(state, quit_command_text())
+  state = step4.state()
+
+  print("replay-end")
+  if step4.should_exit_value() {
+    return 0
+  }
+  return 1
+}

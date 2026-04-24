@@ -1,0 +1,13 @@
+schema_version = 1
+
+[package]
+name = "release-control-plane-ctl"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+core = { path = "../../packages/core" }
+tls = { path = "../../../../official/nebula-tls" }
+crypto = { path = "../../../../official/nebula-crypto" }
+auth_pkg = { path = "../../../../official/nebula-auth" }

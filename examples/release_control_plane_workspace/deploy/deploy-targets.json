@@ -1,0 +1,9 @@
+{
+  "targets": [
+    {
+      "id": "local",
+      "command_id": "deploy-local",
+      "args": ["local"]
+    }
+  ]
+}

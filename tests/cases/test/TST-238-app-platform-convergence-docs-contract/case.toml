@@ -1,0 +1,8 @@
+id = "TST-238-app-platform-convergence-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\nimport os\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nchecks = [\n    (repo_root / 'README.md', [\n        'docs/app_platform_convergence.md',\n        'benchmarks/app_platform',\n        'control-plane-workspace'\n    ]),\n    (repo_root / 'docs' / 'support_matrix.md', [\n        'docs/app_platform_convergence.md'\n    ]),\n    (repo_root / 'docs' / 'thin_host_app_shell.md', [\n        'docs/app_platform_convergence.md',\n        'Ops Owns'\n    ]),\n    (repo_root / 'docs' / 'post_1_0_workstreams.md', [\n        'Track 6: App Platform Convergence',\n        'benchmarks/app_platform'\n    ]),\n    (repo_root / 'docs' / 'app_platform_convergence.md', [\n        'Nebula-owned',\n        'Host-owned',\n        'Ops-owned',\n        'examples/release_control_plane_workspace',\n        'examples/thin_host_app_core',\n        'benchmarks/app_platform'\n    ]),\n    (repo_root / 'ROADMAP.md', [\n        'Wave C.5: Backend-First Internal App Platform',\n        'benchmarks/app_platform'\n    ]),\n    (repo_root / 'spec' / 'tooling_cli.md', [\n        'backend-first internal app slices'\n    ]),\n]\nfor path, fragments in checks:\n    text = path.read_text(encoding='utf-8')\n    missing = [fragment for fragment in fragments if fragment not in text]\n    if missing:\n        raise SystemExit(f'{path} missing fragments: {missing!r}')\nprint('app-platform-convergence-docs-ok')\nPY"
+expect_rc = 0
+expect_stdout_contains = ["app-platform-convergence-docs-ok"]

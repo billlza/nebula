@@ -1,0 +1,98 @@
+{
+  "name": "Nebula",
+  "scopeName": "source.nebula",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#annotations"
+    },
+    {
+      "include": "#types"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.nebula",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.nebula",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.nebula",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.nebula",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.nebula",
+          "match": "\\b(0x[0-9A-Fa-f_]+|0o[0-7_]+|\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d[\\d_]*)?)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.nebula",
+          "match": "\\b(async|await|break|continue|else|for|if|match|region|return|unsafe|while)\\b"
+        },
+        {
+          "name": "keyword.declaration.nebula",
+          "match": "\\b(enum|extern|fn|import|let|module|struct|ui|view)\\b"
+        },
+        {
+          "name": "keyword.operator.nebula",
+          "match": "\\b(shared|unique|heap|promote)\\b"
+        },
+        {
+          "name": "constant.language.nebula",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "annotations": {
+      "patterns": [
+        {
+          "name": "storage.modifier.annotation.nebula",
+          "match": "@[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.nebula",
+          "match": "\\b(Bool|Bytes|Float|Future|Int|Json|Result|String|Task|UnsafeFn|Void)\\b"
+        }
+      ]
+    }
+  }
+}

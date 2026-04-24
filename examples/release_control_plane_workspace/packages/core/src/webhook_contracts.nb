@@ -1,0 +1,175 @@
+module webhook_contracts
+import validate
+import workflow_contracts
+import workflow_validate
+import std::json
+import std::result
+
+struct WebhookSubmitRequest {
+  event_id: String
+  event_kind: String
+  release_revision_id: Int
+  payload: Json
+}
+
+struct WebhookSubmitEnvelope {
+  provider: String
+  outcome: String
+  run: WorkflowRun
+  request_id: String
+  unix_ms: Int
+}
+
+struct WebhookVerificationResult {
+  verified: Bool
+  code: String
+  message: String
+}
+
+fn WebhookSubmitRequest_as_json(self: WebhookSubmitRequest) -> Json {
+  return object4("event_id",
+                 string_value(self.event_id),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "release_revision_id",
+                 int_value(self.release_revision_id),
+                 "payload",
+                 self.payload)
+}
+
+fn WebhookSubmitEnvelope_as_json(self: WebhookSubmitEnvelope) -> Json {
+  return object5("provider",
+                 string_value(self.provider),
+                 "outcome",
+                 string_value(self.outcome),
+                 "run",
+                 self.run.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn WebhookVerificationResult_as_json(self: WebhookVerificationResult) -> Json {
+  return object3("verified",
+                 bool_value(self.verified),
+                 "code",
+                 string_value(self.code),
+                 "message",
+                 string_value(self.message))
+}
+
+fn webhook_payload_from_json(value: Json) -> Json {
+  match get_value(value, "payload") {
+    Ok(payload) => {
+      return payload
+    }
+    Err(_) => {
+      return null_value()
+    }
+  }
+}
+
+fn webhook_submit_request_from_json(value: Json) -> Result<WebhookSubmitRequest, String> {
+  return Ok(WebhookSubmitRequest(get_string(value, "event_id")?,
+                                 get_string(value, "event_kind")?,
+                                 get_int(value, "release_revision_id")?,
+                                 webhook_payload_from_json(value)))
+}
+
+fn webhook_submit_envelope_from_json(value: Json) -> Result<WebhookSubmitEnvelope, String> {
+  return Ok(WebhookSubmitEnvelope(get_string(value, "provider")?,
+                                  get_string(value, "outcome")?,
+                                  workflow_run_from_json(get_value(value, "run")?)?,
+                                  get_string(value, "request_id")?,
+                                  get_int(value, "unix_ms")?))
+}
+
+fn webhook_verification_result_from_json(value: Json) -> Result<WebhookVerificationResult, String> {
+  return Ok(WebhookVerificationResult(get_bool(value, "verified")?,
+                                      get_string(value, "code")?,
+                                      get_string(value, "message")?))
+}
+
+fn validate_webhook_provider(provider: String) -> Result<Bool, String> {
+  return validate_webhook_provider_segment(provider)
+}
+
+fn validate_webhook_submit_request(value: WebhookSubmitRequest) -> Result<Bool, String> {
+  if value.event_id == "" {
+    return Err("webhook event_id must be non-empty")
+  }
+  validate_workflow_event_kind(value.event_kind)?
+  if value.release_revision_id <= 0 {
+    return Err("webhook release_revision_id must be positive")
+  }
+  return Ok(true)
+}
+
+fn validate_webhook_submit_outcome(outcome: String) -> Result<Bool, String> {
+  if outcome == "created" || outcome == "existing" {
+    return Ok(true)
+  }
+  return Err("webhook submit outcome must be created or existing")
+}
+
+fn validate_webhook_submit_envelope(value: WebhookSubmitEnvelope) -> Result<Bool, String> {
+  validate_webhook_provider(value.provider)?
+  validate_webhook_submit_outcome(value.outcome)?
+  validate_workflow_run(value.run)?
+  if value.request_id == "" || value.unix_ms < 0 {
+    return Err("webhook submit envelope metadata is invalid")
+  }
+  return Ok(true)
+}
+
+fn validate_webhook_verification_result(value: WebhookVerificationResult) -> Result<Bool, String> {
+  if value.code == "" || value.message == "" {
+    return Err("webhook verification result code/message must be non-empty")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_webhook_submit_envelope_roundtrip() -> Void {
+  let run = WorkflowRun(1,
+                        "control-plane",
+                        "prod",
+                        1,
+                        "webhook-event-1",
+                        "release_apply_requested",
+                        1,
+                        "ready",
+                        1,
+                        "webhook",
+                        10,
+                        0,
+                        "",
+                        array_build(array_builder()))
+  let envelope = WebhookSubmitEnvelope("generic", "created", run, "req-webhook", 20)
+  match webhook_submit_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      match validate_webhook_submit_envelope(decoded) {
+        Ok(_) => {}
+        Err(msg) => { panic(msg) }
+      }
+      assert(decoded.provider == "generic", "webhook provider drifted")
+    }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_webhook_verification_result_roundtrip() -> Void {
+  let result = WebhookVerificationResult(true, "verified", "signature verified")
+  match webhook_verification_result_from_json(result.as_json()) {
+    Ok(decoded) => {
+      match validate_webhook_verification_result(decoded) {
+        Ok(_) => {}
+        Err(msg) => { panic(msg) }
+      }
+      assert(decoded.verified, "webhook verification drifted")
+    }
+    Err(msg) => { panic(msg) }
+  }
+}

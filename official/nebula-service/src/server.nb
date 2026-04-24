@@ -1,0 +1,1859 @@
+module server
+import context
+import drain
+import errors
+import headers
+import recover
+import std::bytes
+import std::http
+import std::json
+import std::net
+import std::result
+import std::task
+import std::time
+import observe::log
+import observe::metrics
+import config
+
+struct RequestSpan {
+  request_id: Int
+  request_id_text: String
+  request_id_from_header: Bool
+  started_at_ms: Int
+  received_at_unix_ms: Int
+}
+
+enum AcceptLoopOutcome {
+  Accepted(TcpStream)
+  Idle(Void)
+}
+
+struct ConnectionOutcome {
+  request_count: Int
+  draining_mode: Bool
+}
+
+struct ListenerBoundAddress {
+  host: String
+  port: Int
+}
+
+struct RequestReadReady {
+  request: Request
+  span: RequestSpan
+}
+
+struct RequestReadFailure {
+  request_id: Int
+  request_id_text: String
+  message: String
+}
+
+struct ReplyContextState {
+  ctx: RequestContext
+  draining_mode: Bool
+}
+
+struct ConnectionLoopState {
+  request_count: Int
+  draining_mode: Bool
+  should_stop: Bool
+}
+
+enum ConnectionReadOutcome {
+  Ready(RequestReadReady)
+  BadRequest(RequestReadFailure)
+  RequestTimeout(RequestReadFailure)
+  KeepAliveIdleTimeout(Void)
+}
+
+fn keep_alive_enabled(cfg: ServiceConfig) -> Bool {
+  return cfg.keep_alive_enabled && cfg.keep_alive_max_requests_per_connection > 1
+}
+
+fn keep_alive_message(cfg: ServiceConfig) -> String {
+  return stringify(object3(
+    "enabled",
+    bool_value(cfg.keep_alive_enabled),
+    "idle_timeout_ms",
+    int_value(cfg.keep_alive_idle_timeout_ms),
+    "max_requests_per_connection",
+    int_value(cfg.keep_alive_max_requests_per_connection)
+  ))
+}
+
+fn configured_listener_bound_address(cfg: ServiceConfig) -> ListenerBoundAddress {
+  return ListenerBoundAddress(cfg.bind_host, cfg.port)
+}
+
+fn listener_bound_address(cfg: ServiceConfig, listener: TcpListener) -> ListenerBoundAddress {
+  let configured = configured_listener_bound_address(cfg)
+  match listener.local_addr() {
+    Ok(local_addr) => {
+      match local_addr.host() {
+        Ok(bound_host) => {
+          match local_addr.port() {
+            Ok(bound_port) => {
+              return ListenerBoundAddress(bound_host, bound_port)
+            }
+            Err(_) => {
+              return ListenerBoundAddress(bound_host, configured.port)
+            }
+          }
+        }
+        Err(_) => {
+          return configured
+        }
+      }
+    }
+    Err(_) => {
+      return configured
+    }
+  }
+}
+
+fn announce_listener_bound(cfg: ServiceConfig, listener: TcpListener) -> Void {
+  let bound = listener_bound_address(cfg, listener)
+  lifecycle_listener_bound(cfg.name, bound.host, bound.port, keep_alive_message(cfg))
+}
+
+async fn bind_listener(cfg: ServiceConfig) -> Result<TcpListener, String> {
+  match ipv4(cfg.bind_host, cfg.port) {
+    Ok(addr) => {
+      match await bind(addr) {
+        Ok(listener) => {
+          announce_listener_bound(cfg, listener)
+          return Ok(listener)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn is_timeout_error(msg: String) -> Bool {
+  return msg == "timeout"
+}
+
+fn start_request_span(cfg: ServiceConfig, request: Request) -> RequestSpan {
+  let local_request_id = unix_millis()
+  let request_identity = resolve_request_identity(cfg.header_policy, request, local_request_id)
+  let started_at_ms = steady_millis()
+  request_started_with_text(cfg.name,
+                            local_request_id,
+                            request_identity.request_id_text,
+                            request.path)
+  return RequestSpan(local_request_id,
+                     request_identity.request_id_text,
+                     request_identity.request_id_from_header,
+                     started_at_ms,
+                     local_request_id)
+}
+
+fn request_context(cfg: ServiceConfig, span: RequestSpan, draining_mode: Bool) -> RequestContext {
+  return RequestContext(cfg.name,
+                        span.request_id,
+                        span.request_id_text,
+                        span.request_id_from_header,
+                        span.started_at_ms,
+                        span.received_at_unix_ms,
+                        draining_mode,
+                        false,
+                        "",
+                        null_value(),
+                        false,
+                        false,
+                        "",
+                        "",
+                        null_value(),
+                        null_value())
+}
+
+fn next_request_timeout_ms(cfg: ServiceConfig, requests_served_on_connection: Int) -> Int {
+  if keep_alive_enabled(cfg) && requests_served_on_connection > 0 {
+    return cfg.keep_alive_idle_timeout_ms
+  }
+  return cfg.request_timeout_ms
+}
+
+fn next_draining_mode(cfg: ServiceConfig,
+                      drain_cfg: DrainConfig,
+                      current_draining: Bool) -> Result<Bool, String> {
+  if current_draining {
+    return Ok(true)
+  }
+  match shutdown_requested(drain_cfg) {
+    Ok(should_stop) => {
+      if should_stop {
+        if drain_cfg.shutdown_path != "" {
+          lifecycle_shutdown_requested(cfg.name, drain_cfg.shutdown_path)
+        }
+        return Ok(true)
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+  match requested(drain_cfg) {
+    Ok(should_drain) => {
+      if should_drain {
+        if drain_cfg.sentinel_path != "" {
+          lifecycle_drain_requested(cfg.name, drain_cfg.sentinel_path)
+        }
+        return Ok(true)
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+  return Ok(false)
+}
+
+fn close_connection_after_response(cfg: ServiceConfig,
+                                   request: Request,
+                                   requests_served_on_connection: Int,
+                                   draining_mode: Bool) -> Bool {
+  if !keep_alive_enabled(cfg) {
+    return true
+  }
+  if request.close_connection() {
+    return true
+  }
+  if draining_mode {
+    return true
+  }
+  if requests_served_on_connection >= cfg.keep_alive_max_requests_per_connection {
+    return true
+  }
+  return false
+}
+
+async fn write_and_close(stream: TcpStream, reply: Response) -> Result<Void, String> {
+  match await stream.write_response(reply) {
+    Ok(_) => {
+      return stream.close()
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(msg)
+    }
+  }
+}
+
+async fn write_reply(stream: TcpStream,
+                     reply: Response,
+                     close_connection: Bool) -> Result<Void, String> {
+  if close_connection {
+    return await write_and_close(stream, reply)
+  }
+  let outcome = await stream.write_response_with_connection(reply, false)
+  match outcome {
+    Ok(_) => {
+      return outcome
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(msg)
+    }
+  }
+}
+
+async fn write_and_close_with_timeout(stream: TcpStream,
+                                      reply: Response,
+                                      write_timeout_ms: Int) -> Result<Void, String> {
+  match await timeout(millis(write_timeout_ms), write_and_close(stream, reply)) {
+    Ok(outcome) => {
+      return outcome
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(msg)
+    }
+  }
+}
+
+async fn write_request_reply_with_timeout(stream: TcpStream,
+                                          request: Request,
+                                          reply: Response,
+                                          write_timeout_ms: Int,
+                                          close_connection: Bool) -> Result<Void, String> {
+  let wire_reply = reply
+  if method_is_head(request.method) {
+    wire_reply = response_without_body(reply)
+  }
+  match await timeout(millis(write_timeout_ms), write_reply(stream, wire_reply, close_connection)) {
+    Ok(outcome) => {
+      return outcome
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(msg)
+    }
+  }
+}
+
+async fn finish_reply(stream: TcpStream,
+                      cfg: ServiceConfig,
+                      request: Request,
+                      span: RequestSpan,
+                      reply: Response,
+                      close_connection: Bool,
+                      write_timeout_event: String,
+                      write_failed_event: String) -> Result<Int, String> {
+  match await write_request_reply_with_timeout(stream,
+                                              request,
+                                              reply,
+                                              cfg.write_timeout_ms,
+                                              close_connection) {
+    Ok(_) => {
+      let duration_ms = steady_millis() - span.started_at_ms
+      request_finished_with_text(cfg.name,
+                                 span.request_id,
+                                 span.request_id_text,
+                                 reply.status,
+                                 duration_ms)
+      return Ok(1)
+    }
+    Err(msg) => {
+      if is_timeout_error(msg) {
+        error_event_request_with_text_classified(cfg.name,
+                                                 write_timeout_event,
+                                                 msg,
+                                                 span.request_id,
+                                                 span.request_id_text,
+                                                 response_write_classification())
+        delta_counter(cfg.name, "write_timeouts", "1", 1)
+        return Ok(1)
+      }
+      error_event_request_with_text_classified(cfg.name,
+                                               write_failed_event,
+                                               msg,
+                                               span.request_id,
+                                               span.request_id_text,
+                                               response_write_classification())
+      return Err(msg)
+    }
+  }
+}
+
+async fn write_bad_request(stream: TcpStream,
+                           cfg: ServiceConfig,
+                           request_id: Int) -> Result<Int, String> {
+  match await write_and_close_with_timeout(stream,
+                                          bad_request(cfg.name, request_id, "bad request"),
+                                          cfg.write_timeout_ms) {
+    Ok(_) => {
+      return Ok(1)
+    }
+    Err(write_msg) => {
+      if is_timeout_error(write_msg) {
+        error_event_request_classified(cfg.name,
+                                       "bad_request_write_timeout",
+                                       write_msg,
+                                       request_id,
+                                       response_write_classification())
+        delta_counter(cfg.name, "write_timeouts", "1", 1)
+        return Ok(1)
+      }
+      error_event_request_classified(cfg.name,
+                                     "bad_request_write_failed",
+                                     write_msg,
+                                     request_id,
+                                     response_write_classification())
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn write_request_timeout(stream: TcpStream,
+                               cfg: ServiceConfig,
+                               request_id: Int) -> Result<Int, String> {
+  match await write_and_close_with_timeout(stream,
+                                          request_timeout(cfg.name, request_id),
+                                          cfg.write_timeout_ms) {
+    Ok(_) => {
+      return Ok(1)
+    }
+    Err(write_msg) => {
+      if is_timeout_error(write_msg) {
+        error_event_request_classified(cfg.name,
+                                       "timeout_response_write_timeout",
+                                       write_msg,
+                                       request_id,
+                                       response_write_classification())
+        delta_counter(cfg.name, "write_timeouts", "1", 1)
+        return Ok(1)
+      }
+      error_event_request_classified(cfg.name,
+                                     "timeout_write_failed",
+                                     write_msg,
+                                     request_id,
+                                     response_write_classification())
+      return Err(write_msg)
+    }
+  }
+}
+
+fn panic_recovery_enabled(cfg: ServiceConfig) -> Bool {
+  return cfg.panic_to_500_enabled
+}
+
+fn handler_panic_reply(cfg: ServiceConfig,
+                       ctx: RequestContext,
+                       panic_msg: String) -> Response {
+  error_event_request_with_text_classified(cfg.name,
+                                           "handler_panic",
+                                           panic_msg,
+                                           ctx.request_id,
+                                           ctx.request_id_text,
+                                           request_handler_classification())
+  delta_counter(cfg.name, "handler_panics", "1", 1)
+  if ctx.is_draining() {
+    return draining(ctx)
+  }
+  return internal_error(ctx)
+}
+
+fn continue_connection(request_count: Int, draining_mode: Bool) -> ConnectionLoopState {
+  return ConnectionLoopState(request_count, draining_mode, false)
+}
+
+fn stop_connection(request_count: Int, draining_mode: Bool) -> ConnectionLoopState {
+  return ConnectionLoopState(request_count, draining_mode, true)
+}
+
+fn next_reply_context(cfg: ServiceConfig,
+                      drain_cfg: DrainConfig,
+                      current_draining: Bool,
+                      span: RequestSpan) -> Result<ReplyContextState, String> {
+  match next_draining_mode(cfg, drain_cfg, current_draining) {
+    Ok(next_mode) => {
+      return Ok(ReplyContextState(request_context(cfg, span, next_mode), next_mode))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn request_read_failure(msg: String) -> RequestReadFailure {
+  let request_id = unix_millis()
+  let request_id_text = local_request_id_text(request_id)
+  return RequestReadFailure(request_id, request_id_text, msg)
+}
+
+fn ready_request(cfg: ServiceConfig, request: Request) -> RequestReadReady {
+  return RequestReadReady(request, start_request_span(cfg, request))
+}
+
+fn applied_connection_outcome(state: ConnectionLoopState) -> ConnectionOutcome {
+  return ConnectionOutcome(state.request_count, state.draining_mode)
+}
+
+fn applied_error_reply(ctx: RequestContext) -> Response {
+  let error_reply = internal_error(ctx)
+  if ctx.is_draining() {
+    error_reply = draining(ctx)
+  }
+  return error_reply
+}
+
+fn close_after_next_response(cfg: ServiceConfig,
+                             request: Request,
+                             request_count: Int,
+                             draining_mode: Bool) -> Bool {
+  return close_connection_after_response(cfg, request, request_count + 1, draining_mode)
+}
+
+fn request_rejected_classification() -> Json {
+  return classification("protocol", "request_rejected")
+}
+
+fn request_timeout_classification() -> Json {
+  return classification("request_start", "request_read_wait")
+}
+
+fn request_handler_classification() -> Json {
+  return classification("request_start", "peer_request_ready")
+}
+
+fn response_write_classification() -> Json {
+  return classification("response_start", "local_response_headers_sent")
+}
+
+fn response_finished_classification() -> Json {
+  return classification("response_complete", "response_written")
+}
+
+fn advance_connection_before_read(stream: TcpStream,
+                                  cfg: ServiceConfig,
+                                  drain_cfg: DrainConfig,
+                                  request_count: Int,
+                                  current_draining: Bool) -> Result<ConnectionLoopState, String> {
+  if request_count <= 0 {
+    return Ok(continue_connection(request_count, current_draining))
+  }
+  match next_draining_mode(cfg, drain_cfg, current_draining) {
+    Ok(next_mode) => {
+      if next_mode {
+        stream.close()
+        return Ok(stop_connection(request_count, next_mode))
+      }
+      return Ok(continue_connection(request_count, next_mode))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn accept_next_without_drain(listener: TcpListener) -> Result<AcceptLoopOutcome, String> {
+  match await listener.accept() {
+    Ok(stream) => {
+      return Ok(Accepted(stream))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn accept_next_with_drain(listener: TcpListener,
+                                drain_cfg: DrainConfig) -> Result<AcceptLoopOutcome, String> {
+  match await listener.accept_timeout(drain_cfg.poll_interval_ms) {
+    Ok(stream) => {
+      return Ok(Accepted(stream))
+    }
+    Err(msg) => {
+      if is_timeout_error(msg) {
+        match shutdown_requested(drain_cfg) {
+          Ok(should_stop) => {
+            if should_stop {
+              return Ok(Idle)
+            }
+          }
+          Err(stop_msg) => {
+            return Err(stop_msg)
+          }
+        }
+        return Ok(Idle)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+async fn accept_next(listener: TcpListener, drain_cfg: DrainConfig) -> Result<AcceptLoopOutcome, String> {
+  match shutdown_requested(drain_cfg) {
+    Ok(should_stop) => {
+      if should_stop {
+        return Ok(Idle)
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+  if !drain_cfg.enabled() {
+    return await accept_next_without_drain(listener)
+  }
+  return await accept_next_with_drain(listener, drain_cfg)
+}
+
+async fn read_connection_request(stream: TcpStream,
+                                 cfg: ServiceConfig,
+                                 served: Int) -> Result<ConnectionReadOutcome, String> {
+  match await timeout(millis(next_request_timeout_ms(cfg, served)),
+                      stream.read_request_limited(cfg.max_header_bytes, cfg.max_body_bytes)) {
+    Ok(outcome) => {
+      match outcome {
+        Ok(request) => {
+          return Ok(Ready(ready_request(cfg, request)))
+        }
+        Err(msg) => {
+          return Ok(BadRequest(request_read_failure(msg)))
+        }
+      }
+    }
+    Err(msg) => {
+      if served > 0 && is_timeout_error(msg) {
+        return Ok(KeepAliveIdleTimeout)
+      }
+      return Ok(RequestTimeout(request_read_failure(msg)))
+    }
+  }
+}
+
+async fn bad_request_connection_state(stream: TcpStream,
+                                      cfg: ServiceConfig,
+                                      served: Int,
+                                      current_draining: Bool,
+                                      failure: RequestReadFailure) -> Result<ConnectionLoopState, String> {
+  error_event_request_with_text_classified(cfg.name,
+                                           "request_rejected",
+                                           failure.message,
+                                           failure.request_id,
+                                           failure.request_id_text,
+                                           request_rejected_classification())
+  delta_counter(cfg.name, "bad_requests", "1", 1)
+  match await write_bad_request(stream, cfg, failure.request_id) {
+    Ok(count) => {
+      return Ok(stop_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn request_timeout_connection_state(stream: TcpStream,
+                                          cfg: ServiceConfig,
+                                          served: Int,
+                                          current_draining: Bool,
+                                          failure: RequestReadFailure) -> Result<ConnectionLoopState, String> {
+  error_event_request_with_text_classified(cfg.name,
+                                           "request_timeout",
+                                           failure.message,
+                                           failure.request_id,
+                                           failure.request_id_text,
+                                           request_timeout_classification())
+  delta_counter(cfg.name, "request_timeouts", "1", 1)
+  match await write_request_timeout(stream, cfg, failure.request_id) {
+    Ok(count) => {
+      return Ok(stop_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+fn keep_alive_idle_timeout_connection_state(stream: TcpStream,
+                                            served: Int,
+                                            current_draining: Bool) -> ConnectionLoopState {
+  stream.close()
+  return stop_connection(served, current_draining)
+}
+
+async fn successful_reply_connection_state(stream: TcpStream,
+                                           cfg: ServiceConfig,
+                                           request: Request,
+                                           span: RequestSpan,
+                                           reply: Response,
+                                           served: Int,
+                                           current_draining: Bool) -> Result<ConnectionLoopState, String> {
+  let close_connection = close_after_next_response(cfg, request, served, current_draining)
+  match await finish_reply(stream,
+                           cfg,
+                           request,
+                           span,
+                           reply,
+                           close_connection,
+                           "write_timeout",
+                           "write_response_failed") {
+    Ok(count) => {
+      let next_count = served + count
+      if close_connection {
+        return Ok(stop_connection(next_count, current_draining))
+      }
+      return Ok(continue_connection(next_count, current_draining))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn handler_timeout_connection_state(stream: TcpStream,
+                                          cfg: ServiceConfig,
+                                          drain_cfg: DrainConfig,
+                                          request: Request,
+                                          span: RequestSpan,
+                                          served: Int,
+                                          current_draining: Bool,
+                                          msg: String) -> Result<ConnectionLoopState, String> {
+  error_event_request_with_text_classified(cfg.name,
+                                           "handler_timeout",
+                                           msg,
+                                           span.request_id,
+                                           span.request_id_text,
+                                           request_handler_classification())
+  delta_counter(cfg.name, "handler_timeouts", "1", 1)
+  match next_reply_context(cfg, drain_cfg, current_draining, span) {
+    Ok(reply_state) => {
+      match await finish_reply(stream,
+                               cfg,
+                               request,
+                               span,
+                               handler_timeout(reply_state.ctx),
+                               true,
+                               "timeout_response_write_timeout",
+                               "timeout_write_failed") {
+        Ok(count) => {
+          return Ok(stop_connection(served + count, reply_state.draining_mode))
+        }
+        Err(write_msg) => {
+          return Err(write_msg)
+        }
+      }
+    }
+    Err(next_msg) => {
+      return Err(next_msg)
+    }
+  }
+}
+
+async fn handler_error_connection_state(stream: TcpStream,
+                                        cfg: ServiceConfig,
+                                        request: Request,
+                                        span: RequestSpan,
+                                        reply_ctx: RequestContext,
+                                        served: Int,
+                                        current_draining: Bool,
+                                        msg: String) -> Result<ConnectionLoopState, String> {
+  error_event_request_with_text_classified(cfg.name,
+                                           "handler_error",
+                                           msg,
+                                           span.request_id,
+                                           span.request_id_text,
+                                           request_handler_classification())
+  delta_counter(cfg.name, "handler_errors", "1", 1)
+  let error_reply = applied_error_reply(reply_ctx)
+  let close_connection = close_after_next_response(cfg, request, served, current_draining)
+  match await finish_reply(stream,
+                           cfg,
+                           request,
+                           span,
+                           error_reply,
+                           close_connection,
+                           "internal_error_write_timeout",
+                           "internal_error_write_failed") {
+    Ok(count) => {
+      return Ok(stop_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn panic_reply_connection_state_close(stream: TcpStream,
+                                            cfg: ServiceConfig,
+                                            request: Request,
+                                            span: RequestSpan,
+                                            reply_ctx: RequestContext,
+                                            served: Int,
+                                            current_draining: Bool,
+                                            panic_msg: String) -> Result<ConnectionLoopState, String> {
+  if !panic_recovery_enabled(cfg) {
+    panic(panic_msg)
+  }
+  match await finish_reply(stream,
+                           cfg,
+                           request,
+                           span,
+                           handler_panic_reply(cfg, reply_ctx, panic_msg),
+                           true,
+                           "internal_error_write_timeout",
+                           "internal_error_write_failed") {
+    Ok(count) => {
+      return Ok(stop_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn panic_reply_connection_state_with_policy(stream: TcpStream,
+                                                  cfg: ServiceConfig,
+                                                  request: Request,
+                                                  span: RequestSpan,
+                                                  reply_ctx: RequestContext,
+                                                  served: Int,
+                                                  current_draining: Bool,
+                                                  panic_msg: String) -> Result<ConnectionLoopState, String> {
+  if !panic_recovery_enabled(cfg) {
+    panic(panic_msg)
+  }
+  let close_connection = close_after_next_response(cfg, request, served, current_draining)
+  match await finish_reply(stream,
+                           cfg,
+                           request,
+                           span,
+                           handler_panic_reply(cfg, reply_ctx, panic_msg),
+                           close_connection,
+                           "internal_error_write_timeout",
+                           "internal_error_write_failed") {
+    Ok(count) => {
+      return Ok(stop_connection(served + count, current_draining))
+    }
+    Err(write_msg) => {
+      return Err(write_msg)
+    }
+  }
+}
+
+async fn non_ready_connection_state(stream: TcpStream,
+                                    cfg: ServiceConfig,
+                                    served: Int,
+                                    current_draining: Bool,
+                                    outcome: ConnectionReadOutcome) -> Result<ConnectionLoopState, String> {
+  match outcome {
+    BadRequest(failure) => {
+      return await bad_request_connection_state(stream, cfg, served, current_draining, failure)
+    }
+    RequestTimeout(failure) => {
+      return await request_timeout_connection_state(stream, cfg, served, current_draining, failure)
+    }
+    KeepAliveIdleTimeout => {
+      return Ok(keep_alive_idle_timeout_connection_state(stream, served, current_draining))
+    }
+    Ready(_) => {
+      return Err("expected non-ready connection read outcome")
+    }
+  }
+}
+
+async fn response_handler_connection_state(stream: TcpStream,
+                                           cfg: ServiceConfig,
+                                           drain_cfg: DrainConfig,
+                                           request: Request,
+                                           span: RequestSpan,
+                                           served: Int,
+                                           current_draining: Bool,
+                                           handler_outcome: Result<Response, String>) -> Result<ConnectionLoopState, String> {
+  match next_reply_context(cfg, drain_cfg, current_draining, span) {
+    Ok(reply_state) => {
+      match handler_outcome {
+        Ok(reply) => {
+          return await successful_reply_connection_state(stream,
+                                                        cfg,
+                                                        request,
+                                                        span,
+                                                        reply,
+                                                        served,
+                                                        reply_state.draining_mode)
+        }
+        Err(panic_msg) => {
+          return await panic_reply_connection_state_close(stream,
+                                                          cfg,
+                                                          request,
+                                                          span,
+                                                          reply_state.ctx,
+                                                          served,
+                                                          reply_state.draining_mode,
+                                                          panic_msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn result_handler_connection_state(stream: TcpStream,
+                                         cfg: ServiceConfig,
+                                         drain_cfg: DrainConfig,
+                                         request: Request,
+                                         span: RequestSpan,
+                                         served: Int,
+                                         current_draining: Bool,
+                                         caught_outcome: Result<Result<Response, String>, String>) -> Result<ConnectionLoopState, String> {
+  match next_reply_context(cfg, drain_cfg, current_draining, span) {
+    Ok(reply_state) => {
+      match caught_outcome {
+        Ok(handler_outcome) => {
+          match handler_outcome {
+            Ok(reply) => {
+              return await successful_reply_connection_state(stream,
+                                                            cfg,
+                                                            request,
+                                                            span,
+                                                            reply,
+                                                            served,
+                                                            reply_state.draining_mode)
+            }
+            Err(msg) => {
+              return await handler_error_connection_state(stream,
+                                                         cfg,
+                                                         request,
+                                                         span,
+                                                         reply_state.ctx,
+                                                         served,
+                                                         reply_state.draining_mode,
+                                                         msg)
+            }
+          }
+        }
+        Err(panic_msg) => {
+          return await panic_reply_connection_state_with_policy(stream,
+                                                                cfg,
+                                                                request,
+                                                                span,
+                                                                reply_state.ctx,
+                                                                served,
+                                                                reply_state.draining_mode,
+                                                                panic_msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn ready_response_connection_state(stream: TcpStream,
+                                         cfg: ServiceConfig,
+                                         drain_cfg: DrainConfig,
+                                         served: Int,
+                                         current_draining: Bool,
+                                         request: Request,
+                                         span: RequestSpan,
+                                         handler: Fn(Request) -> Future<Response>) -> Result<ConnectionLoopState, String> {
+  match await timeout(millis(cfg.handler_timeout_ms),
+                      __nebula_service_catch_response_panic(handler(request))) {
+    Ok(handler_outcome) => {
+      return await response_handler_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    request,
+                                                    span,
+                                                    served,
+                                                    current_draining,
+                                                    handler_outcome)
+    }
+    Err(msg) => {
+      return await handler_timeout_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    request,
+                                                    span,
+                                                    served,
+                                                    current_draining,
+                                                    msg)
+    }
+  }
+}
+
+async fn ready_result_connection_state(stream: TcpStream,
+                                       cfg: ServiceConfig,
+                                       drain_cfg: DrainConfig,
+                                       served: Int,
+                                       current_draining: Bool,
+                                       request: Request,
+                                       span: RequestSpan,
+                                       handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<ConnectionLoopState, String> {
+  match await timeout(millis(cfg.handler_timeout_ms),
+                      __nebula_service_catch_result_response_panic(handler(request))) {
+    Ok(caught_outcome) => {
+      return await result_handler_connection_state(stream,
+                                                  cfg,
+                                                  drain_cfg,
+                                                  request,
+                                                  span,
+                                                  served,
+                                                  current_draining,
+                                                  caught_outcome)
+    }
+    Err(msg) => {
+      return await handler_timeout_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    request,
+                                                    span,
+                                                    served,
+                                                    current_draining,
+                                                    msg)
+    }
+  }
+}
+
+async fn ready_response_with_context_connection_state(stream: TcpStream,
+                                                      cfg: ServiceConfig,
+                                                      drain_cfg: DrainConfig,
+                                                      served: Int,
+                                                      current_draining: Bool,
+                                                      request: Request,
+                                                      span: RequestSpan,
+                                                      handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<ConnectionLoopState, String> {
+  let ctx = request_context(cfg, span, current_draining)
+  match await timeout(millis(cfg.handler_timeout_ms),
+                      __nebula_service_catch_response_panic(handler(ctx, request))) {
+    Ok(handler_outcome) => {
+      return await response_handler_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    request,
+                                                    span,
+                                                    served,
+                                                    current_draining,
+                                                    handler_outcome)
+    }
+    Err(msg) => {
+      return await handler_timeout_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    request,
+                                                    span,
+                                                    served,
+                                                    current_draining,
+                                                    msg)
+    }
+  }
+}
+
+async fn ready_result_with_context_connection_state(stream: TcpStream,
+                                                    cfg: ServiceConfig,
+                                                    drain_cfg: DrainConfig,
+                                                    served: Int,
+                                                    current_draining: Bool,
+                                                    request: Request,
+                                                    span: RequestSpan,
+                                                    handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<ConnectionLoopState, String> {
+  let ctx = request_context(cfg, span, current_draining)
+  match await timeout(millis(cfg.handler_timeout_ms),
+                      __nebula_service_catch_result_response_panic(handler(ctx, request))) {
+    Ok(caught_outcome) => {
+      return await result_handler_connection_state(stream,
+                                                  cfg,
+                                                  drain_cfg,
+                                                  request,
+                                                  span,
+                                                  served,
+                                                  current_draining,
+                                                  caught_outcome)
+    }
+    Err(msg) => {
+      return await handler_timeout_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    request,
+                                                    span,
+                                                    served,
+                                                    current_draining,
+                                                    msg)
+    }
+  }
+}
+
+async fn response_connection_iteration_state(stream: TcpStream,
+                                             cfg: ServiceConfig,
+                                             drain_cfg: DrainConfig,
+                                             served: Int,
+                                             current_draining: Bool,
+                                             handler: Fn(Request) -> Future<Response>) -> Result<ConnectionLoopState, String> {
+  match await read_connection_request(stream, cfg, served) {
+    Ok(outcome) => {
+      match outcome {
+        Ready(ready) => {
+          return await ready_response_connection_state(stream,
+                                                      cfg,
+                                                      drain_cfg,
+                                                      served,
+                                                      current_draining,
+                                                      ready.request,
+                                                      ready.span,
+                                                      handler)
+        }
+        _ => {
+          return await non_ready_connection_state(stream, cfg, served, current_draining, outcome)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn result_connection_iteration_state(stream: TcpStream,
+                                           cfg: ServiceConfig,
+                                           drain_cfg: DrainConfig,
+                                           served: Int,
+                                           current_draining: Bool,
+                                           handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<ConnectionLoopState, String> {
+  match await read_connection_request(stream, cfg, served) {
+    Ok(outcome) => {
+      match outcome {
+        Ready(ready) => {
+          return await ready_result_connection_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    served,
+                                                    current_draining,
+                                                    ready.request,
+                                                    ready.span,
+                                                    handler)
+        }
+        _ => {
+          return await non_ready_connection_state(stream, cfg, served, current_draining, outcome)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn response_with_context_connection_iteration_state(stream: TcpStream,
+                                                          cfg: ServiceConfig,
+                                                          drain_cfg: DrainConfig,
+                                                          served: Int,
+                                                          current_draining: Bool,
+                                                          handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<ConnectionLoopState, String> {
+  match await read_connection_request(stream, cfg, served) {
+    Ok(outcome) => {
+      match outcome {
+        Ready(ready) => {
+          return await ready_response_with_context_connection_state(stream,
+                                                                   cfg,
+                                                                   drain_cfg,
+                                                                   served,
+                                                                   current_draining,
+                                                                   ready.request,
+                                                                   ready.span,
+                                                                   handler)
+        }
+        _ => {
+          return await non_ready_connection_state(stream, cfg, served, current_draining, outcome)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn result_with_context_connection_iteration_state(stream: TcpStream,
+                                                        cfg: ServiceConfig,
+                                                        drain_cfg: DrainConfig,
+                                                        served: Int,
+                                                        current_draining: Bool,
+                                                        handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<ConnectionLoopState, String> {
+  match await read_connection_request(stream, cfg, served) {
+    Ok(outcome) => {
+      match outcome {
+        Ready(ready) => {
+          return await ready_result_with_context_connection_state(stream,
+                                                                 cfg,
+                                                                 drain_cfg,
+                                                                 served,
+                                                                 current_draining,
+                                                                 ready.request,
+                                                                 ready.span,
+                                                                 handler)
+        }
+        _ => {
+          return await non_ready_connection_state(stream, cfg, served, current_draining, outcome)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn handle_accepted_stream(stream: TcpStream,
+                                cfg: ServiceConfig,
+                                drain_cfg: DrainConfig,
+                                draining_mode: Bool,
+                                handler: Fn(Request) -> Future<Response>) -> Result<ConnectionOutcome, String> {
+  let served = 0
+  let current_draining = draining_mode
+  while true {
+    match advance_connection_before_read(stream, cfg, drain_cfg, served, current_draining) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await response_connection_iteration_state(stream,
+                                                    cfg,
+                                                    drain_cfg,
+                                                    served,
+                                                    current_draining,
+                                                    handler) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Err("handle_accepted_stream fell through unexpectedly")
+}
+
+async fn handle_accepted_stream_result(stream: TcpStream,
+                                       cfg: ServiceConfig,
+                                       drain_cfg: DrainConfig,
+                                       draining_mode: Bool,
+                                       handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<ConnectionOutcome, String> {
+  let served = 0
+  let current_draining = draining_mode
+  while true {
+    match advance_connection_before_read(stream, cfg, drain_cfg, served, current_draining) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await result_connection_iteration_state(stream,
+                                                  cfg,
+                                                  drain_cfg,
+                                                  served,
+                                                  current_draining,
+                                                  handler) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Err("handle_accepted_stream_result fell through unexpectedly")
+}
+
+async fn handle_accepted_stream_with_context(stream: TcpStream,
+                                             cfg: ServiceConfig,
+                                             drain_cfg: DrainConfig,
+                                             draining_mode: Bool,
+                                             handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<ConnectionOutcome, String> {
+  let served = 0
+  let current_draining = draining_mode
+  while true {
+    match advance_connection_before_read(stream, cfg, drain_cfg, served, current_draining) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await response_with_context_connection_iteration_state(stream,
+                                                                 cfg,
+                                                                 drain_cfg,
+                                                                 served,
+                                                                 current_draining,
+                                                                 handler) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Err("handle_accepted_stream_with_context fell through unexpectedly")
+}
+
+async fn handle_accepted_stream_result_with_context(stream: TcpStream,
+                                                    cfg: ServiceConfig,
+                                                    drain_cfg: DrainConfig,
+                                                    draining_mode: Bool,
+                                                    handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<ConnectionOutcome, String> {
+  let served = 0
+  let current_draining = draining_mode
+  while true {
+    match advance_connection_before_read(stream, cfg, drain_cfg, served, current_draining) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await result_with_context_connection_iteration_state(stream,
+                                                               cfg,
+                                                               drain_cfg,
+                                                               served,
+                                                               current_draining,
+                                                               handler) {
+      Ok(state) => {
+        served = state.request_count
+        current_draining = state.draining_mode
+        if state.should_stop {
+          return Ok(applied_connection_outcome(state))
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Err("handle_accepted_stream_result_with_context fell through unexpectedly")
+}
+
+enum ServeGoal {
+  Finite(Int)
+  RunForever(Void)
+}
+
+fn finite_serve_goal(limit: Int) -> ServeGoal {
+  return Finite(limit)
+}
+
+fn run_forever_serve_goal() -> ServeGoal {
+  return RunForever
+}
+
+fn serve_goal_invalid_message(goal: ServeGoal) -> String {
+  match goal {
+    Finite(limit) => {
+      if limit <= 0 {
+        return "serve_n limit must be positive"
+      }
+      return ""
+    }
+    RunForever => {
+      return ""
+    }
+  }
+}
+
+fn serve_goal_reached_limit(goal: ServeGoal, served: Int) -> Bool {
+  match goal {
+    Finite(limit) => {
+      return served >= limit
+    }
+    RunForever => {
+      return false
+    }
+  }
+}
+
+fn serve_goal_complete(cfg: ServiceConfig,
+                       goal: ServeGoal,
+                       served: Int) -> Result<Int, String> {
+  match goal {
+    Finite(_) => {
+      lifecycle_listener_stopped(cfg.name, "limit_reached", served)
+      return Ok(served)
+    }
+    RunForever => {
+      return Ok(served)
+    }
+  }
+}
+
+fn serve_goal_step_failed(cfg: ServiceConfig,
+                          goal: ServeGoal,
+                          served: Int,
+                          msg: String) -> Result<Int, String> {
+  match goal {
+    Finite(_) => {
+      return Err(msg)
+    }
+    RunForever => {
+      if msg == "listener is closed" {
+        lifecycle_listener_stopped(cfg.name, "listener_closed", served)
+        return Ok(served)
+      }
+      return Err(msg)
+    }
+  }
+}
+
+async fn accept_stream(listener: TcpListener) -> Result<TcpStream, String> {
+  return await listener.accept()
+}
+
+fn request_count_result(outcome: Result<ConnectionOutcome, String>) -> Result<Int, String> {
+  match outcome {
+    Ok(connection) => {
+      return Ok(connection.request_count)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_request_once(listener: TcpListener,
+                            cfg: ServiceConfig,
+                            handler: Fn(Request) -> Future<Response>) -> Result<Int, String> {
+  match await accept_stream(listener) {
+    Ok(stream) => {
+      return request_count_result(await handle_accepted_stream(stream, cfg, disabled(), false, handler))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_request_once_result(listener: TcpListener,
+                                   cfg: ServiceConfig,
+                                   handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  match await accept_stream(listener) {
+    Ok(stream) => {
+      return request_count_result(await handle_accepted_stream_result(stream, cfg, disabled(), false, handler))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_request_once_with_context(listener: TcpListener,
+                                         cfg: ServiceConfig,
+                                         handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<Int, String> {
+  match await accept_stream(listener) {
+    Ok(stream) => {
+      return request_count_result(await handle_accepted_stream_with_context(stream, cfg, disabled(), false, handler))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_request_once_result_with_context(listener: TcpListener,
+                                                cfg: ServiceConfig,
+                                                handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  match await accept_stream(listener) {
+    Ok(stream) => {
+      return request_count_result(await handle_accepted_stream_result_with_context(stream, cfg, disabled(), false, handler))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_response_goal(listener: TcpListener,
+                             cfg: ServiceConfig,
+                             goal: ServeGoal,
+                             handler: Fn(Request) -> Future<Response>) -> Result<Int, String> {
+  let invalid = serve_goal_invalid_message(goal)
+  if invalid != "" {
+    return Err(invalid)
+  }
+  let served = 0
+  while true {
+    if serve_goal_reached_limit(goal, served) {
+      return serve_goal_complete(cfg, goal, served)
+    }
+    match await serve_request_once(listener, cfg, handler) {
+      Ok(count) => {
+        served += count
+      }
+      Err(msg) => {
+        return serve_goal_step_failed(cfg, goal, served, msg)
+      }
+    }
+  }
+  return Ok(served)
+}
+
+async fn serve_result_goal(listener: TcpListener,
+                           cfg: ServiceConfig,
+                           goal: ServeGoal,
+                           handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  let invalid = serve_goal_invalid_message(goal)
+  if invalid != "" {
+    return Err(invalid)
+  }
+  let served = 0
+  while true {
+    if serve_goal_reached_limit(goal, served) {
+      return serve_goal_complete(cfg, goal, served)
+    }
+    match await serve_request_once_result(listener, cfg, handler) {
+      Ok(count) => {
+        served += count
+      }
+      Err(msg) => {
+        return serve_goal_step_failed(cfg, goal, served, msg)
+      }
+    }
+  }
+  return Ok(served)
+}
+
+async fn serve_response_with_context_goal(listener: TcpListener,
+                                          cfg: ServiceConfig,
+                                          goal: ServeGoal,
+                                          handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<Int, String> {
+  let invalid = serve_goal_invalid_message(goal)
+  if invalid != "" {
+    return Err(invalid)
+  }
+  let served = 0
+  while true {
+    if serve_goal_reached_limit(goal, served) {
+      return serve_goal_complete(cfg, goal, served)
+    }
+    match await serve_request_once_with_context(listener, cfg, handler) {
+      Ok(count) => {
+        served += count
+      }
+      Err(msg) => {
+        return serve_goal_step_failed(cfg, goal, served, msg)
+      }
+    }
+  }
+  return Ok(served)
+}
+
+async fn serve_result_with_context_goal(listener: TcpListener,
+                                        cfg: ServiceConfig,
+                                        goal: ServeGoal,
+                                        handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  let invalid = serve_goal_invalid_message(goal)
+  if invalid != "" {
+    return Err(invalid)
+  }
+  let served = 0
+  while true {
+    if serve_goal_reached_limit(goal, served) {
+      return serve_goal_complete(cfg, goal, served)
+    }
+    match await serve_request_once_result_with_context(listener, cfg, handler) {
+      Ok(count) => {
+        served += count
+      }
+      Err(msg) => {
+        return serve_goal_step_failed(cfg, goal, served, msg)
+      }
+    }
+  }
+  return Ok(served)
+}
+
+async fn serve_requests_n(listener: TcpListener,
+                          cfg: ServiceConfig,
+                          limit: Int,
+                          handler: Fn(Request) -> Future<Response>) -> Result<Int, String> {
+  return await serve_response_goal(listener, cfg, finite_serve_goal(limit), handler)
+}
+
+async fn serve_requests_n_result(listener: TcpListener,
+                                 cfg: ServiceConfig,
+                                 limit: Int,
+                                 handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  return await serve_result_goal(listener, cfg, finite_serve_goal(limit), handler)
+}
+
+async fn serve_requests_n_with_context(listener: TcpListener,
+                                       cfg: ServiceConfig,
+                                       limit: Int,
+                                       handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<Int, String> {
+  return await serve_response_with_context_goal(listener, cfg, finite_serve_goal(limit), handler)
+}
+
+async fn serve_requests_n_result_with_context(listener: TcpListener,
+                                              cfg: ServiceConfig,
+                                              limit: Int,
+                                              handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  return await serve_result_with_context_goal(listener, cfg, finite_serve_goal(limit), handler)
+}
+
+async fn serve_requests(listener: TcpListener,
+                        cfg: ServiceConfig,
+                        handler: Fn(Request) -> Future<Response>) -> Result<Int, String> {
+  return await serve_response_goal(listener, cfg, run_forever_serve_goal(), handler)
+}
+
+async fn serve_requests_result(listener: TcpListener,
+                               cfg: ServiceConfig,
+                               handler: Fn(Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  return await serve_result_goal(listener, cfg, run_forever_serve_goal(), handler)
+}
+
+async fn serve_requests_with_context(listener: TcpListener,
+                                     cfg: ServiceConfig,
+                                     handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<Int, String> {
+  return await serve_response_with_context_goal(listener, cfg, run_forever_serve_goal(), handler)
+}
+
+async fn serve_requests_result_with_context(listener: TcpListener,
+                                            cfg: ServiceConfig,
+                                            handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  return await serve_result_with_context_goal(listener, cfg, run_forever_serve_goal(), handler)
+}
+
+struct DrainServeState {
+  served: Int
+  draining_mode: Bool
+  should_stop: Bool
+}
+
+enum DrainAcceptResolution {
+  AcceptedStream(TcpStream)
+  Completed(DrainServeState)
+}
+
+fn continue_drain_serve_state(served: Int, draining_mode: Bool) -> DrainServeState {
+  return DrainServeState(served, draining_mode, false)
+}
+
+fn stop_drain_serve_state(served: Int, draining_mode: Bool) -> DrainServeState {
+  return DrainServeState(served, draining_mode, true)
+}
+
+fn advance_listener_draining_mode_if_needed(cfg: ServiceConfig,
+                                            drain_cfg: DrainConfig,
+                                            draining_mode: Bool) -> Result<Bool, String> {
+  if draining_mode {
+    return Ok(true)
+  }
+  return next_draining_mode(cfg, drain_cfg, draining_mode)
+}
+
+fn stop_drained_listener(listener: TcpListener,
+                         cfg: ServiceConfig,
+                         served: Int,
+                         draining_mode: Bool) -> DrainServeState {
+  listener.close()
+  lifecycle_listener_stopped(cfg.name, "drained", served)
+  return stop_drain_serve_state(served, draining_mode)
+}
+
+fn idle_drain_serve_state(listener: TcpListener,
+                          cfg: ServiceConfig,
+                          drain_cfg: DrainConfig,
+                          served: Int,
+                          draining_mode: Bool) -> Result<DrainServeState, String> {
+  if !draining_mode {
+    match next_draining_mode(cfg, drain_cfg, draining_mode) {
+      Ok(next_mode) => {
+        return Ok(continue_drain_serve_state(served, next_mode))
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Ok(stop_drained_listener(listener, cfg, served, draining_mode))
+}
+
+fn listener_closed_drain_serve_state(cfg: ServiceConfig,
+                                     served: Int,
+                                     draining_mode: Bool) -> DrainServeState {
+  lifecycle_listener_stopped(cfg.name, "listener_closed", served)
+  return stop_drain_serve_state(served, draining_mode)
+}
+
+fn continue_drain_serve_state_from_connection(served: Int,
+                                              connection: ConnectionOutcome) -> DrainServeState {
+  return continue_drain_serve_state(served + connection.request_count, connection.draining_mode)
+}
+
+fn drain_serve_state_from_connection_result(served: Int,
+                                            outcome: Result<ConnectionOutcome, String>) -> Result<DrainServeState, String> {
+  match outcome {
+    Ok(connection) => {
+      return Ok(continue_drain_serve_state_from_connection(served, connection))
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn drain_accept_resolution(listener: TcpListener,
+                                 cfg: ServiceConfig,
+                                 drain_cfg: DrainConfig,
+                                 served: Int,
+                                 draining_mode: Bool) -> Result<DrainAcceptResolution, String> {
+  match await accept_next(listener, drain_cfg) {
+    Ok(outcome) => {
+      match outcome {
+        Accepted(stream) => {
+          return Ok(AcceptedStream(stream))
+        }
+        Idle => {
+          match idle_drain_serve_state(listener, cfg, drain_cfg, served, draining_mode) {
+            Ok(state) => {
+              return Ok(Completed(state))
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+      }
+    }
+    Err(msg) => {
+      if msg == "listener is closed" {
+        return Ok(Completed(listener_closed_drain_serve_state(cfg, served, draining_mode)))
+      }
+      return Err(msg)
+    }
+  }
+}
+
+async fn response_drain_serve_iteration_state(listener: TcpListener,
+                                              cfg: ServiceConfig,
+                                              drain_cfg: DrainConfig,
+                                              served: Int,
+                                              draining_mode: Bool,
+                                              handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<DrainServeState, String> {
+  match await drain_accept_resolution(listener, cfg, drain_cfg, served, draining_mode) {
+    Ok(resolution) => {
+      match resolution {
+        AcceptedStream(stream) => {
+          return drain_serve_state_from_connection_result(
+            served,
+            await handle_accepted_stream_with_context(stream, cfg, drain_cfg, draining_mode, handler)
+          )
+        }
+        Completed(state) => {
+          return Ok(state)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn result_drain_serve_iteration_state(listener: TcpListener,
+                                            cfg: ServiceConfig,
+                                            drain_cfg: DrainConfig,
+                                            served: Int,
+                                            draining_mode: Bool,
+                                            handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<DrainServeState, String> {
+  match await drain_accept_resolution(listener, cfg, drain_cfg, served, draining_mode) {
+    Ok(resolution) => {
+      match resolution {
+        AcceptedStream(stream) => {
+          return drain_serve_state_from_connection_result(
+            served,
+            await handle_accepted_stream_result_with_context(stream,
+                                                             cfg,
+                                                             drain_cfg,
+                                                             draining_mode,
+                                                             handler)
+          )
+        }
+        Completed(state) => {
+          return Ok(state)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+async fn serve_requests_until_drained(listener: TcpListener,
+                                      cfg: ServiceConfig,
+                                      drain_cfg: DrainConfig,
+                                      handler: Fn(RequestContext, Request) -> Future<Response>) -> Result<Int, String> {
+  let served = 0
+  let draining_mode = false
+  while true {
+    match advance_listener_draining_mode_if_needed(cfg, drain_cfg, draining_mode) {
+      Ok(next_mode) => {
+        draining_mode = next_mode
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await response_drain_serve_iteration_state(listener,
+                                                     cfg,
+                                                     drain_cfg,
+                                                     served,
+                                                     draining_mode,
+                                                     handler) {
+      Ok(state) => {
+        served = state.served
+        draining_mode = state.draining_mode
+        if state.should_stop {
+          return Ok(state.served)
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Ok(served)
+}
+
+async fn serve_requests_result_until_drained(listener: TcpListener,
+                                             cfg: ServiceConfig,
+                                             drain_cfg: DrainConfig,
+                                             handler: Fn(RequestContext, Request) -> Future<Result<Response, String>>) -> Result<Int, String> {
+  let served = 0
+  let draining_mode = false
+  while true {
+    match advance_listener_draining_mode_if_needed(cfg, drain_cfg, draining_mode) {
+      Ok(next_mode) => {
+        draining_mode = next_mode
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+    match await result_drain_serve_iteration_state(listener,
+                                                   cfg,
+                                                   drain_cfg,
+                                                   served,
+                                                   draining_mode,
+                                                   handler) {
+      Ok(state) => {
+        served = state.served
+        draining_mode = state.draining_mode
+        if state.should_stop {
+          return Ok(state.served)
+        }
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return Ok(served)
+}

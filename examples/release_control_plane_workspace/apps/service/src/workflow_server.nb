@@ -1,0 +1,848 @@
+module workflow_server
+import auth
+import core::contracts
+import core::policy
+import core::validate
+import core::workflow_contracts
+import core::workflow_validate
+import service::context
+import service::errors
+import service::middleware
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+import workflow_store
+
+struct WorkflowIdentity {
+  app: String
+  channel: String
+}
+
+struct WorkflowRunIdentity {
+  app: String
+  channel: String
+  run_id: Int
+}
+
+struct WorkflowDefinitionPutInput {
+  identity: WorkflowIdentity
+  expected_revision_id: Int
+  put_request: WorkflowPutRequest
+}
+
+struct WorkflowEventSubmitInput {
+  identity: WorkflowIdentity
+  submit_request: WorkflowEventSubmitRequest
+}
+
+struct WorkerHeartbeatInput {
+  lease_id: String
+  heartbeat_request: WorkerHeartbeatRequest
+}
+
+struct WorkerCompleteInput {
+  lease_id: String
+  complete_request: WorkerCompleteRequest
+}
+
+fn workflow_definition_pattern() -> String {
+  return "/v1/workflows/:app/:channel"
+}
+
+fn workflow_runs_pattern() -> String {
+  return "/v1/workflows/:app/:channel/runs"
+}
+
+fn workflow_run_pattern() -> String {
+  return "/v1/workflows/:app/:channel/runs/:run_id"
+}
+
+fn workflow_events_pattern() -> String {
+  return "/v1/workflows/:app/:channel/events"
+}
+
+fn worker_claim_path() -> String {
+  return "/v1/workers/claim"
+}
+
+fn worker_heartbeat_pattern() -> String {
+  return "/v1/workers/leases/:lease_id/heartbeat"
+}
+
+fn worker_complete_pattern() -> String {
+  return "/v1/workers/leases/:lease_id/complete"
+}
+
+fn is_workflow_route(request: Request) -> Bool {
+  return path_matches(workflow_definition_pattern(), request) ||
+         path_matches(workflow_runs_pattern(), request) ||
+         path_matches(workflow_run_pattern(), request) ||
+         path_matches(workflow_events_pattern(), request)
+}
+
+fn is_worker_route(request: Request) -> Bool {
+  return path_matches(worker_claim_path(), request) ||
+         path_matches(worker_heartbeat_pattern(), request) ||
+         path_matches(worker_complete_pattern(), request)
+}
+
+fn workflow_method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+fn invalid_workflow_request(ctx: RequestContext, code: String, message: String) -> Result<Response, String> {
+  return Ok(for_request(400, ctx, code, message))
+}
+
+fn missing_workflow_definition(ctx: RequestContext, app_name: String, channel: String) -> Result<Response, String> {
+  let target = text_concat3(app_name, "/", channel)
+  return Ok(for_request(404, ctx, "workflow_not_found", text_concat("workflow definition not found: ", target)))
+}
+
+fn missing_workflow_run(ctx: RequestContext, app_name: String, channel: String, run_id: Int) -> Result<Response, String> {
+  let target = text_concat3(app_name, "/", text_concat(channel, text_concat("#", int_text(run_id))))
+  return Ok(for_request(404, ctx, "workflow_run_not_found", text_concat("workflow run not found: ", target)))
+}
+
+fn missing_release_revision(ctx: RequestContext, app_name: String, channel: String, release_revision_id: Int) -> Result<Response, String> {
+  let target = text_concat3(app_name, "/", text_concat(channel, text_concat("@", int_text(release_revision_id))))
+  return Ok(for_request(404, ctx, "release_revision_not_found", text_concat("release revision not found: ", target)))
+}
+
+fn missing_worker_lease(ctx: RequestContext, lease_id: String) -> Result<Response, String> {
+  return Ok(for_request(404, ctx, "worker_lease_not_found", text_concat("worker lease not found: ", lease_id)))
+}
+
+fn conflicted_worker_lease(ctx: RequestContext, code: String, message: String) -> Result<Response, String> {
+  return Ok(for_request(409, ctx, code, message))
+}
+
+fn ensure_workflow_permission_scope(ctx: RequestContext,
+                                    permission: String,
+                                    app_name: String,
+                                    channel: String) -> Result<Bool, Response> {
+  return require_permission_scope(ctx, permission, app_name, channel)
+}
+
+fn workflow_definition_etag(definition: WorkflowDefinition) -> String {
+  return stringify(string_value(int_text(definition.revision_id)))
+}
+
+fn workflow_definition_response(ctx: RequestContext, definition: WorkflowDefinition) -> Result<Response, String> {
+  let envelope = WorkflowDefinitionEnvelope(definition, ctx.request_id_text, unix_millis())
+  validate_workflow_definition_envelope(envelope)?
+  return ok_json_with_etag(envelope.as_json(), workflow_definition_etag(definition))
+}
+
+fn workflow_run_response(ctx: RequestContext, run: WorkflowRun) -> Result<Response, String> {
+  let envelope = WorkflowRunEnvelope(run, ctx.request_id_text, unix_millis())
+  validate_workflow_run_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn workflow_run_list_response(ctx: RequestContext, app_name: String, channel: String, runs: Json) -> Result<Response, String> {
+  let envelope = WorkflowRunListEnvelope(app_name, channel, runs, ctx.request_id_text, unix_millis())
+  validate_workflow_run_list_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn workflow_event_submit_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  let run = workflow_run_from_json(get_value(outcome, "run")?)?
+  let envelope = WorkflowEventSubmitEnvelope(kind, run, ctx.request_id_text, unix_millis())
+  validate_workflow_event_submit_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn worker_claim_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  let lease = worker_lease_from_json(get_value(outcome, "lease")?)?
+  let envelope = WorkerClaimEnvelope(kind, lease, ctx.request_id_text, unix_millis())
+  validate_worker_claim_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn worker_heartbeat_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let lease = worker_lease_from_json(get_value(outcome, "lease")?)?
+  let envelope = WorkerHeartbeatEnvelope(lease, ctx.request_id_text, unix_millis())
+  validate_worker_heartbeat_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn worker_complete_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let run = workflow_run_from_json(get_value(outcome, "run")?)?
+  let envelope = WorkerCompleteEnvelope(run, ctx.request_id_text, unix_millis())
+  validate_worker_complete_envelope(envelope)?
+  return Ok(ok_json(envelope.as_json()))
+}
+
+fn workflow_precondition_required(ctx: RequestContext, current_revision_id: Int) -> Result<Response, String> {
+  let message = text_concat("If-Match required; current revision_id=", int_text(current_revision_id))
+  return Ok(for_request(428, ctx, "workflow_precondition_required", message))
+}
+
+fn workflow_revision_conflict(ctx: RequestContext,
+                              expected_revision_id: Int,
+                              current_revision_id: Int) -> Result<Response, String> {
+  let message = text_concat3("If-Match mismatch: expected revision_id=",
+                             int_text(expected_revision_id),
+                             text_concat(" current revision_id=", int_text(current_revision_id)))
+  return Ok(for_request(412, ctx, "workflow_revision_mismatch", message))
+}
+
+fn workflow_applied_definition_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let definition = workflow_definition_from_json(get_value(outcome, "definition")?)?
+  return workflow_definition_response(ctx, definition)
+}
+
+fn workflow_precondition_definition_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  return workflow_precondition_required(ctx, get_int(outcome, "current_revision_id")?)
+}
+
+fn workflow_conflict_definition_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  return workflow_revision_conflict(ctx,
+                                    get_int(outcome, "expected_revision_id")?,
+                                    get_int(outcome, "current_revision_id")?)
+}
+
+fn workflow_definition_outcome_response(ctx: RequestContext, outcome: Json) -> Result<Response, String> {
+  let kind = get_string(outcome, "kind")?
+  if kind == "applied" {
+    return workflow_applied_definition_outcome_response(ctx, outcome)
+  }
+  if kind == "precondition_required" {
+    return workflow_precondition_definition_outcome_response(ctx, outcome)
+  }
+  if kind == "conflict" {
+    return workflow_conflict_definition_outcome_response(ctx, outcome)
+  }
+  return Err("unexpected workflow definition outcome")
+}
+
+fn invalid_workflow_app_response(ctx: RequestContext, msg: String) -> Response {
+  return for_request(400, ctx, "invalid_workflow_app", msg)
+}
+
+fn invalid_workflow_channel_response(ctx: RequestContext, msg: String) -> Response {
+  return for_request(400, ctx, "invalid_workflow_channel", msg)
+}
+
+fn invalid_workflow_route_response(ctx: RequestContext, msg: String) -> Response {
+  return for_request(400, ctx, "invalid_workflow_route", msg)
+}
+
+fn invalid_workflow_run_id_response(ctx: RequestContext, msg: String) -> Response {
+  return for_request(400, ctx, "invalid_workflow_run_id", msg)
+}
+
+fn validated_workflow_identity(ctx: RequestContext, app_name: String, channel: String) -> Result<WorkflowIdentity, Response> {
+  match validate_app_segment(app_name) {
+    Ok(_) => {}
+    Err(msg) => {
+      return Err(invalid_workflow_app_response(ctx, msg))
+    }
+  }
+  match validate_channel_segment(channel) {
+    Ok(_) => {
+      return Ok(WorkflowIdentity(app_name, channel))
+    }
+    Err(msg) => {
+      return Err(invalid_workflow_channel_response(ctx, msg))
+    }
+  }
+}
+
+fn workflow_scope_identity_from_request(ctx: RequestContext,
+                                        request: Request,
+                                        pattern: String) -> Result<WorkflowIdentity, Response> {
+  match route_params2(pattern, request) {
+    Ok(params) => {
+      return validated_workflow_identity(ctx, params.first, params.second)
+    }
+    Err(msg) => {
+      return Err(invalid_workflow_route_response(ctx, msg))
+    }
+  }
+}
+
+fn positive_run_id(text: String) -> Result<Int, String> {
+  let value = as_int(parse(text)?)?
+  if value <= 0 {
+    return Err("workflow run_id must be a positive integer")
+  }
+  return Ok(value)
+}
+
+fn workflow_run_identity_from_request(ctx: RequestContext, request: Request) -> Result<WorkflowRunIdentity, Response> {
+  match route_params3(workflow_run_pattern(), request) {
+    Ok(params) => {
+      let identity = validated_workflow_identity(ctx, params.first, params.second)?
+      match positive_run_id(params.third) {
+        Ok(run_id) => {
+          return Ok(WorkflowRunIdentity(identity.app, identity.channel, run_id))
+        }
+        Err(msg) => {
+          return Err(invalid_workflow_run_id_response(ctx, msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(invalid_workflow_route_response(ctx, msg))
+    }
+  }
+}
+
+fn workflow_if_match_header_missing_text() -> String {
+  return "HTTP header not found: If-Match"
+}
+
+fn workflow_non_negative_revision_id(value: Int) -> Result<Int, String> {
+  if value < 0 {
+    return Err("If-Match must be a non-negative revision id")
+  }
+  return Ok(value)
+}
+
+fn workflow_if_match_int_value(value: Json) -> Result<Int, String> {
+  return workflow_non_negative_revision_id(as_int(value)?)
+}
+
+fn workflow_if_match_value(raw: String) -> Result<Int, String> {
+  let parsed = parse(raw)?
+  match workflow_if_match_int_value(parsed) {
+    Ok(revision_id) => {
+      return Ok(revision_id)
+    }
+    Err(_) => {
+      let inner = parse(as_string(parsed)?)?
+      return workflow_if_match_int_value(inner)
+    }
+  }
+}
+
+fn workflow_expected_revision_from_request(ctx: RequestContext, request: Request) -> Result<Int, Response> {
+  match header_value_unique(request, "If-Match") {
+    Ok(value) => {
+      match workflow_if_match_value(value) {
+        Ok(expected_revision_id) => {
+          return Ok(expected_revision_id)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_if_match", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      if msg == workflow_if_match_header_missing_text() {
+        return Ok(-1)
+      }
+      return Err(for_request(400, ctx, "invalid_if_match", msg))
+    }
+  }
+}
+
+fn workflow_json_body(ctx: RequestContext, request: Request) -> Result<Json, Response> {
+  match parse_json_body(request.body) {
+    Ok(payload) => {
+      return Ok(payload)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_json", msg))
+    }
+  }
+}
+
+fn workflow_put_request_from_payload(ctx: RequestContext, payload: Json) -> Result<WorkflowPutRequest, Response> {
+  match workflow_put_request_from_json(payload) {
+    Ok(value) => {
+      match validate_workflow_put_request(value) {
+        Ok(_) => {
+          return Ok(value)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_workflow_definition", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_workflow_definition", msg))
+    }
+  }
+}
+
+fn workflow_put_request_from_http(ctx: RequestContext, request: Request) -> Result<WorkflowPutRequest, Response> {
+  let payload = workflow_json_body(ctx, request)?
+  return workflow_put_request_from_payload(ctx, payload)
+}
+
+fn workflow_event_submit_request_from_payload(ctx: RequestContext, payload: Json) -> Result<WorkflowEventSubmitRequest, Response> {
+  match workflow_event_submit_request_from_json(payload) {
+    Ok(value) => {
+      match validate_workflow_event_submit_request(value) {
+        Ok(_) => {
+          return Ok(value)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_workflow_event", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_workflow_event", msg))
+    }
+  }
+}
+
+fn workflow_event_submit_request_from_http(ctx: RequestContext, request: Request) -> Result<WorkflowEventSubmitRequest, Response> {
+  let payload = workflow_json_body(ctx, request)?
+  return workflow_event_submit_request_from_payload(ctx, payload)
+}
+
+fn worker_claim_request_from_payload(ctx: RequestContext, payload: Json) -> Result<WorkerClaimRequest, Response> {
+  match worker_claim_request_from_json(payload) {
+    Ok(value) => {
+      match validate_worker_claim_request(value) {
+        Ok(_) => {
+          return Ok(value)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_worker_claim", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_worker_claim", msg))
+    }
+  }
+}
+
+fn worker_claim_request_from_http(ctx: RequestContext, request: Request) -> Result<WorkerClaimRequest, Response> {
+  let payload = workflow_json_body(ctx, request)?
+  return worker_claim_request_from_payload(ctx, payload)
+}
+
+fn worker_heartbeat_request_from_payload(ctx: RequestContext, payload: Json) -> Result<WorkerHeartbeatRequest, Response> {
+  match worker_heartbeat_request_from_json(payload) {
+    Ok(value) => {
+      match validate_worker_heartbeat_request(value) {
+        Ok(_) => {
+          return Ok(value)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_worker_heartbeat", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_worker_heartbeat", msg))
+    }
+  }
+}
+
+fn worker_heartbeat_request_from_http(ctx: RequestContext, request: Request) -> Result<WorkerHeartbeatRequest, Response> {
+  let payload = workflow_json_body(ctx, request)?
+  return worker_heartbeat_request_from_payload(ctx, payload)
+}
+
+fn worker_complete_request_from_payload(ctx: RequestContext, payload: Json) -> Result<WorkerCompleteRequest, Response> {
+  match worker_complete_request_from_json(payload) {
+    Ok(value) => {
+      match validate_worker_complete_request(value) {
+        Ok(_) => {
+          return Ok(value)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_worker_complete", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_worker_complete", msg))
+    }
+  }
+}
+
+fn worker_complete_request_from_http(ctx: RequestContext,
+                                     request: Request,
+                                     lease_id: String) -> Result<WorkerCompleteRequest, Response> {
+  let payload = workflow_json_body(ctx, request)?
+  match worker_complete_request_from_payload(ctx, payload) {
+    Ok(value) => {
+      match validate_worker_complete_request_for_lease(lease_id, value) {
+        Ok(_) => {
+          return Ok(value)
+        }
+        Err(msg) => {
+          return Err(for_request(400, ctx, "invalid_worker_complete", msg))
+        }
+      }
+    }
+    Err(response) => {
+      return Err(response)
+    }
+  }
+}
+
+fn lease_id_from_pattern(ctx: RequestContext, request: Request, pattern: String) -> Result<String, Response> {
+  match route_param1(pattern, request) {
+    Ok(lease_id) => {
+      if lease_id == "" {
+        return Err(for_request(400, ctx, "invalid_worker_lease", "worker lease_id must be non-empty"))
+      }
+      return Ok(lease_id)
+    }
+    Err(msg) => {
+      return Err(for_request(400, ctx, "invalid_worker_route", msg))
+    }
+  }
+}
+
+fn workflow_definition_put_input_from_request(ctx: RequestContext, request: Request) -> Result<WorkflowDefinitionPutInput, Response> {
+  let identity = workflow_scope_identity_from_request(ctx, request, workflow_definition_pattern())?
+  let expected_revision_id = workflow_expected_revision_from_request(ctx, request)?
+  let put_request = workflow_put_request_from_http(ctx, request)?
+  return Ok(WorkflowDefinitionPutInput(identity, expected_revision_id, put_request))
+}
+
+fn workflow_event_submit_input_from_request(ctx: RequestContext, request: Request) -> Result<WorkflowEventSubmitInput, Response> {
+  let identity = workflow_scope_identity_from_request(ctx, request, workflow_events_pattern())?
+  let submit_request = workflow_event_submit_request_from_http(ctx, request)?
+  return Ok(WorkflowEventSubmitInput(identity, submit_request))
+}
+
+fn worker_heartbeat_input_from_request(ctx: RequestContext, request: Request) -> Result<WorkerHeartbeatInput, Response> {
+  let lease_id = lease_id_from_pattern(ctx, request, worker_heartbeat_pattern())?
+  let heartbeat_request = worker_heartbeat_request_from_http(ctx, request)?
+  return Ok(WorkerHeartbeatInput(lease_id, heartbeat_request))
+}
+
+fn worker_complete_input_from_request(ctx: RequestContext, request: Request) -> Result<WorkerCompleteInput, Response> {
+  let lease_id = lease_id_from_pattern(ctx, request, worker_complete_pattern())?
+  let complete_request = worker_complete_request_from_http(ctx, request, lease_id)?
+  return Ok(WorkerCompleteInput(lease_id, complete_request))
+}
+
+fn workflow_event_submit_error_response(ctx: RequestContext,
+                                        input: WorkflowEventSubmitInput,
+                                        msg: String) -> Result<Response, String> {
+  if msg == "workflow definition not found" {
+    return missing_workflow_definition(ctx, input.identity.app, input.identity.channel)
+  }
+  if msg == "release revision not found" {
+    return missing_release_revision(ctx,
+                                    input.identity.app,
+                                    input.identity.channel,
+                                    input.submit_request.release_revision_id)
+  }
+  if msg == "workflow event kind is not enabled for this definition" {
+    return invalid_workflow_request(ctx, "workflow_event_not_enabled", msg)
+  }
+  return Err(msg)
+}
+
+fn worker_lease_route_error_response(ctx: RequestContext, lease_id: String, msg: String) -> Result<Response, String> {
+  if msg == "worker lease not found" {
+    return missing_worker_lease(ctx, lease_id)
+  }
+  if msg == "worker lease belongs to a different worker" {
+    return conflicted_worker_lease(ctx, "worker_lease_owner_mismatch", msg)
+  }
+  if msg == "worker lease is not active" {
+    return conflicted_worker_lease(ctx, "worker_lease_not_active", msg)
+  }
+  return Err(msg)
+}
+
+async fn handle_workflow_definition_get_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_workflow_definition_get_route_authorized)
+}
+
+async fn handle_workflow_definition_get_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_definition_read_permission(), handle_workflow_definition_get_route_inner)
+}
+
+async fn handle_workflow_definition_get_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match workflow_scope_identity_from_request(ctx, request, workflow_definition_pattern()) {
+    Ok(identity) => {
+      match ensure_workflow_permission_scope(ctx, jobs_definition_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_workflow_definition(identity.app, identity.channel) {
+        Ok(definition) => {
+          return workflow_definition_response(ctx, definition)
+        }
+        Err(msg) => {
+          if msg == "workflow definition not found" {
+            return missing_workflow_definition(ctx, identity.app, identity.channel)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_workflow_definition_put_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_workflow_definition_put_route_authorized)
+}
+
+async fn handle_workflow_definition_put_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_definition_write_permission(), handle_workflow_definition_put_route_inner)
+}
+
+async fn handle_workflow_definition_put_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let updated_by = updated_by_actor(ctx)?
+  match workflow_definition_put_input_from_request(ctx, request) {
+    Ok(input) => {
+      match ensure_workflow_permission_scope(ctx,
+                                             jobs_definition_write_permission(),
+                                             input.identity.app,
+                                             input.identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      let outcome = write_workflow_definition(input.identity.app,
+                                             input.identity.channel,
+                                             input.put_request,
+                                             input.expected_revision_id,
+                                             updated_by)?
+      return workflow_definition_outcome_response(ctx, outcome)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_workflow_runs_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_workflow_runs_route_authorized)
+}
+
+async fn handle_workflow_runs_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_run_read_permission(), handle_workflow_runs_route_inner)
+}
+
+async fn handle_workflow_runs_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match workflow_scope_identity_from_request(ctx, request, workflow_runs_pattern()) {
+    Ok(identity) => {
+      match ensure_workflow_permission_scope(ctx, jobs_run_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      let runs = load_workflow_runs(identity.app, identity.channel)?
+      return workflow_run_list_response(ctx, identity.app, identity.channel, runs)
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_workflow_run_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_workflow_run_route_authorized)
+}
+
+async fn handle_workflow_run_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_run_read_permission(), handle_workflow_run_route_inner)
+}
+
+async fn handle_workflow_run_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match workflow_run_identity_from_request(ctx, request) {
+    Ok(identity) => {
+      match ensure_workflow_permission_scope(ctx, jobs_run_read_permission(), identity.app, identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match load_workflow_run(identity.app, identity.channel, identity.run_id) {
+        Ok(run) => {
+          return workflow_run_response(ctx, run)
+        }
+        Err(msg) => {
+          if msg == "workflow run not found" {
+            return missing_workflow_run(ctx, identity.app, identity.channel, identity.run_id)
+          }
+          return Err(msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_workflow_event_submit_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_workflow_event_submit_route_authorized)
+}
+
+async fn handle_workflow_event_submit_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_run_trigger_permission(), handle_workflow_event_submit_route_inner)
+}
+
+async fn handle_workflow_event_submit_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let requested_by = updated_by_actor(ctx)?
+  match workflow_event_submit_input_from_request(ctx, request) {
+    Ok(input) => {
+      match ensure_workflow_permission_scope(ctx, jobs_run_trigger_permission(), input.identity.app, input.identity.channel) {
+        Ok(_) => {}
+        Err(response) => { return Ok(response) }
+      }
+      match submit_workflow_event(input.identity.app, input.identity.channel, input.submit_request, requested_by) {
+        Ok(outcome) => {
+          return workflow_event_submit_response(ctx, outcome)
+        }
+        Err(msg) => {
+          return workflow_event_submit_error_response(ctx, input, msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_worker_claim_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_worker_claim_route_authorized)
+}
+
+async fn handle_worker_claim_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_worker_execute_permission(), handle_worker_claim_route_inner)
+}
+
+async fn handle_worker_claim_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let claim_request = WorkerClaimRequest("", "")
+  match worker_claim_request_from_http(ctx, request) {
+    Ok(value) => {
+      claim_request = value
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+  let app_scope = principal_app_scope_from_ctx(ctx)?
+  let channel_scope = principal_channel_scope_from_ctx(ctx)?
+  let outcome = claim_worker_lease_scoped(claim_request.worker_id,
+                                          claim_request.task_kind,
+                                          app_scope,
+                                          channel_scope)?
+  return worker_claim_response(ctx, outcome)
+}
+
+async fn handle_worker_heartbeat_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_worker_heartbeat_route_authorized)
+}
+
+async fn handle_worker_heartbeat_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_worker_execute_permission(), handle_worker_heartbeat_route_inner)
+}
+
+async fn handle_worker_heartbeat_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match worker_heartbeat_input_from_request(ctx, request) {
+    Ok(input) => {
+      let app_scope = principal_app_scope_from_ctx(ctx)?
+      let channel_scope = principal_channel_scope_from_ctx(ctx)?
+      match heartbeat_worker_lease_scoped(input.lease_id,
+                                          input.heartbeat_request.worker_id,
+                                          app_scope,
+                                          channel_scope) {
+        Ok(outcome) => {
+          return worker_heartbeat_response(ctx, outcome)
+        }
+        Err(msg) => {
+          return worker_lease_route_error_response(ctx, input.lease_id, msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_worker_complete_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await reject_when_draining_result(ctx, request, handle_worker_complete_route_authorized)
+}
+
+async fn handle_worker_complete_route_authorized(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return await authorize_permission_result(ctx, request, jobs_worker_execute_permission(), handle_worker_complete_route_inner)
+}
+
+async fn handle_worker_complete_route_inner(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  match worker_complete_input_from_request(ctx, request) {
+    Ok(input) => {
+      let app_scope = principal_app_scope_from_ctx(ctx)?
+      let channel_scope = principal_channel_scope_from_ctx(ctx)?
+      match complete_worker_lease_scoped(input.lease_id,
+                                         input.complete_request.worker_id,
+                                         input.complete_request.status,
+                                         input.complete_request.result_message,
+                                         input.complete_request.result_payload,
+                                         app_scope,
+                                         channel_scope) {
+        Ok(outcome) => {
+          return worker_complete_response(ctx, outcome)
+        }
+        Err(msg) => {
+          return worker_lease_route_error_response(ctx, input.lease_id, msg)
+        }
+      }
+    }
+    Err(response) => {
+      return Ok(response)
+    }
+  }
+}
+
+async fn handle_workflow_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(workflow_events_pattern(), request) {
+    if method_matches(Post, request.method) {
+      return await handle_workflow_event_submit_route(ctx, request)
+    }
+    return workflow_method_not_allowed()
+  }
+  if path_matches(workflow_run_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_workflow_run_route(ctx, request)
+    }
+    return workflow_method_not_allowed()
+  }
+  if path_matches(workflow_runs_pattern(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_workflow_runs_route(ctx, request)
+    }
+    return workflow_method_not_allowed()
+  }
+  if method_matches(Get, request.method) {
+    return await handle_workflow_definition_get_route(ctx, request)
+  }
+  if method_matches(Put, request.method) {
+    return await handle_workflow_definition_put_route(ctx, request)
+  }
+  return workflow_method_not_allowed()
+}
+
+async fn handle_worker_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches(worker_claim_path(), request) {
+    if method_matches(Post, request.method) {
+      return await handle_worker_claim_route(ctx, request)
+    }
+    return workflow_method_not_allowed()
+  }
+  if path_matches(worker_heartbeat_pattern(), request) {
+    if method_matches(Post, request.method) {
+      return await handle_worker_heartbeat_route(ctx, request)
+    }
+    return workflow_method_not_allowed()
+  }
+  if method_matches(Post, request.method) {
+    return await handle_worker_complete_route(ctx, request)
+  }
+  return workflow_method_not_allowed()
+}

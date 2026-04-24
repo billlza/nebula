@@ -1,0 +1,74 @@
+module health
+import context
+import std::http
+import std::http_json
+import std::json
+import std::time
+
+fn service_profile() -> String {
+  return "linux-backend-ga"
+}
+
+fn profile_status_payload(service_name: String, status: String) -> Json {
+  return object4(
+    "service",
+    string_value(service_name),
+    "status",
+    string_value(status),
+    "profile",
+    string_value(service_profile()),
+    "unix_ms",
+    int_value(unix_millis())
+  )
+}
+
+fn profile_status_payload_with_context(ctx: RequestContext, status: String) -> Json {
+  return object6(
+    "service",
+    string_value(ctx.service_name),
+    "status",
+    string_value(status),
+    "profile",
+    string_value(service_profile()),
+    "request_id",
+    int_value(ctx.request_id),
+    "request_id_text",
+    string_value(ctx.request_id_text),
+    "unix_ms",
+    int_value(unix_millis())
+  )
+}
+
+fn status_response(status_code: Int, service_name: String, status: String) -> Response {
+  return json_response(status_code, profile_status_payload(service_name, status))
+}
+
+fn status_response_with_context(status_code: Int,
+                                ctx: RequestContext,
+                                status: String) -> Response {
+  return json_response(status_code, profile_status_payload_with_context(ctx, status))
+}
+
+fn live_response(service_name: String) -> Response {
+  return status_response(200, service_name, "ok")
+}
+
+fn ready_response(service_name: String) -> Response {
+  return status_response(200, service_name, "ready")
+}
+
+fn live_response_with_context(ctx: RequestContext) -> Response {
+  return status_response_with_context(200, ctx, "ok")
+}
+
+fn ready_response_with_context(ctx: RequestContext) -> Response {
+  return status_response_with_context(200, ctx, "ready")
+}
+
+fn draining_response(service_name: String) -> Response {
+  return status_response(503, service_name, "draining")
+}
+
+fn draining_response_with_context(ctx: RequestContext) -> Response {
+  return status_response_with_context(503, ctx, "draining")
+}

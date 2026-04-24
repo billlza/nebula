@@ -1,0 +1,12 @@
+id = "TST-139-install-sh-help-surface"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "bash \"$NEBULA_REPO_ROOT/scripts/install.sh\" --help > work/install-sh-help.out 2>&1"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'Usage: install.sh' work/install-sh-help.out && grep -F -- '--verify-attestations' work/install-sh-help.out"
+expect_rc = 0

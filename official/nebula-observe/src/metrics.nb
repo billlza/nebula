@@ -1,0 +1,36 @@
+module metrics
+import std::json
+import std::log
+import std::time
+
+fn delta_counter(service: String, metric: String, unit: String, value: Int) -> Void {
+  info(stringify(object7(
+    "schema",
+    string_value("nebula.observe.metric.v1"),
+    "signal",
+    string_value("metric"),
+    "service",
+    string_value(service),
+    "metric",
+    string_value(metric),
+    "unit",
+    string_value(unit),
+    "value",
+    int_value(value),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}
+
+fn count(service: String, metric: String, value: Int) -> Void {
+  info(stringify(object4(
+    "service",
+    string_value(service),
+    "metric",
+    string_value(metric),
+    "value",
+    int_value(value),
+    "unix_ms",
+    int_value(unix_millis())
+  )))
+}

@@ -1,0 +1,21 @@
+id = "TST-104-official-crypto-random-bytes-huge-error"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "rm -rf work/official-crypto-huge && mkdir -p work/official-crypto-huge && cp -R \"$NEBULA_REPO_ROOT/official/nebula-crypto\" work/official-crypto-huge/pkg && mkdir -p work/official-crypto-huge/app/src && cat > work/official-crypto-huge/app/nebula.toml <<'EOF'\nschema_version = 1\n\n[package]\nname = \"official-crypto-huge\"\nversion = \"0.1.0\"\nentry = \"src/main.nb\"\nsrc_dir = \"src\"\n\n[dependencies]\ncrypto = { path = \"../pkg\" }\nEOF\ncat > work/official-crypto-huge/app/src/main.nb <<'EOF'\nmodule main\nimport crypto::rand\nimport std::result\n\nfn main() -> Void {\n  match random_bytes(9223372036854775807) {\n    Ok(_) => {\n      print(\"unexpected-ok\")\n    }\n    Err(msg) => {\n      print(msg)\n    }\n  }\n}\nEOF"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "fetch"
+args = ["work/official-crypto-huge/app"]
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/official-crypto-huge/app"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["random_bytes allocation failed"]

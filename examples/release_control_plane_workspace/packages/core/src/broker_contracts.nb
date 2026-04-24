@@ -1,0 +1,384 @@
+module broker_contracts
+import jobs_pkg::request_validate
+import validate
+import std::json
+import std::result
+
+struct BrokerOutboxMessage {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+  payload: Json
+  status: String
+  attempt: Int
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+struct BrokerOutboxMessageMeta {
+  max_attempts: Int
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+struct BrokerOutboxLeaseMeta {
+  lease_id: String
+  worker_id: String
+  lease_expires_unix_ms: Int
+}
+
+struct BrokerOutboxTimingMeta {
+  max_attempts: Int
+  next_attempt_unix_ms: Int
+  created_unix_ms: Int
+  updated_unix_ms: Int
+  result_message: String
+}
+
+struct BrokerOutboxMessageFields {
+  message_id: Int
+  topic: String
+  key: String
+  dedupe_key: String
+  payload: Json
+  status: String
+  attempt: Int
+}
+
+struct BrokerOutboxClaimRequest {
+  worker_id: String
+  topic: String
+  now_unix_ms: Int
+}
+
+struct BrokerOutboxCompleteRequest {
+  worker_id: String
+  lease_id: String
+  status: String
+  result_message: String
+  next_attempt_unix_ms: Int
+}
+
+struct BrokerOutboxClaimEnvelope {
+  outcome: String
+  message: BrokerOutboxMessage
+  request_id: String
+  unix_ms: Int
+}
+
+struct BrokerOutboxMessageEnvelope {
+  message: BrokerOutboxMessage
+  request_id: String
+  unix_ms: Int
+}
+
+fn idle_broker_outbox_message() -> BrokerOutboxMessage {
+  return BrokerOutboxMessage(0, "", "", "", null_value(), "pending", 0, 0, "", "", 0, 0, 0, 0, "")
+}
+
+fn BrokerOutboxMessage_as_json(self: BrokerOutboxMessage) -> Json {
+  return object8("message_id",
+                 int_value(self.message_id),
+                 "topic",
+                 string_value(self.topic),
+                 "key",
+                 string_value(self.key),
+                 "dedupe_key",
+                 string_value(self.dedupe_key),
+                 "payload",
+                 self.payload,
+                 "status",
+                 string_value(self.status),
+                 "attempt",
+                 int_value(self.attempt),
+                 "meta",
+                 object8("max_attempts",
+                         int_value(self.max_attempts),
+                         "lease_id",
+                         string_value(self.lease_id),
+                         "worker_id",
+                         string_value(self.worker_id),
+                         "lease_expires_unix_ms",
+                         int_value(self.lease_expires_unix_ms),
+                         "next_attempt_unix_ms",
+                         int_value(self.next_attempt_unix_ms),
+                         "created_unix_ms",
+                         int_value(self.created_unix_ms),
+                         "updated_unix_ms",
+                         int_value(self.updated_unix_ms),
+                         "result_message",
+                         string_value(self.result_message)))
+}
+
+fn BrokerOutboxClaimRequest_as_json(self: BrokerOutboxClaimRequest) -> Json {
+  return object3("worker_id",
+                 string_value(self.worker_id),
+                 "topic",
+                 string_value(self.topic),
+                 "now_unix_ms",
+                 int_value(self.now_unix_ms))
+}
+
+fn BrokerOutboxCompleteRequest_as_json(self: BrokerOutboxCompleteRequest) -> Json {
+  return object5("worker_id",
+                 string_value(self.worker_id),
+                 "lease_id",
+                 string_value(self.lease_id),
+                 "status",
+                 string_value(self.status),
+                 "result_message",
+                 string_value(self.result_message),
+                 "next_attempt_unix_ms",
+                 int_value(self.next_attempt_unix_ms))
+}
+
+fn BrokerOutboxClaimEnvelope_as_json(self: BrokerOutboxClaimEnvelope) -> Json {
+  return object4("outcome",
+                 string_value(self.outcome),
+                 "message",
+                 self.message.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn BrokerOutboxMessageEnvelope_as_json(self: BrokerOutboxMessageEnvelope) -> Json {
+  return object3("message",
+                 self.message.as_json(),
+                 "request_id",
+                 string_value(self.request_id),
+                 "unix_ms",
+                 int_value(self.unix_ms))
+}
+
+fn broker_outbox_lease_meta_from_json(value: Json) -> Result<BrokerOutboxLeaseMeta, String> {
+  return Ok(BrokerOutboxLeaseMeta(get_string(value, "lease_id")?,
+                                  get_string(value, "worker_id")?,
+                                  get_int(value, "lease_expires_unix_ms")?))
+}
+
+fn broker_outbox_timing_meta_from_json(value: Json) -> Result<BrokerOutboxTimingMeta, String> {
+  return Ok(BrokerOutboxTimingMeta(get_int(value, "max_attempts")?,
+                                   get_int(value, "next_attempt_unix_ms")?,
+                                   get_int(value, "created_unix_ms")?,
+                                   get_int(value, "updated_unix_ms")?,
+                                   get_string(value, "result_message")?))
+}
+
+fn broker_outbox_message_meta_from_json(value: Json) -> Result<BrokerOutboxMessageMeta, String> {
+  let lease = broker_outbox_lease_meta_from_json(value)?
+  let timing = broker_outbox_timing_meta_from_json(value)?
+  return Ok(BrokerOutboxMessageMeta(timing.max_attempts,
+                                    lease.lease_id,
+                                    lease.worker_id,
+                                    lease.lease_expires_unix_ms,
+                                    timing.next_attempt_unix_ms,
+                                    timing.created_unix_ms,
+                                    timing.updated_unix_ms,
+                                    timing.result_message))
+}
+
+fn broker_outbox_message_fields_from_json(value: Json) -> Result<BrokerOutboxMessageFields, String> {
+  return Ok(BrokerOutboxMessageFields(get_int(value, "message_id")?,
+                                      get_string(value, "topic")?,
+                                      get_string(value, "key")?,
+                                      get_string(value, "dedupe_key")?,
+                                      get_value(value, "payload")?,
+                                      get_string(value, "status")?,
+                                      get_int(value, "attempt")?))
+}
+
+fn broker_outbox_message_from_json(value: Json) -> Result<BrokerOutboxMessage, String> {
+  let fields = broker_outbox_message_fields_from_json(value)?
+  let meta = broker_outbox_message_meta_from_json(get_value(value, "meta")?)?
+  return Ok(BrokerOutboxMessage(fields.message_id,
+                                fields.topic,
+                                fields.key,
+                                fields.dedupe_key,
+                                fields.payload,
+                                fields.status,
+                                fields.attempt,
+                                meta.max_attempts,
+                                meta.lease_id,
+                                meta.worker_id,
+                                meta.lease_expires_unix_ms,
+                                meta.next_attempt_unix_ms,
+                                meta.created_unix_ms,
+                                meta.updated_unix_ms,
+                                meta.result_message))
+}
+
+fn broker_outbox_claim_request_from_json(value: Json) -> Result<BrokerOutboxClaimRequest, String> {
+  return Ok(BrokerOutboxClaimRequest(get_string(value, "worker_id")?,
+                                     get_string(value, "topic")?,
+                                     get_int(value, "now_unix_ms")?))
+}
+
+fn broker_outbox_complete_request_from_json(value: Json) -> Result<BrokerOutboxCompleteRequest, String> {
+  return Ok(BrokerOutboxCompleteRequest(get_string(value, "worker_id")?,
+                                        get_string(value, "lease_id")?,
+                                        get_string(value, "status")?,
+                                        get_string(value, "result_message")?,
+                                        get_int(value, "next_attempt_unix_ms")?))
+}
+
+fn broker_outbox_claim_envelope_from_json(value: Json) -> Result<BrokerOutboxClaimEnvelope, String> {
+  return Ok(BrokerOutboxClaimEnvelope(get_string(value, "outcome")?,
+                                      broker_outbox_message_from_json(get_value(value, "message")?)?,
+                                      get_string(value, "request_id")?,
+                                      get_int(value, "unix_ms")?))
+}
+
+fn broker_outbox_message_envelope_from_json(value: Json) -> Result<BrokerOutboxMessageEnvelope, String> {
+  return Ok(BrokerOutboxMessageEnvelope(broker_outbox_message_from_json(get_value(value, "message")?)?,
+                                        get_string(value, "request_id")?,
+                                        get_int(value, "unix_ms")?))
+}
+
+fn validate_broker_status(status: String) -> Result<Bool, String> {
+  if status == "pending" || status == "leased" || status == "published" || status == "dead_letter" {
+    return Ok(true)
+  }
+  return Err("broker outbox status must be pending, leased, published, or dead_letter")
+}
+
+fn validate_broker_complete_status(status: String) -> Result<Bool, String> {
+  if status == "published" || status == "failed" {
+    return Ok(true)
+  }
+  return Err("broker outbox complete status must be published or failed")
+}
+
+fn validate_broker_topic(topic: String) -> Result<Bool, String> {
+  if topic == "" {
+    return Err("broker topic must be non-empty")
+  }
+  return Ok(true)
+}
+
+fn validate_broker_outbox_message(value: BrokerOutboxMessage) -> Result<Bool, String> {
+  if value.message_id < 0 {
+    return Err("broker outbox message_id must be non-negative")
+  }
+  if value.message_id > 0 {
+    validate_broker_topic(value.topic)?
+    if value.key == "" || value.dedupe_key == "" {
+      return Err("broker outbox message key and dedupe_key must be non-empty")
+    }
+  }
+  validate_broker_status(value.status)?
+  if value.attempt < 0 || value.max_attempts < 0 {
+    return Err("broker outbox attempts must be non-negative")
+  }
+  if value.lease_expires_unix_ms < 0 || value.next_attempt_unix_ms < 0 ||
+     value.created_unix_ms < 0 || value.updated_unix_ms < 0 {
+    return Err("broker outbox unix_ms fields must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn validate_broker_outbox_claim_request(value: BrokerOutboxClaimRequest) -> Result<Bool, String> {
+  validate_actor_segment(value.worker_id)?
+  if value.topic != "" {
+    validate_broker_topic(value.topic)?
+  }
+  if value.now_unix_ms < 0 {
+    return Err("broker outbox claim now_unix_ms must be non-negative")
+  }
+  return validate_outbox_claim_request_shape(value.worker_id, value.topic, value.now_unix_ms)
+}
+
+fn validate_broker_outbox_complete_request(value: BrokerOutboxCompleteRequest) -> Result<Bool, String> {
+  validate_actor_segment(value.worker_id)?
+  if value.lease_id == "" {
+    return Err("broker outbox complete lease_id must be non-empty")
+  }
+  validate_broker_complete_status(value.status)?
+  if value.next_attempt_unix_ms < 0 {
+    return Err("broker outbox complete next_attempt_unix_ms must be non-negative")
+  }
+  return validate_outbox_complete_request_shape(value.worker_id,
+                                                value.lease_id,
+                                                value.status,
+                                                value.next_attempt_unix_ms)
+}
+
+fn validate_broker_outbox_claim_envelope(value: BrokerOutboxClaimEnvelope) -> Result<Bool, String> {
+  if value.outcome != "claimed" && value.outcome != "empty" {
+    return Err("broker outbox claim outcome must be claimed or empty")
+  }
+  validate_broker_outbox_message(value.message)?
+  if value.request_id == "" || value.unix_ms < 0 {
+    return Err("broker outbox claim envelope metadata is invalid")
+  }
+  return Ok(true)
+}
+
+fn validate_broker_outbox_message_envelope(value: BrokerOutboxMessageEnvelope) -> Result<Bool, String> {
+  validate_broker_outbox_message(value.message)?
+  if value.message.message_id <= 0 {
+    return Err("broker outbox message envelope requires a real message")
+  }
+  if value.request_id == "" || value.unix_ms < 0 {
+    return Err("broker outbox message envelope metadata is invalid")
+  }
+  return Ok(true)
+}
+
+@test
+fn test_broker_outbox_claim_roundtrip() -> Void {
+  let message = BrokerOutboxMessage(1,
+                                    "workflow.run.created",
+                                    "control-plane/prod/1",
+                                    "workflow-run-created:1",
+                                    object1("run_id", int_value(1)),
+                                    "leased",
+                                    1,
+                                    3,
+                                    "broker-lease-1-1",
+                                    "worker",
+                                    123,
+                                    0,
+                                    10,
+                                    20,
+                                    "")
+  let envelope = BrokerOutboxClaimEnvelope("claimed", message, "req-broker", 30)
+  match broker_outbox_claim_envelope_from_json(envelope.as_json()) {
+    Ok(decoded) => {
+      match validate_broker_outbox_claim_envelope(decoded) {
+        Ok(_) => {}
+        Err(msg) => { panic(msg) }
+      }
+      assert(decoded.message.topic == "workflow.run.created", "broker topic drifted")
+    }
+    Err(msg) => { panic(msg) }
+  }
+}
+
+@test
+fn test_broker_outbox_complete_request_roundtrip() -> Void {
+  let request = BrokerOutboxCompleteRequest("worker", "broker-lease-1-1", "published", "ok", 0)
+  match broker_outbox_complete_request_from_json(request.as_json()) {
+    Ok(decoded) => {
+      match validate_broker_outbox_complete_request(decoded) {
+        Ok(_) => {}
+        Err(msg) => { panic(msg) }
+      }
+      assert(decoded.status == "published", "broker complete status drifted")
+    }
+    Err(msg) => { panic(msg) }
+  }
+}

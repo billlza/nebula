@@ -1,0 +1,54 @@
+schema_version = 2
+root_package = "thin-host-app-core"
+root_manifest_hash = "2ca86b237c6d5465"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "thin-host-app-core"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "2ca86b237c6d5465"
+source_fingerprint = "c9b416c615d8fb32"
+integrity_fingerprint = "9d3ab0119b6f5545"
+is_root = 1
+host_cxx = ["host.cpp"]
+dependencies = ["bridge=thin-host-bridge", "counter=thin-host-counter-core"]
+
+[[package]]
+name = "thin-host-bridge"
+version = "0.1.0"
+root = "packages/bridge"
+manifest = "packages/bridge/nebula.toml"
+entry = "src/host_bridge.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "packages/bridge"
+resolved_rev = ""
+manifest_hash = "ff765a900084745e"
+source_fingerprint = "28f4280b9012f2ad"
+integrity_fingerprint = "b7b981912b0bd3d0"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "thin-host-counter-core"
+version = "0.1.0"
+root = "packages/counter_core"
+manifest = "packages/counter_core/nebula.toml"
+entry = "src/counter_core.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "packages/counter_core"
+resolved_rev = ""
+manifest_hash = "fae73102dae29bdd"
+source_fingerprint = "eb90ddf7810417c5"
+integrity_fingerprint = "aa69ada2993f3749"
+is_root = 0
+dependencies = ["bridge=thin-host-bridge"]

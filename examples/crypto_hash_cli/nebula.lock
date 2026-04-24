@@ -1,0 +1,40 @@
+schema_version = 2
+root_package = "crypto-hash-cli"
+root_manifest_hash = "7cd180a22fc5c90f"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "crypto-hash-cli"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "7cd180a22fc5c90f"
+source_fingerprint = "a077981fa6341703"
+integrity_fingerprint = "d61da7b381e78b0"
+is_root = 1
+dependencies = ["crypto=nebula-crypto"]
+
+[[package]]
+name = "nebula-crypto"
+version = "0.1.0"
+root = "../../official/nebula-crypto"
+manifest = "../../official/nebula-crypto/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-crypto"
+resolved_rev = ""
+manifest_hash = "76503115230ca26"
+source_fingerprint = "d97ac4b0e79bda81"
+integrity_fingerprint = "82f25339d30bd57b"
+is_root = 0
+native_c_sources = ["native/blake3_all.c"]
+native_cxx_sources = ["native/bridge.cpp"]
+native_include_dirs = ["native/include", "native/vendor/blake3"]
+dependencies = []

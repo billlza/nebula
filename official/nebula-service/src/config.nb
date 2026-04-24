@@ -1,0 +1,514 @@
+module config
+import headers
+import std::env
+import std::result
+
+struct ServiceConfig {
+  name: String
+  bind_host: String
+  port: Int
+  max_header_bytes: Int
+  max_body_bytes: Int
+  request_timeout_ms: Int
+  handler_timeout_ms: Int
+  write_timeout_ms: Int
+  keep_alive_enabled: Bool
+  keep_alive_idle_timeout_ms: Int
+  keep_alive_max_requests_per_connection: Int
+  panic_to_500_enabled: Bool
+  header_policy: RequestHeaderPolicy
+}
+
+fn config(name: String,
+          bind_host: String,
+          port: Int,
+          max_header_bytes: Int,
+          max_body_bytes: Int,
+          request_timeout_ms: Int) -> ServiceConfig {
+  let header_policy = default_request_header_policy()
+  return ServiceConfig(name,
+                       bind_host,
+                       port,
+                       max_header_bytes,
+                       max_body_bytes,
+                       request_timeout_ms,
+                       request_timeout_ms,
+                       request_timeout_ms,
+                       false,
+                       5000,
+                       32,
+                       false,
+                       header_policy)
+}
+
+fn default_config(name: String, port: Int) -> ServiceConfig {
+  return config(name, "127.0.0.1", port, 8192, 1048576, 30000)
+}
+
+fn with_bind(base: ServiceConfig, bind_host: String, port: Int) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       bind_host,
+                       port,
+                       base.max_header_bytes,
+                       base.max_body_bytes,
+                       base.request_timeout_ms,
+                       base.handler_timeout_ms,
+                       base.write_timeout_ms,
+                       base.keep_alive_enabled,
+                       base.keep_alive_idle_timeout_ms,
+                       base.keep_alive_max_requests_per_connection,
+                       base.panic_to_500_enabled,
+                       base.header_policy)
+}
+
+fn with_limits(base: ServiceConfig,
+               max_header_bytes: Int,
+               max_body_bytes: Int,
+               request_timeout_ms: Int) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       base.bind_host,
+                       base.port,
+                       max_header_bytes,
+                       max_body_bytes,
+                       request_timeout_ms,
+                       base.handler_timeout_ms,
+                       base.write_timeout_ms,
+                       base.keep_alive_enabled,
+                       base.keep_alive_idle_timeout_ms,
+                       base.keep_alive_max_requests_per_connection,
+                       base.panic_to_500_enabled,
+                       base.header_policy)
+}
+
+fn with_timeouts(base: ServiceConfig,
+                 request_timeout_ms: Int,
+                 handler_timeout_ms: Int,
+                 write_timeout_ms: Int) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       base.bind_host,
+                       base.port,
+                       base.max_header_bytes,
+                       base.max_body_bytes,
+                       request_timeout_ms,
+                       handler_timeout_ms,
+                       write_timeout_ms,
+                       base.keep_alive_enabled,
+                       base.keep_alive_idle_timeout_ms,
+                       base.keep_alive_max_requests_per_connection,
+                       base.panic_to_500_enabled,
+                       base.header_policy)
+}
+
+fn with_keep_alive(base: ServiceConfig,
+                   idle_timeout_ms: Int,
+                   max_requests_per_connection: Int) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       base.bind_host,
+                       base.port,
+                       base.max_header_bytes,
+                       base.max_body_bytes,
+                       base.request_timeout_ms,
+                       base.handler_timeout_ms,
+                       base.write_timeout_ms,
+                       true,
+                       idle_timeout_ms,
+                       max_requests_per_connection,
+                       base.panic_to_500_enabled,
+                       base.header_policy)
+}
+
+fn with_keep_alive_policy(base: ServiceConfig,
+                          keep_alive_enabled: Bool,
+                          idle_timeout_ms: Int,
+                          max_requests_per_connection: Int) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       base.bind_host,
+                       base.port,
+                       base.max_header_bytes,
+                       base.max_body_bytes,
+                       base.request_timeout_ms,
+                       base.handler_timeout_ms,
+                       base.write_timeout_ms,
+                       keep_alive_enabled,
+                       idle_timeout_ms,
+                       max_requests_per_connection,
+                       base.panic_to_500_enabled,
+                       base.header_policy)
+}
+
+fn with_panic_to_500(base: ServiceConfig, enabled: Bool) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       base.bind_host,
+                       base.port,
+                       base.max_header_bytes,
+                       base.max_body_bytes,
+                       base.request_timeout_ms,
+                       base.handler_timeout_ms,
+                       base.write_timeout_ms,
+                       base.keep_alive_enabled,
+                       base.keep_alive_idle_timeout_ms,
+                       base.keep_alive_max_requests_per_connection,
+                       enabled,
+                       base.header_policy)
+}
+
+fn with_request_header_policy(base: ServiceConfig,
+                              header_policy: RequestHeaderPolicy) -> ServiceConfig {
+  return ServiceConfig(base.name,
+                       base.bind_host,
+                       base.port,
+                       base.max_header_bytes,
+                       base.max_body_bytes,
+                       base.request_timeout_ms,
+                       base.handler_timeout_ms,
+                       base.write_timeout_ms,
+                       base.keep_alive_enabled,
+                       base.keep_alive_idle_timeout_ms,
+                       base.keep_alive_max_requests_per_connection,
+                       base.panic_to_500_enabled,
+                       header_policy)
+}
+
+fn positive_env_or(name: String, fallback: Int, invalid_message: String) -> Result<Int, String> {
+  match get_int_or(name, fallback) {
+    Ok(value) => {
+      if value > 0 {
+        return Ok(value)
+      }
+      return Err(invalid_message)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn non_negative_env_or(name: String, fallback: Int, invalid_message: String) -> Result<Int, String> {
+  match get_int_or(name, fallback) {
+    Ok(value) => {
+      if value >= 0 {
+        return Ok(value)
+      }
+      return Err(invalid_message)
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn bool_env_or(name: String, fallback: Bool, invalid_message: String) -> Result<Bool, String> {
+  let raw = get_or_default(name, "")
+  if raw == "" {
+    return Ok(fallback)
+  }
+  if raw == "1" || raw == "true" || raw == "TRUE" || raw == "yes" || raw == "on" {
+    return Ok(true)
+  }
+  if raw == "0" || raw == "false" || raw == "FALSE" || raw == "no" || raw == "off" {
+    return Ok(false)
+  }
+  return Err(invalid_message)
+}
+
+struct EnvLimits {
+  max_header_bytes: Int
+  max_body_bytes: Int
+}
+
+struct EnvTimeouts {
+  request_timeout_ms: Int
+  handler_timeout_ms: Int
+  write_timeout_ms: Int
+}
+
+struct EnvKeepAliveLimits {
+  keep_alive_idle_timeout_ms: Int
+  keep_alive_max_requests_per_connection: Int
+}
+
+struct EnvHeaderPolicySettings {
+  max_request_id_bytes: Int
+  trust_request_id_header: Bool
+}
+
+struct EnvFeatureFlags {
+  keep_alive_enabled: Bool
+  panic_to_500_enabled: Bool
+}
+
+struct ResolvedServiceEnvCore {
+  bind_host: String
+  request_id_header_name: String
+  port: Int
+}
+
+struct ResolvedServiceEnvSizing {
+  limits: EnvLimits
+  timeouts: EnvTimeouts
+}
+
+fn request_id_header_name_from_env(base: ServiceConfig) -> Result<String, String> {
+  let request_id_header_name = get_or_default("NEBULA_REQUEST_ID_HEADER",
+                                              base.header_policy.request_id_header_name)
+  if request_id_header_name == "" {
+    return Err("NEBULA_REQUEST_ID_HEADER must be non-empty")
+  }
+  return Ok(request_id_header_name)
+}
+
+fn port_from_env(base: ServiceConfig) -> Result<Int, String> {
+  return get_int_or("NEBULA_PORT", base.port)
+}
+
+fn env_limits_from_env(base: ServiceConfig) -> Result<EnvLimits, String> {
+  match positive_env_or("NEBULA_MAX_HEADER_BYTES",
+                        base.max_header_bytes,
+                        "NEBULA_MAX_HEADER_BYTES must be positive") {
+    Ok(max_header_bytes) => {
+      match non_negative_env_or("NEBULA_MAX_BODY_BYTES",
+                                base.max_body_bytes,
+                                "NEBULA_MAX_BODY_BYTES must be non-negative") {
+        Ok(max_body_bytes) => {
+          return Ok(EnvLimits(max_header_bytes, max_body_bytes))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn env_timeouts_from_env(base: ServiceConfig) -> Result<EnvTimeouts, String> {
+  match positive_env_or("NEBULA_REQUEST_TIMEOUT_MS",
+                        base.request_timeout_ms,
+                        "NEBULA_REQUEST_TIMEOUT_MS must be positive") {
+    Ok(request_timeout_ms) => {
+      match positive_env_or("NEBULA_HANDLER_TIMEOUT_MS",
+                            base.handler_timeout_ms,
+                            "NEBULA_HANDLER_TIMEOUT_MS must be positive") {
+        Ok(handler_timeout_ms) => {
+          match positive_env_or("NEBULA_WRITE_TIMEOUT_MS",
+                                base.write_timeout_ms,
+                                "NEBULA_WRITE_TIMEOUT_MS must be positive") {
+            Ok(write_timeout_ms) => {
+              return Ok(EnvTimeouts(request_timeout_ms,
+                                    handler_timeout_ms,
+                                    write_timeout_ms))
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn env_keep_alive_limits_from_env(base: ServiceConfig) -> Result<EnvKeepAliveLimits, String> {
+  match positive_env_or("NEBULA_KEEP_ALIVE_IDLE_TIMEOUT_MS",
+                        base.keep_alive_idle_timeout_ms,
+                        "NEBULA_KEEP_ALIVE_IDLE_TIMEOUT_MS must be positive") {
+    Ok(keep_alive_idle_timeout_ms) => {
+      match positive_env_or("NEBULA_KEEP_ALIVE_MAX_REQUESTS",
+                            base.keep_alive_max_requests_per_connection,
+                            "NEBULA_KEEP_ALIVE_MAX_REQUESTS must be positive") {
+        Ok(keep_alive_max_requests_per_connection) => {
+          return Ok(EnvKeepAliveLimits(keep_alive_idle_timeout_ms,
+                                       keep_alive_max_requests_per_connection))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn env_header_policy_settings_from_env(base: ServiceConfig) -> Result<EnvHeaderPolicySettings, String> {
+  match positive_env_or("NEBULA_REQUEST_ID_MAX_BYTES",
+                        base.header_policy.max_request_id_bytes,
+                        "NEBULA_REQUEST_ID_MAX_BYTES must be positive") {
+    Ok(max_request_id_bytes) => {
+      match bool_env_or("NEBULA_TRUST_REQUEST_ID_HEADER",
+                        base.header_policy.trust_request_id_header,
+                        "NEBULA_TRUST_REQUEST_ID_HEADER must be true/false or 1/0") {
+        Ok(trust_request_id_header) => {
+          return Ok(EnvHeaderPolicySettings(max_request_id_bytes, trust_request_id_header))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn env_feature_flags_from_env(base: ServiceConfig) -> Result<EnvFeatureFlags, String> {
+  match bool_env_or("NEBULA_KEEP_ALIVE",
+                    base.keep_alive_enabled,
+                    "NEBULA_KEEP_ALIVE must be true/false or 1/0") {
+    Ok(keep_alive_enabled) => {
+      match bool_env_or("NEBULA_PANIC_TO_500",
+                        base.panic_to_500_enabled,
+                        "NEBULA_PANIC_TO_500 must be true/false or 1/0") {
+        Ok(panic_to_500_enabled) => {
+          return Ok(EnvFeatureFlags(keep_alive_enabled, panic_to_500_enabled))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn header_policy_from_env_fields(base: RequestHeaderPolicy,
+                                 request_id_header_name: String,
+                                 settings: EnvHeaderPolicySettings) -> RequestHeaderPolicy {
+  return with_request_id_max_bytes(
+    with_trusted_request_id(
+      with_request_id_header(base, request_id_header_name),
+      settings.trust_request_id_header
+    ),
+    settings.max_request_id_bytes
+  )
+}
+
+fn service_config_from_env_fields(base: ServiceConfig,
+                                  bind_host: String,
+                                  port: Int,
+                                  limits: EnvLimits,
+                                  timeouts: EnvTimeouts,
+                                  keep_alive_limits: EnvKeepAliveLimits,
+                                  flags: EnvFeatureFlags,
+                                  header_policy: RequestHeaderPolicy) -> ServiceConfig {
+  let cfg = with_bind(base, bind_host, port)
+  cfg = with_limits(cfg,
+                    limits.max_header_bytes,
+                    limits.max_body_bytes,
+                    timeouts.request_timeout_ms)
+  cfg = with_timeouts(cfg,
+                      timeouts.request_timeout_ms,
+                      timeouts.handler_timeout_ms,
+                      timeouts.write_timeout_ms)
+  cfg = with_keep_alive_policy(cfg,
+                               flags.keep_alive_enabled,
+                               keep_alive_limits.keep_alive_idle_timeout_ms,
+                               keep_alive_limits.keep_alive_max_requests_per_connection)
+  cfg = with_panic_to_500(cfg, flags.panic_to_500_enabled)
+  return with_request_header_policy(cfg, header_policy)
+}
+
+fn resolved_service_env_core(base: ServiceConfig) -> Result<ResolvedServiceEnvCore, String> {
+  let bind_host = get_or_default("NEBULA_BIND_HOST", base.bind_host)
+  match request_id_header_name_from_env(base) {
+    Ok(request_id_header_name) => {
+      match port_from_env(base) {
+        Ok(port) => {
+          return Ok(ResolvedServiceEnvCore(bind_host, request_id_header_name, port))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn resolved_service_env_sizing(base: ServiceConfig) -> Result<ResolvedServiceEnvSizing, String> {
+  match env_limits_from_env(base) {
+    Ok(limits) => {
+      match env_timeouts_from_env(base) {
+        Ok(timeouts) => {
+          return Ok(ResolvedServiceEnvSizing(limits, timeouts))
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn config_from_env_with_core_and_sizing(base: ServiceConfig,
+                                        core: ResolvedServiceEnvCore,
+                                        sizing: ResolvedServiceEnvSizing) -> Result<ServiceConfig, String> {
+  match env_keep_alive_limits_from_env(base) {
+    Ok(keep_alive_limits) => {
+      match env_header_policy_settings_from_env(base) {
+        Ok(header_policy_settings) => {
+          match env_feature_flags_from_env(base) {
+            Ok(flags) => {
+              let header_policy = header_policy_from_env_fields(base.header_policy,
+                                                                core.request_id_header_name,
+                                                                header_policy_settings)
+              return Ok(service_config_from_env_fields(base,
+                                                       core.bind_host,
+                                                       core.port,
+                                                       sizing.limits,
+                                                       sizing.timeouts,
+                                                       keep_alive_limits,
+                                                       flags,
+                                                       header_policy))
+            }
+            Err(msg) => {
+              return Err(msg)
+            }
+          }
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn config_from_env(name: String, default_port: Int) -> Result<ServiceConfig, String> {
+  let base = default_config(name, default_port)
+  match resolved_service_env_core(base) {
+    Ok(core) => {
+      match resolved_service_env_sizing(base) {
+        Ok(sizing) => {
+          return config_from_env_with_core_and_sizing(base, core, sizing)
+        }
+        Err(msg) => {
+          return Err(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
