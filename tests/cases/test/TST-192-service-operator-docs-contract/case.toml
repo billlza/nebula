@@ -1,0 +1,7 @@
+id = "TST-192-service-operator-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = "grep -F 'one accepted connection' \"$NEBULA_REPO_ROOT/docs/backend_operator_guide.md\" && grep -F 'in-process JSON `500`' \"$NEBULA_REPO_ROOT/docs/backend_operator_guide.md\" && grep -F 'prefer mounted files, platform secret stores' \"$NEBULA_REPO_ROOT/docs/backend_operator_guide.md\" && grep -F 'docs/backend_operator_guide.md' \"$NEBULA_REPO_ROOT/docs/service_profile.md\" && grep -F 'opt-in user-code request-handler panics can become correlated JSON `500`' \"$NEBULA_REPO_ROOT/docs/reverse_proxy_deployment.md\" && grep -F 'runtime/internal invariant panics still abort the process' \"$NEBULA_REPO_ROOT/docs/reverse_proxy_deployment.md\" && grep -F 'deploy/config/secrets boundaries are now documented' \"$NEBULA_REPO_ROOT/docs/post_1_0_workstreams.md\""
+expect_rc = 0
