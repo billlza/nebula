@@ -3,6 +3,7 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
+timeout = 240
 run = """
 python3 - <<'PY'
 import json

@@ -467,6 +467,12 @@ python3 scripts/app_platform_bench.py verify
 python3 scripts/app_platform_bench.py plan --format json
 ```
 
+Useful internal-app standard smoke:
+
+```bash
+python3 scripts/verify_release_control_plane_standard.py --binary ./build/nebula
+```
+
 Official binary support is:
 
 - macOS x86_64

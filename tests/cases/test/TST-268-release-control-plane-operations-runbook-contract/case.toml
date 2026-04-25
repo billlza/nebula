@@ -33,6 +33,16 @@ for fragment in [
     "history_issue_count",
     "Restart once against the same data plane",
     "split migration slices",
+    "## Drain, Health, And Logs",
+    "NEBULA_DRAIN_FILE=/run/release-control-plane/drain",
+    "curl -fsS http://127.0.0.1:40480/healthz",
+    "curl -fsS http://127.0.0.1:40480/readyz",
+    "/var/log/nebula/release-control-plane.observe.ndjson",
+    "deploy/logrotate/release-control-plane.observe",
+    "## Common Failure Triage",
+    "APP_*_TOKEN and APP_*_TOKEN_FILE for the same role are mutually exclusive",
+    "Missing mounted token files are deployment errors",
+    "APP_WORKER_TOKEN_FILE",
     "Schema downgrade is not supported",
     "No automatic SQLite-to-Postgres migration.",
     "APP_POSTGRES_DSN_FILE",
@@ -56,6 +66,7 @@ for fragment in [
     "# APP_POSTGRES_PREVIEW=1",
     "# APP_POSTGRES_DSN=postgresql://",
     "# APP_POSTGRES_DSN_FILE=/run/release-control-plane-secrets/postgres.dsn",
+    "APP_WORKER_TOKEN_FILE=/run/release-control-plane-secrets/worker.token",
 ]:
     if fragment not in systemd_env:
         raise SystemExit(f"systemd env example missing fragment: {fragment!r}")

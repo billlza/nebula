@@ -52,6 +52,8 @@ Recommended handoff order:
    - `nginx/release-control-plane.conf`
 5. Read `operations/README.md` before the first production-like rollout so backup/restore ownership
    is clear before migrations run.
+   - From the repo checkout, `python3 scripts/verify_release_control_plane_standard.py --binary ./build/nebula`
+     runs the one-shot publishable internal-app smoke against an isolated copy of this workspace.
 6. If you run in containers instead of host `systemd`, switch to:
    - `container/Dockerfile.runtime`
    - `k8s/*.yaml`

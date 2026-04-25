@@ -149,6 +149,75 @@ The current migration runner supports split migration slices: restarting after t
 advanced through later store modules must not make earlier migration slices look like a downgrade.
 It still rejects missing or renamed migration history for any version supplied by the running binary.
 
+## Drain, Health, And Logs
+
+The `systemd` env example wires the service to `NEBULA_DRAIN_FILE=/run/release-control-plane/drain`
+and `NEBULA_SHUTDOWN_FILE=/run/release-control-plane/shutdown`. Use the drain file before planned
+maintenance so readiness can fail before you stop the process:
+
+```bash
+sudo touch /run/release-control-plane/drain
+curl -fsS http://127.0.0.1:40480/healthz
+curl -fsS http://127.0.0.1:40480/readyz || true
+sudo systemctl stop release-control-plane
+```
+
+After restart, remove the drain file and verify both health paths plus one authenticated CLI read:
+
+```bash
+sudo rm -f /run/release-control-plane/drain
+curl -fsS http://127.0.0.1:40480/healthz
+curl -fsS http://127.0.0.1:40480/readyz
+nebula run apps/ctl --run-gate none -- status --url http://127.0.0.1:40480 --token "$APP_READ_TOKEN"
+```
+
+Observe logs are JSON events on stderr. The host unit appends them to
+`/var/log/nebula/release-control-plane.observe.ndjson`, and
+`deploy/logrotate/release-control-plane.observe` rotates that file with `copytruncate`. Container
+and Kubernetes deployments should collect the same stdout/stderr stream through the platform log
+collector instead of adding an in-container logrotate sidecar.
+
+## Common Failure Triage
+
+Keep startup failures explicit. Do not paper over them with broad fallback defaults:
+
+- APP_*_TOKEN and APP_*_TOKEN_FILE for the same role are mutually exclusive.
+- Missing mounted token files are deployment errors when `APP_AUTH_REQUIRED=1`.
+- Worker and outbox routes need `APP_WORKER_TOKEN_FILE` or `APP_WORKER_TOKEN` for dedicated workers.
+- Postgres remains preview and requires `APP_DATA_BACKEND=postgres`, `APP_POSTGRES_PREVIEW=1`, and
+  `APP_POSTGRES_DSN` or `APP_POSTGRES_DSN_FILE`.
+- External broker relay remains preview and requires `APP_EXTERNAL_BROKER_PREVIEW=1`,
+  `APP_EXTERNAL_BROKER_URL`, auth, and worker credentials.
+- If migrations report `history_mismatch`, stop rollout and restore or investigate the schema
+  history before retrying.
+
+## Publishable Internal-App Verification
+
+Before handing this sample to a production-like environment, run the repo-level publishable standard
+smoke from the Nebula checkout:
+
+```bash
+python3 scripts/verify_release_control_plane_standard.py --binary ./build/nebula
+```
+
+The verification copies this workspace into an isolated scratch directory, rewrites repo-local path
+dependencies to the current checkout, starts the service on an ephemeral localhost port, and runs
+the same operator-facing CLI path a deployment uses. It validates:
+
+- clean workspace fetch and service build
+- service startup, `/healthz`, `/readyz`, and CLI `status`
+- auth `whoami`
+- config put/get and release put/get
+- approval plus `release apply`
+- workflow worker claim/heartbeat/complete for `apply_release`
+- broker outbox claim/complete for `workflow.run.created`
+- audit list evidence for release, approval, and apply activity
+- deploy/runbook asset fragments for systemd/container/k8s handoff
+
+This is a smoke standard, not a load test or a claim that preview lanes are GA. Keep the deeper
+focused contract tests for schedules, shell sidecars, deploy sidecars, Postgres preview, policy
+authz, and lease concurrency as separate gates.
+
 ## Non-Claims
 
 - No automatic SQLite-to-Postgres migration.
