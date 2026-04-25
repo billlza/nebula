@@ -1423,6 +1423,10 @@ static bool current_function_uses_var_outside_parse_alias(const EmitCtx& ctx, Va
 
 static bool should_bind_let_by_const_ref(const EmitCtx& ctx, const Stmt::Let& st) {
   if (current_function_reassigns_var(ctx, st.var)) return false;
+  if (std::holds_alternative<Expr::VarRef>(st.value->node) ||
+      std::holds_alternative<Expr::FieldRef>(st.value->node)) {
+    return false;
+  }
   switch (st.ty.kind) {
   case Ty::Kind::String:
   case Ty::Kind::Struct:

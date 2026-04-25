@@ -16,7 +16,7 @@ Nebula UI now exists as a separate preview lane for semantic UI trees. That lane
 `Swift + SwiftUI` split, but V1 only owns source syntax, stable view-tree IR, a headless adapter,
 and guarded AppKit/GTK minimal-window smoke assets; native renderer parity remains future work.
 
-Nebula is not yet trying to become a replacement for:
+Nebula is not trying to become a replacement for:
 
 - React / SwiftUI / WinUI / GTK / AppKit
 - CSS/layout engines

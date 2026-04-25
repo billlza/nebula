@@ -10,7 +10,7 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "for f in work/dcache_corrupt/v2/entries/*.bin; do printf 'corrupt' > \"$f\"; break; done"
+run = "entry=$(find work/dcache_corrupt -path '*/entries/*.bin' -type f | sort | head -n 1); test -n \"$entry\" && printf 'corrupt' > \"$entry\""
 expect_rc = 0
 
 [[steps]]

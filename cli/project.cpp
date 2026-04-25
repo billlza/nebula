@@ -2559,268 +2559,280 @@ bool load_project_input(const fs::path& input,
         {"restore the missing include directory", "or remove it from the package manifest"}));
     return std::nullopt;
   };
-  for (const auto& pkg_name : ordered_reachable_packages) {
-    const auto pkg_it = package_by_name.find(pkg_name);
-    if (pkg_it == package_by_name.end()) continue;
-    const auto& pkg = pkg_it->second;
-    const auto manifest_it = package_manifest_by_name.find(pkg.name);
-    const PackageManifest* pkg_manifest = manifest_it == package_manifest_by_name.end()
-                                              ? nullptr
-                                              : &manifest_it->second;
-    const auto& host_cxx_sources =
+  auto collect_native_inputs_for_packages =
+    [&](const std::vector<std::string> &package_names) -> bool {
+    for (const auto &pkg_name : package_names) {
+      const auto pkg_it = package_by_name.find(pkg_name);
+      if (pkg_it == package_by_name.end())
+        continue;
+      const auto &pkg = pkg_it->second;
+      const auto manifest_it = package_manifest_by_name.find(pkg.name);
+      const PackageManifest *pkg_manifest =
+        manifest_it == package_manifest_by_name.end() ? nullptr : &manifest_it->second;
+      const auto &host_cxx_sources =
         pkg_manifest != nullptr ? pkg_manifest->host_cxx : pkg_it->second.host_cxx_sources;
-    const NativeBuildConfig& native_cfg =
+      const NativeBuildConfig &native_cfg =
         pkg_manifest != nullptr ? pkg_manifest->native : pkg.native;
-    for (const auto& rel : host_cxx_sources) {
-      const auto host_path = require_regular_file(pkg.root / rel, "NBL-CLI-HOSTCXX-MISSING",
-                                                  "host_cxx source", true, pkg);
-      if (!host_path.has_value()) return false;
-      if (!host_seen.insert(host_path->string()).second) continue;
-      out.host_cxx_sources.push_back(*host_path);
-    }
-    std::vector<fs::path> package_include_dirs;
-    for (const auto& rel : native_cfg.include_dirs) {
-      const auto include_dir = require_directory(pkg.root / rel, "NBL-CLI-NATIVE-INCLUDE",
-                                                 "native include dir", true, pkg);
-      if (!include_dir.has_value()) return false;
-      package_include_dirs.push_back(*include_dir);
-    }
-    std::sort(package_include_dirs.begin(), package_include_dirs.end(),
-              [](const fs::path& lhs, const fs::path& rhs) {
-                return lhs.generic_string() < rhs.generic_string();
-              });
-    package_include_dirs.erase(
+      for (const auto &rel : host_cxx_sources) {
+        const auto host_path = require_regular_file(pkg.root / rel, "NBL-CLI-HOSTCXX-MISSING",
+                                                    "host_cxx source", true, pkg);
+        if (!host_path.has_value())
+          return false;
+        if (!host_seen.insert(host_path->string()).second)
+          continue;
+        out.host_cxx_sources.push_back(*host_path);
+      }
+      std::vector<fs::path> package_include_dirs;
+      for (const auto &rel : native_cfg.include_dirs) {
+        const auto include_dir = require_directory(pkg.root / rel, "NBL-CLI-NATIVE-INCLUDE",
+                                                   "native include dir", true, pkg);
+        if (!include_dir.has_value())
+          return false;
+        package_include_dirs.push_back(*include_dir);
+      }
+      std::sort(package_include_dirs.begin(), package_include_dirs.end(),
+                [](const fs::path &lhs, const fs::path &rhs) {
+                  return lhs.generic_string() < rhs.generic_string();
+                });
+      package_include_dirs.erase(
         std::unique(package_include_dirs.begin(), package_include_dirs.end(),
-                    [](const fs::path& lhs, const fs::path& rhs) { return lhs == rhs; }),
+                    [](const fs::path &lhs, const fs::path &rhs) { return lhs == rhs; }),
         package_include_dirs.end());
 
-    std::vector<std::string> package_defines = native_cfg.defines;
-    std::sort(package_defines.begin(), package_defines.end());
-    package_defines.erase(std::unique(package_defines.begin(), package_defines.end()),
-                          package_defines.end());
+      std::vector<std::string> package_defines = native_cfg.defines;
+      std::sort(package_defines.begin(), package_defines.end());
+      package_defines.erase(std::unique(package_defines.begin(), package_defines.end()),
+                            package_defines.end());
 
-    std::vector<fs::path> package_generated_include_dirs;
-    auto materialize_generated_header = [&](const NativeGeneratedHeaderConfig& header) -> std::optional<fs::path> {
-      const auto template_path = require_regular_file(pkg.root / header.template_path,
-                                                      "NBL-CLI-NATIVE-TEMPLATE",
-                                                      "native generated-header template", true, pkg);
-      if (!template_path.has_value()) return std::nullopt;
-      const fs::path generated_root =
+      std::vector<fs::path> package_generated_include_dirs;
+      auto materialize_generated_header =
+        [&](const NativeGeneratedHeaderConfig &header) -> std::optional<fs::path> {
+        const auto template_path =
+          require_regular_file(pkg.root / header.template_path, "NBL-CLI-NATIVE-TEMPLATE",
+                               "native generated-header template", true, pkg);
+        if (!template_path.has_value())
+          return std::nullopt;
+        const fs::path generated_root =
           lockfile_cache_root(out.manifest_path) / "native-generated" /
-          (pkg.name + "-" + stable_hash_string(pkg.manifest_hash.empty() ? pkg.name : pkg.manifest_hash));
-      const fs::path output_path = absolute_normalized(generated_root / header.out);
-      if (!path_is_within(output_path, generated_root)) {
-        diags.push_back(make_cli_diag(
+          (pkg.name + "-" +
+           stable_hash_string(pkg.manifest_hash.empty() ? pkg.name : pkg.manifest_hash));
+        const fs::path output_path = absolute_normalized(generated_root / header.out);
+        if (!path_is_within(output_path, generated_root)) {
+          diags.push_back(make_cli_diag(
             Severity::Error, "NBL-CLI-NATIVE-GENERATED",
             "generated header output escapes generated root: " + output_path.string(), stage,
-            DiagnosticRisk::High, "generated header out path must stay within Nebula's generated include root",
+            DiagnosticRisk::High,
+            "generated header out path must stay within Nebula's generated include root",
             "native generated-header materialization cannot continue",
             {"use a relative out path inside the generated include tree"}));
-        return std::nullopt;
-      }
-      std::string rendered;
-      if (!read_text_file(*template_path, rendered)) {
-        diags.push_back(make_cli_diag(
+          return std::nullopt;
+        }
+        std::string rendered;
+        if (!read_text_file(*template_path, rendered)) {
+          diags.push_back(make_cli_diag(
             Severity::Error, "NBL-CLI-NATIVE-TEMPLATE",
             "cannot read native generated-header template: " + template_path->string(), stage,
             DiagnosticRisk::High, "generated header template path is not readable",
             "native generated-header materialization cannot continue"));
-        return std::nullopt;
-      }
-      for (const auto& [key, value] : header.values) {
-        const std::string needle = "@" + key + "@";
-        std::size_t pos = 0;
-        while ((pos = rendered.find(needle, pos)) != std::string::npos) {
-          rendered.replace(pos, needle.size(), value);
-          pos += value.size();
+          return std::nullopt;
         }
+        for (const auto &[key, value] : header.values) {
+          const std::string needle = "@" + key + "@";
+          std::size_t pos = 0;
+          while ((pos = rendered.find(needle, pos)) != std::string::npos) {
+            rendered.replace(pos, needle.size(), value);
+            pos += value.size();
+          }
+        }
+        if (!write_text_file(output_path, rendered)) {
+          diags.push_back(
+            make_cli_diag(Severity::Error, "NBL-CLI-NATIVE-GENERATED",
+                          "failed to write generated native header: " + output_path.string(), stage,
+                          DiagnosticRisk::High, "generated include output path is not writable",
+                          "native generated-header materialization cannot continue"));
+          return std::nullopt;
+        }
+        return generated_root;
+      };
+      for (const auto &header : native_cfg.generated_headers) {
+        const auto generated_root = materialize_generated_header(header);
+        if (!generated_root.has_value())
+          return false;
+        package_generated_include_dirs.push_back(*generated_root);
       }
-      if (!write_text_file(output_path, rendered)) {
-        diags.push_back(make_cli_diag(
-            Severity::Error, "NBL-CLI-NATIVE-GENERATED",
-            "failed to write generated native header: " + output_path.string(), stage,
-            DiagnosticRisk::High, "generated include output path is not writable",
-            "native generated-header materialization cannot continue"));
-        return std::nullopt;
-      }
-      return generated_root;
-    };
-    for (const auto& header : native_cfg.generated_headers) {
-      const auto generated_root = materialize_generated_header(header);
-      if (!generated_root.has_value()) return false;
-      package_generated_include_dirs.push_back(*generated_root);
-    }
-    std::sort(package_generated_include_dirs.begin(), package_generated_include_dirs.end(),
-              [](const fs::path& lhs, const fs::path& rhs) {
-                return lhs.generic_string() < rhs.generic_string();
-              });
-    package_generated_include_dirs.erase(
-        std::unique(package_generated_include_dirs.begin(), package_generated_include_dirs.end(),
-                    [](const fs::path& lhs, const fs::path& rhs) { return lhs == rhs; }),
-        package_generated_include_dirs.end());
-
-    auto append_native_source = [&](const fs::path& rel,
-                                    NativeSourceLanguage language,
-                                    std::string_view label,
-                                    std::vector<fs::path> include_dirs,
-                                    std::vector<std::string> defines,
-                                    std::vector<std::string> extra_flags) -> bool {
-      const auto native_path =
-          require_regular_file(pkg.root / rel, "NBL-CLI-NATIVE-FILE", label, true, pkg);
-      if (!native_path.has_value()) return false;
-      NativeSourceInput input;
-      input.path = *native_path;
-      input.language = language;
-      input.include_dirs = std::move(include_dirs);
-      input.defines = std::move(defines);
-      input.extra_flags = std::move(extra_flags);
-      input.package_name = pkg.name;
-      out.native_inputs.sources.push_back(std::move(input));
-      return true;
-    };
-
-    auto merged_include_dirs = package_include_dirs;
-    merged_include_dirs.insert(merged_include_dirs.end(), package_generated_include_dirs.begin(),
-                               package_generated_include_dirs.end());
-    std::sort(merged_include_dirs.begin(), merged_include_dirs.end(),
-              [](const fs::path& lhs, const fs::path& rhs) {
-                return lhs.generic_string() < rhs.generic_string();
-              });
-    merged_include_dirs.erase(
-        std::unique(merged_include_dirs.begin(), merged_include_dirs.end(),
-                    [](const fs::path& lhs, const fs::path& rhs) { return lhs == rhs; }),
-        merged_include_dirs.end());
-
-    for (const auto& rel : native_cfg.c_sources) {
-      if (!append_native_source(rel, NativeSourceLanguage::C, "native C source", merged_include_dirs,
-                                package_defines, {})) {
-        return false;
-      }
-    }
-    for (const auto& rel : native_cfg.cxx_sources) {
-      if (!append_native_source(rel, NativeSourceLanguage::Cxx, "native C++ source",
-                                merged_include_dirs, package_defines, {})) {
-        return false;
-      }
-    }
-
-    for (const auto& source : native_cfg.sources) {
-      std::vector<fs::path> source_include_dirs = merged_include_dirs;
-      for (const auto& rel : source.include_dirs) {
-        const auto include_dir = require_directory(pkg.root / rel, "NBL-CLI-NATIVE-INCLUDE",
-                                                   "native source include dir", true, pkg);
-        if (!include_dir.has_value()) return false;
-        source_include_dirs.push_back(*include_dir);
-      }
-      std::sort(source_include_dirs.begin(), source_include_dirs.end(),
-                [](const fs::path& lhs, const fs::path& rhs) {
+      std::sort(package_generated_include_dirs.begin(), package_generated_include_dirs.end(),
+                [](const fs::path &lhs, const fs::path &rhs) {
                   return lhs.generic_string() < rhs.generic_string();
                 });
-      source_include_dirs.erase(
+      package_generated_include_dirs.erase(
+        std::unique(package_generated_include_dirs.begin(), package_generated_include_dirs.end(),
+                    [](const fs::path &lhs, const fs::path &rhs) { return lhs == rhs; }),
+        package_generated_include_dirs.end());
+
+      auto append_native_source = [&](const fs::path &rel, NativeSourceLanguage language,
+                                      std::string_view label, std::vector<fs::path> include_dirs,
+                                      std::vector<std::string> defines,
+                                      std::vector<std::string> extra_flags) -> bool {
+        const auto native_path =
+          require_regular_file(pkg.root / rel, "NBL-CLI-NATIVE-FILE", label, true, pkg);
+        if (!native_path.has_value())
+          return false;
+        NativeSourceInput input;
+        input.path = *native_path;
+        input.language = language;
+        input.include_dirs = std::move(include_dirs);
+        input.defines = std::move(defines);
+        input.extra_flags = std::move(extra_flags);
+        input.package_name = pkg.name;
+        out.native_inputs.sources.push_back(std::move(input));
+        return true;
+      };
+
+      auto merged_include_dirs = package_include_dirs;
+      merged_include_dirs.insert(merged_include_dirs.end(), package_generated_include_dirs.begin(),
+                                 package_generated_include_dirs.end());
+      std::sort(merged_include_dirs.begin(), merged_include_dirs.end(),
+                [](const fs::path &lhs, const fs::path &rhs) {
+                  return lhs.generic_string() < rhs.generic_string();
+                });
+      merged_include_dirs.erase(
+        std::unique(merged_include_dirs.begin(), merged_include_dirs.end(),
+                    [](const fs::path &lhs, const fs::path &rhs) { return lhs == rhs; }),
+        merged_include_dirs.end());
+
+      for (const auto &rel : native_cfg.c_sources) {
+        if (!append_native_source(rel, NativeSourceLanguage::C, "native C source",
+                                  merged_include_dirs, package_defines, {})) {
+          return false;
+        }
+      }
+      for (const auto &rel : native_cfg.cxx_sources) {
+        if (!append_native_source(rel, NativeSourceLanguage::Cxx, "native C++ source",
+                                  merged_include_dirs, package_defines, {})) {
+          return false;
+        }
+      }
+
+      for (const auto &source : native_cfg.sources) {
+        std::vector<fs::path> source_include_dirs = merged_include_dirs;
+        for (const auto &rel : source.include_dirs) {
+          const auto include_dir = require_directory(pkg.root / rel, "NBL-CLI-NATIVE-INCLUDE",
+                                                     "native source include dir", true, pkg);
+          if (!include_dir.has_value())
+            return false;
+          source_include_dirs.push_back(*include_dir);
+        }
+        std::sort(source_include_dirs.begin(), source_include_dirs.end(),
+                  [](const fs::path &lhs, const fs::path &rhs) {
+                    return lhs.generic_string() < rhs.generic_string();
+                  });
+        source_include_dirs.erase(
           std::unique(source_include_dirs.begin(), source_include_dirs.end(),
-                      [](const fs::path& lhs, const fs::path& rhs) { return lhs == rhs; }),
+                      [](const fs::path &lhs, const fs::path &rhs) { return lhs == rhs; }),
           source_include_dirs.end());
 
-      std::vector<std::string> source_defines = package_defines;
-      source_defines.insert(source_defines.end(), source.defines.begin(), source.defines.end());
-      std::sort(source_defines.begin(), source_defines.end());
-      source_defines.erase(std::unique(source_defines.begin(), source_defines.end()),
-                           source_defines.end());
+        std::vector<std::string> source_defines = package_defines;
+        source_defines.insert(source_defines.end(), source.defines.begin(), source.defines.end());
+        std::sort(source_defines.begin(), source_defines.end());
+        source_defines.erase(std::unique(source_defines.begin(), source_defines.end()),
+                             source_defines.end());
 
-      auto host_arch_matches = [&](const std::vector<std::string>& wanted) {
-        if (wanted.empty()) return true;
+        auto host_arch_matches = [&](const std::vector<std::string> &wanted) {
+          if (wanted.empty())
+            return true;
 #if defined(__x86_64__) || defined(_M_X64)
-        static const std::vector<std::string> host_arch = {"x86_64", "amd64"};
+          static const std::vector<std::string> host_arch = {"x86_64", "amd64"};
 #elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
-        static const std::vector<std::string> host_arch = {"arm64", "aarch64"};
+          static const std::vector<std::string> host_arch = {"arm64", "aarch64"};
 #else
-        static const std::vector<std::string> host_arch = {};
+          static const std::vector<std::string> host_arch = {};
 #endif
-        for (const auto& item : wanted) {
-          if (std::find(host_arch.begin(), host_arch.end(), item) != host_arch.end()) return true;
-        }
-        return false;
-      };
-      if (!host_arch_matches(source.arch)) continue;
+          for (const auto &item : wanted) {
+            if (std::find(host_arch.begin(), host_arch.end(), item) != host_arch.end())
+              return true;
+          }
+          return false;
+        };
+        if (!host_arch_matches(source.arch))
+          continue;
 
-      std::vector<std::string> extra_flags;
-      [[maybe_unused]] auto add_flag = [&](std::string flag) {
-        if (std::find(extra_flags.begin(), extra_flags.end(), flag) == extra_flags.end()) {
-          extra_flags.push_back(std::move(flag));
-        }
-      };
-      for (const auto& feature : source.cpu_features) {
+        std::vector<std::string> extra_flags;
+        [[maybe_unused]] auto add_flag = [&](std::string flag) {
+          if (std::find(extra_flags.begin(), extra_flags.end(), flag) == extra_flags.end()) {
+            extra_flags.push_back(std::move(flag));
+          }
+        };
+        for (const auto &feature : source.cpu_features) {
 #if defined(__x86_64__) || defined(_M_X64)
-        if (feature == "sse2") {
-          add_flag("-msse2");
-        } else if (feature == "sse41") {
-          add_flag("-msse4.1");
-        } else if (feature == "avx2") {
-          add_flag("-mavx2");
-        } else if (feature == "avx512f") {
-          add_flag("-mavx512f");
-        } else if (feature == "avx512vl") {
-          add_flag("-mavx512vl");
-        } else if (feature == "bmi2") {
-          add_flag("-mbmi2");
-        } else if (feature == "popcnt") {
-          add_flag("-mpopcnt");
-        } else if (feature == "aes") {
-          add_flag("-maes");
-        } else if (feature == "sha") {
-          add_flag("-msha");
-        } else {
-          diags.push_back(make_cli_diag(
-              Severity::Error, "NBL-CLI-NATIVE-FEATURE",
-              "unsupported x86_64 native cpu_features entry: " + feature, stage,
-              DiagnosticRisk::High, "Nebula does not know how to translate that native cpu feature yet",
-              "source-local native compilation cannot continue"));
-          return false;
-        }
+          if (feature == "sse2") {
+            add_flag("-msse2");
+          } else if (feature == "sse41") {
+            add_flag("-msse4.1");
+          } else if (feature == "avx2") {
+            add_flag("-mavx2");
+          } else if (feature == "avx512f") {
+            add_flag("-mavx512f");
+          } else if (feature == "avx512vl") {
+            add_flag("-mavx512vl");
+          } else if (feature == "bmi2") {
+            add_flag("-mbmi2");
+          } else if (feature == "popcnt") {
+            add_flag("-mpopcnt");
+          } else if (feature == "aes") {
+            add_flag("-maes");
+          } else if (feature == "sha") {
+            add_flag("-msha");
+          } else {
+            diags.push_back(
+              make_cli_diag(Severity::Error, "NBL-CLI-NATIVE-FEATURE",
+                            "unsupported x86_64 native cpu_features entry: " + feature, stage,
+                            DiagnosticRisk::High,
+                            "Nebula does not know how to translate that native cpu feature yet",
+                            "source-local native compilation cannot continue"));
+            return false;
+          }
 #elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
-        if (!(feature == "neon" || feature == "crypto" || feature == "aes" || feature == "sha2" ||
-              feature == "sha3" || feature == "sha512")) {
-          diags.push_back(make_cli_diag(
-              Severity::Error, "NBL-CLI-NATIVE-FEATURE",
-              "unsupported arm64 native cpu_features entry: " + feature, stage,
-              DiagnosticRisk::High, "Nebula does not know how to translate that native cpu feature yet",
-              "source-local native compilation cannot continue"));
-          return false;
-        }
+          if (!(feature == "neon" || feature == "crypto" || feature == "aes" || feature == "sha2" ||
+                feature == "sha3" || feature == "sha512")) {
+            diags.push_back(
+              make_cli_diag(Severity::Error, "NBL-CLI-NATIVE-FEATURE",
+                            "unsupported arm64 native cpu_features entry: " + feature, stage,
+                            DiagnosticRisk::High,
+                            "Nebula does not know how to translate that native cpu feature yet",
+                            "source-local native compilation cannot continue"));
+            return false;
+          }
 #else
-        diags.push_back(make_cli_diag(
+          diags.push_back(make_cli_diag(
             Severity::Error, "NBL-CLI-NATIVE-FEATURE",
             "native cpu_features are not supported on this host architecture yet", stage,
-            DiagnosticRisk::High, "Nebula does not have a native cpu-feature mapping for this host architecture",
+            DiagnosticRisk::High,
+            "Nebula does not have a native cpu-feature mapping for this host architecture",
             "source-local native compilation cannot continue"));
-        return false;
+          return false;
 #endif
-      }
+        }
 
-      std::string label;
-      switch (source.language) {
-      case NativeSourceLanguage::C: label = "native descriptor C source"; break;
-      case NativeSourceLanguage::Cxx: label = "native descriptor C++ source"; break;
-      case NativeSourceLanguage::Asm: label = "native descriptor asm source"; break;
-      }
-      if (!append_native_source(source.path, source.language, label, source_include_dirs,
-                                source_defines, extra_flags)) {
-        return false;
+        std::string label;
+        switch (source.language) {
+        case NativeSourceLanguage::C:
+          label = "native descriptor C source";
+          break;
+        case NativeSourceLanguage::Cxx:
+          label = "native descriptor C++ source";
+          break;
+        case NativeSourceLanguage::Asm:
+          label = "native descriptor asm source";
+          break;
+        }
+        if (!append_native_source(source.path, source.language, label, source_include_dirs,
+                                  source_defines, extra_flags)) {
+          return false;
+        }
       }
     }
-  }
-
-  if ((system_profile || no_std) && (!out.host_cxx_sources.empty() || !out.native_inputs.empty())) {
-    diags.push_back(make_cli_diag(
-        Severity::Error, "NBL-CLI-SYSTEM-NATIVE",
-        "system/no-std profile does not support host_cxx or [native] sources yet", stage,
-        DiagnosticRisk::High,
-        "package-native and host_cxx bridges compile against the hosted C/C++ toolchain profile",
-        "system-profile builds would silently inherit host runtime dependencies",
-        {"remove host_cxx/[native] from the reachable package graph",
-         "or build with --profile hosted while using host bridge code"}));
-    return false;
-  }
+    return true;
+  };
 
   std::unordered_map<std::string, std::string> module_to_path;
   std::unordered_set<std::string> visited_modules;
@@ -2969,6 +2981,28 @@ bool load_project_input(const fs::path& input,
       };
 
   if (!visit_file(*target_pkg, target_entry)) return false;
+
+  std::set<std::string> loaded_package_names;
+  for (const auto& source : out.sources) {
+    if (package_by_name.find(source.package_name) != package_by_name.end()) {
+      loaded_package_names.insert(source.package_name);
+    }
+  }
+  std::vector<std::string> ordered_loaded_packages(loaded_package_names.begin(),
+                                                   loaded_package_names.end());
+  if (!collect_native_inputs_for_packages(ordered_loaded_packages)) return false;
+
+  if ((system_profile || no_std) && (!out.host_cxx_sources.empty() || !out.native_inputs.empty())) {
+    diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-SYSTEM-NATIVE",
+        "system/no-std profile does not support host_cxx or [native] sources yet", stage,
+        DiagnosticRisk::High,
+        "package-native and host_cxx bridges compile against the hosted C/C++ toolchain profile",
+        "system-profile builds would silently inherit host runtime dependencies",
+        {"remove host_cxx/[native] from the reachable package graph",
+         "or build with --profile hosted while using host bridge code"}));
+    return false;
+  }
 
   std::ostringstream cache_seed;
   cache_seed << "root=" << target_pkg->name << "\n";

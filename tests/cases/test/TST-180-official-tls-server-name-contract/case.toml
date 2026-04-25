@@ -3,5 +3,155 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "python3 - <<'PY'\nimport os\nimport platform\nimport queue\nimport shutil\nimport socket\nimport ssl\nimport subprocess\nimport threading\nfrom pathlib import Path\n\nsystem = platform.system().lower()\nif system.startswith('windows') or system.startswith('msys') or system.startswith('mingw') or system.startswith('cygwin'):\n    print('tls-server-name-contract-skip-unsupported-host')\n    raise SystemExit(0)\nif shutil.which('openssl') is None:\n    raise SystemExit('openssl is required for official TLS server_name contract test')\n\nroot = Path('work/official_tls_server_name_contract')\napp = root / 'app'\nshutil.rmtree(root, ignore_errors=True)\n(app / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'openssl_ca.cnf').write_text('''[req]\\ndistinguished_name = dn\\nx509_extensions = v3_ca\\nprompt = no\\n\\n[dn]\\nCN = Nebula TLS server_name CA\\n\\n[v3_ca]\\nsubjectKeyIdentifier = hash\\nauthorityKeyIdentifier = keyid:always,issuer\\nbasicConstraints = critical, CA:true\\nkeyUsage = critical, digitalSignature, keyCertSign, cRLSign\\n''', encoding='utf-8')\n(root / 'openssl_server.cnf').write_text('''[req]\\ndistinguished_name = dn\\nreq_extensions = v3_req\\nprompt = no\\n\\n[dn]\\nCN = localhost\\n\\n[v3_req]\\nsubjectAltName = @alt_names\\nbasicConstraints = CA:false\\nkeyUsage = critical, digitalSignature, keyEncipherment\\nextendedKeyUsage = serverAuth\\n\\n[alt_names]\\nDNS.1 = localhost\\nIP.1 = 127.0.0.1\\n''', encoding='utf-8')\nsubprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root / 'ca.key'), '-out', str(root / 'ca.pem'), '-days', '2', '-config', str(root / 'openssl_ca.cnf')], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nsubprocess.run(['openssl', 'req', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root / 'server.key'), '-out', str(root / 'server.csr'), '-config', str(root / 'openssl_server.cnf')], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nsubprocess.run(['openssl', 'x509', '-req', '-in', str(root / 'server.csr'), '-CA', str(root / 'ca.pem'), '-CAkey', str(root / 'ca.key'), '-CAcreateserial', '-out', str(root / 'server.pem'), '-days', '2', '-sha256', '-extfile', str(root / 'openssl_server.cnf'), '-extensions', 'v3_req'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n(root / 'server_name.bin').write_bytes(b'localhost\\x00shadow.invalid')\n\nport_q: queue.Queue[int] = queue.Queue()\ndone_q: queue.Queue[object] = queue.Queue()\n\ndef serve() -> None:\n    try:\n        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)\n        ctx.load_cert_chain(str(root / 'server.pem'), str(root / 'server.key'))\n        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:\n            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n            sock.bind(('127.0.0.1', 0))\n            sock.listen(1)\n            sock.settimeout(60)\n            port_q.put(sock.getsockname()[1])\n            conn, _ = sock.accept()\n            try:\n                with ctx.wrap_socket(conn, server_side=True) as tls:\n                    tls.settimeout(5)\n                    try:\n                        tls.recv(4096)\n                    except Exception:\n                        pass\n            except Exception:\n                pass\n        done_q.put(None)\n    except Exception as exc:\n        done_q.put(exc)\n\nthread = threading.Thread(target=serve, daemon=True)\nthread.start()\nport = port_q.get(timeout=10)\nca_pem = (root / 'ca.pem').read_text(encoding='utf-8')\nca_literal = ca_pem.replace('\\\\', '\\\\\\\\').replace('\\n', '\\\\n').replace('\"', '\\\\\"')\nserver_name_path = str((root / 'server_name.bin').resolve()).replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')\n(app / 'nebula.toml').write_text(f'''schema_version = 1\\n\\n[package]\\nname = \"official-tls-server-name-contract\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\ntls = {{ path = \"{os.environ['NEBULA_REPO_ROOT']}/official/nebula-tls\" }}\\n''', encoding='utf-8')\n(app / 'src' / 'main.nb').write_text(f'''module main\\nimport std::bytes\\nimport std::fs\\nimport std::net\\nimport tls::client\\n\\nasync fn main() -> Void {{\\n  let ok = true\\n\\n  match client_config_from_ca_pem_text(\"{ca_literal}\") {{\\n    Ok(config) => {{\\n      match await dial_host(\"\", {port}, config) {{\\n        Ok(_) => {{\\n          ok = false\\n          print(\"empty-unexpected-ok\")\\n        }}\\n        Err(msg) => {{\\n          print(msg)\\n          if msg != \"tls host must be non-empty\" {{\\n            ok = false\\n          }}\\n        }}\\n      }}\\n    }}\\n    Err(msg) => {{\\n      ok = false\\n      print(msg)\\n    }}\\n  }}\\n\\n  match read_bytes(\"{server_name_path}\") {{\\n    Ok(raw_name) => {{\\n      match client_config_from_ca_pem_text(\"{ca_literal}\") {{\\n        Ok(config) => {{\\n          match ipv4(\"127.0.0.1\", {port}) {{\\n            Ok(addr) => {{\\n              match await dial(addr, to_string(raw_name), config) {{\\n                Ok(_) => {{\\n                  ok = false\\n                  print(\"nul-unexpected-ok\")\\n                }}\\n                Err(msg) => {{\\n                  print(msg)\\n                  if msg != \"tls server_name must not contain NUL bytes\" {{\\n                    ok = false\\n                  }}\\n                }}\\n              }}\\n            }}\\n            Err(msg) => {{\\n              ok = false\\n              print(msg)\\n            }}\\n          }}\\n        }}\\n        Err(msg) => {{\\n          ok = false\\n          print(msg)\\n        }}\\n      }}\\n    }}\\n    Err(msg) => {{\\n      ok = false\\n      print(msg)\\n    }}\\n  }}\\n\\n  if ok {{\\n    print(\"tls-server-name-contract-ok\")\\n  }} else {{\\n    print(\"tls-server-name-contract-bad\")\\n  }}\\n}}\\n''', encoding='utf-8')\n\nupdate = subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(app)], capture_output=True, text=True, env=os.environ.copy())\nprint(update.stdout, end='')\nprint(update.stderr, end='')\nif update.returncode != 0:\n    raise SystemExit(update.returncode)\nrun = subprocess.run([os.environ['NEBULA_BINARY'], 'run', str(app), '--run-gate', 'none'], capture_output=True, text=True, env=os.environ.copy())\nprint(run.stdout, end='')\nprint(run.stderr, end='')\nif run.returncode != 0:\n    raise SystemExit(run.returncode)\nserver_result = done_q.get(timeout=60)\nif server_result is not None:\n    raise server_result\nif 'tls host must be non-empty' not in run.stdout:\n    raise SystemExit('expected empty host rejection output')\nif 'tls server_name must not contain NUL bytes' not in run.stdout:\n    raise SystemExit('expected NUL server_name rejection output')\nif 'tls-server-name-contract-ok' not in run.stdout:\n    raise SystemExit('tls-server-name-contract-ok missing from output')\nif 'unexpected-ok' in run.stdout or 'tls-server-name-contract-bad' in run.stdout:\n    raise SystemExit('invalid server_name inputs were unexpectedly accepted')\nPY"
+run = '''
+python3 - <<'PY'
+import os
+import platform
+import shutil
+import subprocess
+from pathlib import Path
+
+system = platform.system().lower()
+if system.startswith('windows') or system.startswith('msys') or system.startswith('mingw') or system.startswith('cygwin'):
+    print('tls-server-name-contract-skip-unsupported-host')
+    raise SystemExit(0)
+if shutil.which('openssl') is None:
+    raise SystemExit('openssl is required for official TLS server_name contract test')
+
+root = Path('work/official_tls_server_name_contract')
+app = root / 'app'
+shutil.rmtree(root, ignore_errors=True)
+(app / 'src').mkdir(parents=True, exist_ok=True)
+(root / 'openssl_ca.cnf').write_text("""[req]
+distinguished_name = dn
+x509_extensions = v3_ca
+prompt = no
+
+[dn]
+CN = Nebula TLS server_name CA
+
+[v3_ca]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, keyCertSign, cRLSign
+""", encoding='utf-8')
+subprocess.run([
+    'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+    '-keyout', str(root / 'ca.key'),
+    '-out', str(root / 'ca.pem'),
+    '-days', '2',
+    '-config', str(root / 'openssl_ca.cnf'),
+], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+(root / 'server_name.bin').write_bytes(b'localhost\x00shadow.invalid')
+
+ca_pem = (root / 'ca.pem').read_text(encoding='utf-8')
+ca_literal = ca_pem.replace('\\', '\\\\').replace('\n', '\\n').replace('"', '\\"')
+server_name_path = str((root / 'server_name.bin').resolve()).replace('\\', '\\\\').replace('"', '\\"')
+(app / 'nebula.toml').write_text(f"""schema_version = 1
+
+[package]
+name = "official-tls-server-name-contract"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+tls = {{ path = "{os.environ['NEBULA_REPO_ROOT']}/official/nebula-tls" }}
+""", encoding='utf-8')
+(app / 'src' / 'main.nb').write_text(f"""module main
+import std::bytes
+import std::fs
+import std::net
+import tls::client
+
+async fn main() -> Void {{
+  let ok = true
+
+  match client_config_from_ca_pem_text("{ca_literal}") {{
+    Ok(config) => {{
+      match await dial_host("", 1, config) {{
+        Ok(_) => {{
+          ok = false
+          print("empty-unexpected-ok")
+        }}
+        Err(msg) => {{
+          print(msg)
+          if msg != "tls host must be non-empty" {{
+            ok = false
+          }}
+        }}
+      }}
+    }}
+    Err(msg) => {{
+      ok = false
+      print(msg)
+    }}
+  }}
+
+  match read_bytes("{server_name_path}") {{
+    Ok(raw_name) => {{
+      match client_config_from_ca_pem_text("{ca_literal}") {{
+        Ok(config) => {{
+          match ipv4("127.0.0.1", 1) {{
+            Ok(addr) => {{
+              match await dial(addr, to_string(raw_name), config) {{
+                Ok(_) => {{
+                  ok = false
+                  print("nul-unexpected-ok")
+                }}
+                Err(msg) => {{
+                  print(msg)
+                  if msg != "tls server_name must not contain NUL bytes" {{
+                    ok = false
+                  }}
+                }}
+              }}
+            }}
+            Err(msg) => {{
+              ok = false
+              print(msg)
+            }}
+          }}
+        }}
+        Err(msg) => {{
+          ok = false
+          print(msg)
+        }}
+      }}
+    }}
+    Err(msg) => {{
+      ok = false
+      print(msg)
+    }}
+  }}
+
+  if ok {{
+    print("tls-server-name-contract-ok")
+  }} else {{
+    print("tls-server-name-contract-bad")
+  }}
+}}
+""", encoding='utf-8')
+
+update = subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(app)], capture_output=True, text=True, env=os.environ.copy())
+print(update.stdout, end='')
+print(update.stderr, end='')
+if update.returncode != 0:
+    raise SystemExit(update.returncode)
+run = subprocess.run([os.environ['NEBULA_BINARY'], 'run', str(app), '--run-gate', 'none'], capture_output=True, text=True, env=os.environ.copy())
+print(run.stdout, end='')
+print(run.stderr, end='')
+if run.returncode != 0:
+    raise SystemExit(run.returncode)
+if 'tls host must be non-empty' not in run.stdout:
+    raise SystemExit('expected empty host rejection output')
+if 'tls server_name must not contain NUL bytes' not in run.stdout:
+    raise SystemExit('expected NUL server_name rejection output')
+if 'tls-server-name-contract-ok' not in run.stdout:
+    raise SystemExit('tls-server-name-contract-ok missing from output')
+if 'unexpected-ok' in run.stdout or 'tls-server-name-contract-bad' in run.stdout:
+    raise SystemExit('invalid server_name inputs were unexpectedly accepted')
+PY
+'''
 expect_rc = 0
