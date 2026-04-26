@@ -6,6 +6,7 @@ Nebula's HTTP service helpers.
 What it demonstrates:
 
 - `pqc::channel` for authenticated key establishment
+- pinned signed initiator identity with `accept_pinned_initiator(...)`
 - encrypted request/response bodies carried as JSON text envelopes
 - plain HTTP transport today, with the same application-layer payload shape still usable on top of
   `nebula-tls` client transport
@@ -16,6 +17,7 @@ The example server expects these environment variables:
 - `PQC_SECURE_SERVICE_KEM_SECRET_KEY_HEX`
 - `PQC_SECURE_SERVICE_SIGN_PUBLIC_KEY_HEX`
 - `PQC_SECURE_SERVICE_SIGN_SECRET_KEY_HEX`
+- `PQC_SECURE_SERVICE_CLIENT_SIGN_PUBLIC_KEY_HEX`
 
 Routes:
 

@@ -32,6 +32,7 @@ Current surface in this repo wave:
   - `pinned_peer(public_key) -> Option<MlDsa65PublicKey>`
   - `initiate(peer_kem_public_key, signer) -> Result<ClientInit, String>`
   - `accept(local_kem_secret_key, signer, hello) -> Result<ServerAccept, String>`
+  - `accept_pinned_initiator(local_kem_secret_key, signer, expected_initiator_sign_public_key, hello) -> Result<ServerAccept, String>`
   - `finalize(init, expected_peer_sign_public_key, message) -> Result<Session, String>`
   - `seal_next(session, plaintext, aad) -> Result<SealedMessage, String>`
   - `open_next(session, ciphertext, aad) -> Result<OpenedMessage, String>`
@@ -59,6 +60,9 @@ Design notes for this wave:
   `MlKem768Encapsulation.to_bytes()` as a wire format.
 - `pqc::channel` keeps local session state separate from the explicit wire messages instead of
   pretending the shared secret or session state is itself a transport payload.
+- Servers that know the expected client signing key should use
+  `accept_pinned_initiator(...)`; plain `accept(...)` only verifies a self-contained signed hello
+  when one is present and remains a looser preview helper for unauthenticated bootstrap experiments.
 - It intentionally builds on `nebula-crypto` rather than introducing a new wire protocol runtime.
 - HTTP/transport integration remains a higher-level concern; the package stays transport-agnostic and
   emits JSON+hex wire envelopes rather than private binary frames.

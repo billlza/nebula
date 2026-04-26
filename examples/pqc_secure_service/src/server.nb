@@ -15,6 +15,11 @@ fn service_name() -> String {
   return "pqc-secure-service"
 }
 
+struct SecureEchoRequest {
+  hello: ClientHello
+  ciphertext_text: String
+}
+
 fn load_hex_env(name: String) -> Result<Bytes, String> {
   match get(name) {
     Ok(value) => {
@@ -88,6 +93,10 @@ fn demo_server_signer() -> Result<ChannelSigner, String> {
   }
 }
 
+fn demo_client_sign_public_key() -> Result<MlDsa65PublicKey, String> {
+  return load_sign_public_key_env("PQC_SECURE_SERVICE_CLIENT_SIGN_PUBLIC_KEY_HEX")
+}
+
 fn bootstrap_response() -> Result<Response, String> {
   match get("PQC_SECURE_SERVICE_KEM_PUBLIC_KEY_HEX") {
     Ok(kem_public_key_hex) => {
@@ -123,6 +132,43 @@ fn secure_echo_response(server_accept: ServerAccept, plaintext: Bytes) -> Result
       return Err(msg)
     }
   }
+}
+
+fn hello_from_request(request: Request) -> Result<ClientHello, String> {
+  let value = parse_json_body(request.body)?
+  let hello_text = get_string(value, "hello_text")?
+  return client_hello_from_json_text(hello_text)
+}
+
+fn secure_echo_request_from_http(request: Request) -> Result<SecureEchoRequest, String> {
+  let value = parse_json_body(request.body)?
+  let hello_text = get_string(value, "hello_text")?
+  let ciphertext_text = get_string(value, "ciphertext_text")?
+  let hello = client_hello_from_json_text(hello_text)?
+  return Ok(SecureEchoRequest(hello, ciphertext_text))
+}
+
+fn accept_pinned_client_hello(hello: ClientHello) -> Result<ServerAccept, String> {
+  let kem_secret_key = load_kem_secret_key_env("PQC_SECURE_SERVICE_KEM_SECRET_KEY_HEX")?
+  let server_signer = demo_server_signer()?
+  let client_sign_public_key = demo_client_sign_public_key()?
+  return accept_pinned_initiator(kem_secret_key, signed(server_signer), client_sign_public_key, hello)
+}
+
+fn open_channel_response(hello: ClientHello) -> Result<Response, String> {
+  let server_accept = accept_pinned_client_hello(hello)?
+  return Ok(ok_json(object1(
+    "accept_text",
+    string_value(stringify(server_accept.message().as_json()))
+  )))
+}
+
+fn secure_echo_http_response(payload: SecureEchoRequest) -> Result<Response, String> {
+  let server_accept = accept_pinned_client_hello(payload.hello)?
+  let opened = open_next(server_accept.session(),
+                         from_string(payload.ciphertext_text),
+                         from_string("nebula-http-request"))?
+  return secure_echo_response(ServerAccept(server_accept.message(), opened.session()), opened.plaintext())
 }
 
 async fn handle_health(request: Request) -> Response {
@@ -169,42 +215,11 @@ async fn handle_bootstrap(request: Request) -> Response {
 }
 
 async fn handle_open(request: Request) -> Response {
-  match parse_json_body(request.body) {
-    Ok(value) => {
-      match get_string(value, "hello_text") {
-        Ok(hello_text) => {
-          match client_hello_from_json_text(hello_text) {
-            Ok(hello) => {
-              match load_kem_secret_key_env("PQC_SECURE_SERVICE_KEM_SECRET_KEY_HEX") {
-                Ok(kem_secret_key) => {
-                  match demo_server_signer() {
-                    Ok(server_signer) => {
-                      match accept(kem_secret_key, signed(server_signer), hello) {
-                        Ok(server_accept) => {
-                          return ok_json(object1(
-                            "accept_text",
-                            string_value(stringify(server_accept.message().as_json()))
-                          ))
-                        }
-                        Err(msg) => {
-                          return bad_request_text(msg)
-                        }
-                      }
-                    }
-                    Err(msg) => {
-                      return internal_error_text(msg)
-                    }
-                  }
-                }
-                Err(msg) => {
-                  return internal_error_text(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return bad_request_text(msg)
-            }
-          }
+  match hello_from_request(request) {
+    Ok(hello) => {
+      match open_channel_response(hello) {
+        Ok(response) => {
+          return response
         }
         Err(msg) => {
           return bad_request_text(msg)
@@ -218,63 +233,11 @@ async fn handle_open(request: Request) -> Response {
 }
 
 async fn handle_secure_echo(request: Request) -> Response {
-  match parse_json_body(request.body) {
-    Ok(value) => {
-      match get_string(value, "hello_text") {
-        Ok(hello_text) => {
-          match get_string(value, "ciphertext_text") {
-            Ok(ciphertext_text) => {
-              match client_hello_from_json_text(hello_text) {
-                Ok(hello) => {
-                  match load_kem_secret_key_env("PQC_SECURE_SERVICE_KEM_SECRET_KEY_HEX") {
-                    Ok(kem_secret_key) => {
-                      match demo_server_signer() {
-                        Ok(server_signer) => {
-                          match accept(kem_secret_key, signed(server_signer), hello) {
-                            Ok(server_accept) => {
-                              match open_next(server_accept.session(),
-                                              from_string(ciphertext_text),
-                                              from_string("nebula-http-request")) {
-                                Ok(opened) => {
-                                  match secure_echo_response(ServerAccept(server_accept.message(), opened.session()),
-                                                             opened.plaintext()) {
-                                    Ok(response) => {
-                                      return response
-                                    }
-                                    Err(msg) => {
-                                      return internal_error_text(msg)
-                                    }
-                                  }
-                                }
-                                Err(msg) => {
-                                  return bad_request_text(msg)
-                                }
-                              }
-                            }
-                            Err(msg) => {
-                              return bad_request_text(msg)
-                            }
-                          }
-                        }
-                        Err(msg) => {
-                          return internal_error_text(msg)
-                        }
-                      }
-                    }
-                    Err(msg) => {
-                      return internal_error_text(msg)
-                    }
-                  }
-                }
-                Err(msg) => {
-                  return bad_request_text(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return bad_request_text(msg)
-            }
-          }
+  match secure_echo_request_from_http(request) {
+    Ok(payload) => {
+      match secure_echo_http_response(payload) {
+        Ok(response) => {
+          return response
         }
         Err(msg) => {
           return bad_request_text(msg)

@@ -458,7 +458,8 @@ Repo-local preview packages currently include:
 - `official/nebula-pqc-protocols`
   - application-layer signed payload helpers built on `nebula-crypto`
   - ciphertext-only ML-KEM envelope helpers for transport/persistence paths
-  - authenticated `pqc::channel` session establishment + encrypted message envelopes
+  - authenticated `pqc::channel` session establishment, pinned signed initiator acceptance, and
+    encrypted message envelopes
 - `official/nebula-tls`
   - outbound client-side TLS/HTTPS helpers on macOS + Linux only
 - `official/nebula-qcomm-sim`

@@ -1,0 +1,40 @@
+schema_version = 2
+root_package = "nebula-pqc-protocols"
+root_manifest_hash = "863e088e1a08c455"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "nebula-pqc-protocols"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "863e088e1a08c455"
+source_fingerprint = "f5e7a71c78d4ec2"
+integrity_fingerprint = "ef61eea515b1d7eb"
+is_root = 1
+dependencies = ["crypto=nebula-crypto"]
+
+[[package]]
+name = "nebula-crypto"
+version = "0.1.0"
+root = "../nebula-crypto"
+manifest = "../nebula-crypto/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-crypto"
+resolved_rev = ""
+manifest_hash = "c93977753e56003f"
+source_fingerprint = "90460fcfb5e0d75f"
+integrity_fingerprint = "41c0490fe4752463"
+is_root = 0
+native_c_sources = ["native/blake3_all.c", "native/mbedtls_private_chachapoly.c", "native/oqs_primitives.c", "native/vendor/oqs_mini/compat.c", "native/vendor/oqs_mini/mldsa65_ref/ntt.c", "native/vendor/oqs_mini/mldsa65_ref/packing.c", "native/vendor/oqs_mini/mldsa65_ref/poly.c", "native/vendor/oqs_mini/mldsa65_ref/polyvec.c", "native/vendor/oqs_mini/mldsa65_ref/reduce.c", "native/vendor/oqs_mini/mldsa65_ref/rounding.c", "native/vendor/oqs_mini/mldsa65_ref/sign.c", "native/vendor/oqs_mini/mldsa65_ref/symmetric-shake.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/compress.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/debug.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/indcpa.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/kem.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly_k.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/sampling.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/verify.c", "native/vendor/oqs_mini/pqclean_shims/fips202.c", "native/vendor/oqs_mini/sha3/sha3.c", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits/KeccakP-1600-opt64.c", "native/vendor/oqs_mini/sha3/xkcp_sha3.c"]
+native_cxx_sources = ["native/bridge.cpp"]
+native_include_dirs = ["native/include", "native/vendor/blake3", "native/vendor/mbedtls/include", "native/vendor/mbedtls/library", "native/vendor/oqs_mini", "native/vendor/oqs_mini/include", "native/vendor/oqs_mini/mldsa65_ref", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref", "native/vendor/oqs_mini/pqclean_shims", "native/vendor/oqs_mini/sha3", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits"]
+dependencies = []

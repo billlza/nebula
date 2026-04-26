@@ -289,52 +289,55 @@ fn validate_signed_fields(public_key_hex: String,
   return Ok(true)
 }
 
+fn ml_dsa_public_key_from_hex(public_key_hex: String) -> Result<MlDsa65PublicKey, String> {
+  return ml_dsa_65_public_key_from_bytes(from_hex(public_key_hex)?)
+}
+
+fn ml_dsa_signature_from_hex(signature_hex: String) -> Result<MlDsa65Signature, String> {
+  return ml_dsa_65_signature_from_bytes(from_hex(signature_hex)?)
+}
+
 fn verify_signature_if_present(public_key_hex: String,
                                signature_hex: String,
                                signed_bytes: Bytes,
                                label: String) -> Result<Bool, String> {
-  match validate_signed_fields(public_key_hex, signature_hex, label) {
-    Ok(is_signed) => {
-      if is_signed == false {
-        return Ok(false)
-      }
-      match from_hex(public_key_hex) {
-        Ok(public_key_bytes) => {
-          match ml_dsa_65_public_key_from_bytes(public_key_bytes) {
-            Ok(public_key) => {
-              match from_hex(signature_hex) {
-                Ok(signature_bytes) => {
-                  match ml_dsa_65_signature_from_bytes(signature_bytes) {
-                    Ok(signature) => {
-                      if verify(public_key, signed_bytes, signature) {
-                        return Ok(true)
-                      }
-                      return Err(text_concat(label, " signature verification failed"))
-                    }
-                    Err(msg) => {
-                      return Err(msg)
-                    }
-                  }
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
+  let is_signed = validate_signed_fields(public_key_hex, signature_hex, label)?
+  if is_signed == false {
+    return Ok(false)
   }
+  let public_key = ml_dsa_public_key_from_hex(public_key_hex)?
+  let signature = ml_dsa_signature_from_hex(signature_hex)?
+  if verify(public_key, signed_bytes, signature) {
+    return Ok(true)
+  }
+  return Err(text_concat(label, " signature verification failed"))
+}
+
+fn verify_pinned_signature(expected_public_key: MlDsa65PublicKey,
+                           public_key_hex: String,
+                           signature_hex: String,
+                           signed_bytes: Bytes,
+                           label: String) -> Result<Bool, String> {
+  if public_key_hex == "" || signature_hex == "" {
+    return Err(text_concat("expected a signed ", label))
+  }
+  if hex(expected_public_key.to_bytes()) != public_key_hex {
+    return Err(text_concat("pqc channel ", text_concat(label, " public key mismatch")))
+  }
+  let signature = ml_dsa_signature_from_hex(signature_hex)?
+  if verify(expected_public_key, signed_bytes, signature) {
+    return Ok(true)
+  }
+  return Err(text_concat("pqc channel ", text_concat(label, " signature verification failed")))
+}
+
+fn verify_pinned_initiator_hello(expected_initiator_sign_public_key: MlDsa65PublicKey,
+                                 hello: ClientHello) -> Result<Bool, String> {
+  return verify_pinned_signature(expected_initiator_sign_public_key,
+                                 hello.initiator_sign_public_key_hex,
+                                 hello.initiator_signature_hex,
+                                 hello.unsigned_bytes(),
+                                 "initiator hello")
 }
 
 fn ClientHello_as_json(self: ClientHello) -> Json {
@@ -353,57 +356,20 @@ fn ClientHello_as_json(self: ClientHello) -> Json {
 }
 
 fn client_hello_from_json(value: Json) -> Result<ClientHello, String> {
-  match get_int(value, "format_version") {
-    Ok(format_version) => {
-      match get_string(value, "channel_suite") {
-        Ok(channel_suite) => {
-          match get_string(value, "kem_ciphertext_hex") {
-            Ok(kem_ciphertext_hex) => {
-              match get_string(value, "initiator_sign_public_key_hex") {
-                Ok(initiator_sign_public_key_hex) => {
-                  match get_string(value, "initiator_signature_hex") {
-                    Ok(initiator_signature_hex) => {
-                      return Ok(ClientHello(format_version,
-                                            channel_suite,
-                                            kem_ciphertext_hex,
-                                            initiator_sign_public_key_hex,
-                                            initiator_signature_hex))
-                    }
-                    Err(msg) => {
-                      return Err(msg)
-                    }
-                  }
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let format_version = get_int(value, "format_version")?
+  let channel_suite = get_string(value, "channel_suite")?
+  let kem_ciphertext_hex = get_string(value, "kem_ciphertext_hex")?
+  let initiator_sign_public_key_hex = get_string(value, "initiator_sign_public_key_hex")?
+  let initiator_signature_hex = get_string(value, "initiator_signature_hex")?
+  return Ok(ClientHello(format_version,
+                        channel_suite,
+                        kem_ciphertext_hex,
+                        initiator_sign_public_key_hex,
+                        initiator_signature_hex))
 }
 
 fn client_hello_from_json_text(text: String) -> Result<ClientHello, String> {
-  match parse(text) {
-    Ok(value) => {
-      return client_hello_from_json(value)
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  return client_hello_from_json(parse(text)?)
 }
 
 fn ServerAcceptMessage_as_json(self: ServerAcceptMessage) -> Json {
@@ -422,57 +388,20 @@ fn ServerAcceptMessage_as_json(self: ServerAcceptMessage) -> Json {
 }
 
 fn server_accept_message_from_json(value: Json) -> Result<ServerAcceptMessage, String> {
-  match get_int(value, "format_version") {
-    Ok(format_version) => {
-      match get_string(value, "channel_suite") {
-        Ok(channel_suite) => {
-          match get_string(value, "hello_sha3_256_hex") {
-            Ok(hello_sha3_256_hex) => {
-              match get_string(value, "responder_sign_public_key_hex") {
-                Ok(responder_sign_public_key_hex) => {
-                  match get_string(value, "responder_signature_hex") {
-                    Ok(responder_signature_hex) => {
-                      return Ok(ServerAcceptMessage(format_version,
-                                                    channel_suite,
-                                                    hello_sha3_256_hex,
-                                                    responder_sign_public_key_hex,
-                                                    responder_signature_hex))
-                    }
-                    Err(msg) => {
-                      return Err(msg)
-                    }
-                  }
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let format_version = get_int(value, "format_version")?
+  let channel_suite = get_string(value, "channel_suite")?
+  let hello_sha3_256_hex = get_string(value, "hello_sha3_256_hex")?
+  let responder_sign_public_key_hex = get_string(value, "responder_sign_public_key_hex")?
+  let responder_signature_hex = get_string(value, "responder_signature_hex")?
+  return Ok(ServerAcceptMessage(format_version,
+                                channel_suite,
+                                hello_sha3_256_hex,
+                                responder_sign_public_key_hex,
+                                responder_signature_hex))
 }
 
 fn server_accept_message_from_json_text(text: String) -> Result<ServerAcceptMessage, String> {
-  match parse(text) {
-    Ok(value) => {
-      return server_accept_message_from_json(value)
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  return server_accept_message_from_json(parse(text)?)
 }
 
 fn ChannelCiphertext_as_json(self: ChannelCiphertext) -> Json {
@@ -491,145 +420,155 @@ fn ChannelCiphertext_as_json(self: ChannelCiphertext) -> Json {
 }
 
 fn channel_ciphertext_from_json(value: Json) -> Result<ChannelCiphertext, String> {
-  match get_int(value, "format_version") {
-    Ok(format_version) => {
-      match get_string(value, "channel_suite") {
-        Ok(channel_suite) => {
-          match get_int(value, "sequence") {
-            Ok(sequence) => {
-              match get_string(value, "aad_sha3_256_hex") {
-                Ok(aad_sha3_256_hex) => {
-                  match get_string(value, "ciphertext_hex") {
-                    Ok(ciphertext_hex) => {
-                      return Ok(ChannelCiphertext(format_version,
-                                                  channel_suite,
-                                                  sequence,
-                                                  aad_sha3_256_hex,
-                                                  ciphertext_hex))
-                    }
-                    Err(msg) => {
-                      return Err(msg)
-                    }
-                  }
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let format_version = get_int(value, "format_version")?
+  let channel_suite = get_string(value, "channel_suite")?
+  let sequence = get_int(value, "sequence")?
+  let aad_sha3_256_hex = get_string(value, "aad_sha3_256_hex")?
+  let ciphertext_hex = get_string(value, "ciphertext_hex")?
+  return Ok(ChannelCiphertext(format_version,
+                              channel_suite,
+                              sequence,
+                              aad_sha3_256_hex,
+                              ciphertext_hex))
 }
 
 fn channel_ciphertext_from_json_text(text: String) -> Result<ChannelCiphertext, String> {
-  match parse(text) {
-    Ok(value) => {
-      return channel_ciphertext_from_json(value)
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
+  return channel_ciphertext_from_json(parse(text)?)
+}
+
+fn validate_channel_message(format_version: Int, channel_suite: String) -> Result<Bool, String> {
+  if format_version != channel_format_version() {
+    return Err("unsupported pqc channel format_version")
   }
+  if channel_suite != default_channel_suite() {
+    return Err("unsupported pqc channel channel_suite")
+  }
+  return Ok(true)
+}
+
+fn hello_shared_secret(local_kem_secret_key: MlKem768SecretKey, hello: ClientHello) -> Result<MlKem768SharedSecret, String> {
+  let envelope = MlKem768CiphertextEnvelope(ml_kem_768_envelope_format_version(),
+                                            ml_kem_768_envelope_algorithm(),
+                                            hello.kem_ciphertext_hex)
+  return decapsulate_wire(local_kem_secret_key, envelope)
+}
+
+fn unsigned_accept_message(hello_hash_hex: String, responder_public_key_hex: String) -> ServerAcceptMessage {
+  return ServerAcceptMessage(channel_format_version(),
+                             default_channel_suite(),
+                             hello_hash_hex,
+                             responder_public_key_hex,
+                             "")
+}
+
+fn signed_accept_message(signer: Option<ChannelSigner>,
+                         hello: ClientHello,
+                         message_unsigned: ServerAcceptMessage) -> Result<ServerAcceptMessage, String> {
+  let signature_hex = sign_bytes_if_present(signer, transcript_bytes(hello, message_unsigned))?
+  return Ok(ServerAcceptMessage(message_unsigned.format_version,
+                                message_unsigned.channel_suite,
+                                message_unsigned.hello_sha3_256_hex,
+                                message_unsigned.responder_sign_public_key_hex,
+                                signature_hex))
+}
+
+fn validate_accept_hello(hello: ClientHello) -> Result<Bool, String> {
+  validate_channel_message(hello.format_version, hello.channel_suite)?
+  verify_signature_if_present(hello.initiator_sign_public_key_hex,
+                              hello.initiator_signature_hex,
+                              hello.unsigned_bytes(),
+                              "pqc channel hello")?
+  return Ok(true)
+}
+
+fn unsigned_accept_for_hello(signer: Option<ChannelSigner>, hello: ClientHello) -> ServerAcceptMessage {
+  let hello_hash_hex = hex(sha3_256(hello.unsigned_bytes()))
+  return unsigned_accept_message(hello_hash_hex, signer_public_key_hex(signer))
+}
+
+fn accept_session(shared_secret: MlKem768SharedSecret,
+                  hello: ClientHello,
+                  message_unsigned: ServerAcceptMessage) -> Result<Session, String> {
+  return build_session(shared_secret, transcript_sha3_256_hex(hello, message_unsigned), false)
 }
 
 fn initiate(peer_kem_public_key: MlKem768PublicKey,
             signer: Option<ChannelSigner>) -> Result<ClientInit, String> {
-  match encapsulate_wire(peer_kem_public_key) {
-    Ok(wire_encapsulation) => {
-      let public_key_hex = signer_public_key_hex(signer)
-      let hello_unsigned_bytes = client_hello_unsigned_bytes(channel_format_version(),
-                                                             default_channel_suite(),
-                                                             wire_encapsulation.envelope().ciphertext_hex(),
-                                                             public_key_hex)
-      match sign_bytes_if_present(signer, hello_unsigned_bytes) {
-        Ok(signature_hex) => {
-          let hello = ClientHello(channel_format_version(),
-                                  default_channel_suite(),
-                                  wire_encapsulation.envelope().ciphertext_hex(),
-                                  public_key_hex,
-                                  signature_hex)
-          return Ok(ClientInit(hello,
-                               hex(sha3_256(hello.unsigned_bytes())),
-                               wire_encapsulation.shared_secret()))
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let wire_encapsulation = encapsulate_wire(peer_kem_public_key)?
+  let public_key_hex = signer_public_key_hex(signer)
+  let hello_unsigned_bytes = client_hello_unsigned_bytes(channel_format_version(),
+                                                         default_channel_suite(),
+                                                         wire_encapsulation.envelope().ciphertext_hex(),
+                                                         public_key_hex)
+  let signature_hex = sign_bytes_if_present(signer, hello_unsigned_bytes)?
+  let hello = ClientHello(channel_format_version(),
+                          default_channel_suite(),
+                          wire_encapsulation.envelope().ciphertext_hex(),
+                          public_key_hex,
+                          signature_hex)
+  return Ok(ClientInit(hello,
+                       hex(sha3_256(hello.unsigned_bytes())),
+                       wire_encapsulation.shared_secret()))
 }
 
 fn accept(local_kem_secret_key: MlKem768SecretKey,
           signer: Option<ChannelSigner>,
           hello: ClientHello) -> Result<ServerAccept, String> {
-  if hello.format_version != channel_format_version() {
-    return Err("unsupported pqc channel format_version")
+  validate_accept_hello(hello)?
+  let shared_secret = hello_shared_secret(local_kem_secret_key, hello)?
+  let message_unsigned = unsigned_accept_for_hello(signer, hello)
+  let message = signed_accept_message(signer, hello, message_unsigned)?
+  let session = accept_session(shared_secret, hello, message_unsigned)?
+  return Ok(ServerAccept(message, session))
+}
+
+fn accept_pinned_initiator(local_kem_secret_key: MlKem768SecretKey,
+                           signer: Option<ChannelSigner>,
+                           expected_initiator_sign_public_key: MlDsa65PublicKey,
+                           hello: ClientHello) -> Result<ServerAccept, String> {
+  verify_pinned_initiator_hello(expected_initiator_sign_public_key, hello)?
+  return accept(local_kem_secret_key, signer, hello)
+}
+
+fn unsigned_accept_from_message(message: ServerAcceptMessage) -> ServerAcceptMessage {
+  return ServerAcceptMessage(message.format_version,
+                             message.channel_suite,
+                             message.hello_sha3_256_hex,
+                             message.responder_sign_public_key_hex,
+                             "")
+}
+
+fn verify_expected_responder(expected_public_key: MlDsa65PublicKey,
+                             init: ClientInit,
+                             unsigned_message: ServerAcceptMessage,
+                             message: ServerAcceptMessage) -> Result<Bool, String> {
+  if message.responder_sign_public_key_hex == "" || message.responder_signature_hex == "" {
+    return Err("expected a signed responder accept message")
   }
-  if hello.channel_suite != default_channel_suite() {
-    return Err("unsupported pqc channel channel_suite")
+  if hex(expected_public_key.to_bytes()) != message.responder_sign_public_key_hex {
+    return Err("pqc channel responder public key mismatch")
   }
-  match verify_signature_if_present(hello.initiator_sign_public_key_hex,
-                                    hello.initiator_signature_hex,
-                                    hello.unsigned_bytes(),
-                                    "pqc channel hello") {
-    Ok(_) => {
-      let hello_hash_hex = hex(sha3_256(hello.unsigned_bytes()))
-      let envelope = MlKem768CiphertextEnvelope(ml_kem_768_envelope_format_version(),
-                                                ml_kem_768_envelope_algorithm(),
-                                                hello.kem_ciphertext_hex)
-      match decapsulate_wire(local_kem_secret_key, envelope) {
-        Ok(shared_secret) => {
-          let responder_public_key_hex = signer_public_key_hex(signer)
-          let message_unsigned = ServerAcceptMessage(channel_format_version(),
-                                                     default_channel_suite(),
-                                                     hello_hash_hex,
-                                                     responder_public_key_hex,
-                                                     "")
-          match sign_bytes_if_present(signer, transcript_bytes(hello, message_unsigned)) {
-            Ok(signature_hex) => {
-              let message = ServerAcceptMessage(channel_format_version(),
-                                                default_channel_suite(),
-                                                hello_hash_hex,
-                                                responder_public_key_hex,
-                                                signature_hex)
-              let session_hash_hex = transcript_sha3_256_hex(hello, message_unsigned)
-              match build_session(shared_secret, session_hash_hex, false) {
-                Ok(session) => {
-                  return Ok(ServerAccept(message, session))
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
+  let signature = ml_dsa_signature_from_hex(message.responder_signature_hex)?
+  if verify(expected_public_key, transcript_bytes(init.hello, unsigned_message), signature) == false {
+    return Err("pqc channel responder signature verification failed")
+  }
+  return Ok(true)
+}
+
+fn verify_responder_for_finalize(init: ClientInit,
+                                 unsigned_message: ServerAcceptMessage,
+                                 expected_peer_sign_public_key: Option<MlDsa65PublicKey>,
+                                 message: ServerAcceptMessage) -> Result<Bool, String> {
+  match expected_peer_sign_public_key {
+    Some(expected_public_key) => {
+      return verify_expected_responder(expected_public_key, init, unsigned_message, message)
     }
-    Err(msg) => {
-      return Err(msg)
+    None => {
+      verify_signature_if_present(message.responder_sign_public_key_hex,
+                                  message.responder_signature_hex,
+                                  transcript_bytes(init.hello, unsigned_message),
+                                  "pqc channel accept")?
+      return Ok(true)
     }
   }
 }
@@ -637,133 +576,72 @@ fn accept(local_kem_secret_key: MlKem768SecretKey,
 fn finalize(init: ClientInit,
             expected_peer_sign_public_key: Option<MlDsa65PublicKey>,
             message: ServerAcceptMessage) -> Result<Session, String> {
-  if message.format_version != channel_format_version() {
-    return Err("unsupported pqc channel format_version")
-  }
-  if message.channel_suite != default_channel_suite() {
-    return Err("unsupported pqc channel channel_suite")
-  }
+  validate_channel_message(message.format_version, message.channel_suite)?
   if message.hello_sha3_256_hex != init.hello_sha3_256_hex {
     return Err("pqc channel hello transcript hash mismatch")
   }
-  let unsigned_message = ServerAcceptMessage(message.format_version,
-                                             message.channel_suite,
-                                             message.hello_sha3_256_hex,
-                                             message.responder_sign_public_key_hex,
-                                             "")
-  match expected_peer_sign_public_key {
-    Some(expected_public_key) => {
-      if message.responder_sign_public_key_hex == "" || message.responder_signature_hex == "" {
-        return Err("expected a signed responder accept message")
-      }
-      if hex(expected_public_key.to_bytes()) != message.responder_sign_public_key_hex {
-        return Err("pqc channel responder public key mismatch")
-      }
-      match from_hex(message.responder_signature_hex) {
-        Ok(signature_bytes) => {
-          match ml_dsa_65_signature_from_bytes(signature_bytes) {
-            Ok(signature) => {
-              if verify(expected_public_key, transcript_bytes(init.hello, unsigned_message), signature) == false {
-                return Err("pqc channel responder signature verification failed")
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    None => {
-      match verify_signature_if_present(message.responder_sign_public_key_hex,
-                                        message.responder_signature_hex,
-                                        transcript_bytes(init.hello, unsigned_message),
-                                        "pqc channel accept") {
-        Ok(_) => {}
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-  }
+  let unsigned_message = unsigned_accept_from_message(message)
+  verify_responder_for_finalize(init, unsigned_message, expected_peer_sign_public_key, message)?
   return build_session(init.shared_secret,
                        transcript_sha3_256_hex(init.hello, unsigned_message),
                        true)
 }
 
+fn channel_ciphertext_bytes(channel_suite: String,
+                            sequence: Int,
+                            aad: Bytes,
+                            ciphertext: Bytes) -> Bytes {
+  return from_string(stringify(ChannelCiphertext(channel_format_version(),
+                                                channel_suite,
+                                                sequence,
+                                                hex(sha3_256(aad)),
+                                                hex(ciphertext)).as_json()))
+}
+
+fn validate_channel_ciphertext(envelope: ChannelCiphertext,
+                               channel_suite: String,
+                               receive_sequence: Int,
+                               aad: Bytes) -> Result<Bool, String> {
+  if envelope.format_version != channel_format_version() {
+    return Err("unsupported pqc channel ciphertext format_version")
+  }
+  if envelope.channel_suite != channel_suite {
+    return Err("pqc channel ciphertext suite mismatch")
+  }
+  if envelope.sequence < receive_sequence {
+    return Err("replayed pqc channel ciphertext")
+  }
+  if envelope.sequence != receive_sequence {
+    return Err("unexpected pqc channel ciphertext sequence")
+  }
+  if envelope.aad_sha3_256_hex != hex(sha3_256(aad)) {
+    return Err("pqc channel aad mismatch")
+  }
+  return Ok(true)
+}
+
+fn open_channel_ciphertext(key: ChaCha20Poly1305Key,
+                           envelope: ChannelCiphertext,
+                           aad: Bytes) -> Result<Bytes, String> {
+  let ciphertext_bytes = from_hex(envelope.ciphertext_hex)?
+  let nonce = derive_nonce(key, envelope.sequence)?
+  return open(key, nonce, aad, ciphertext_bytes)
+}
+
 fn Session_seal(ref self: Session, plaintext: Bytes, aad: Bytes) -> Result<Bytes, String> {
   let sequence = self.send_state.sequence
-  match derive_nonce(self.send_state.key, sequence) {
-    Ok(nonce) => {
-      match seal(self.send_state.key, nonce, aad, plaintext) {
-        Ok(ciphertext) => {
-          self.send_state.sequence = self.send_state.sequence + 1
-          return Ok(from_string(stringify(ChannelCiphertext(channel_format_version(),
-                                                            self.channel_suite,
-                                                            sequence,
-                                                            hex(sha3_256(aad)),
-                                                            hex(ciphertext)).as_json())))
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let nonce = derive_nonce(self.send_state.key, sequence)?
+  let ciphertext = seal(self.send_state.key, nonce, aad, plaintext)?
+  self.send_state.sequence = self.send_state.sequence + 1
+  return Ok(channel_ciphertext_bytes(self.channel_suite, sequence, aad, ciphertext))
 }
 
 fn Session_open(ref self: Session, ciphertext: Bytes, aad: Bytes) -> Result<Bytes, String> {
-  match channel_ciphertext_from_json_text(to_string(ciphertext)) {
-    Ok(envelope) => {
-      if envelope.format_version != channel_format_version() {
-        return Err("unsupported pqc channel ciphertext format_version")
-      }
-      if envelope.channel_suite != self.channel_suite {
-        return Err("pqc channel ciphertext suite mismatch")
-      }
-      if envelope.sequence < self.receive_state.sequence {
-        return Err("replayed pqc channel ciphertext")
-      }
-      if envelope.sequence != self.receive_state.sequence {
-        return Err("unexpected pqc channel ciphertext sequence")
-      }
-      if envelope.aad_sha3_256_hex != hex(sha3_256(aad)) {
-        return Err("pqc channel aad mismatch")
-      }
-      match from_hex(envelope.ciphertext_hex) {
-        Ok(ciphertext_bytes) => {
-          match derive_nonce(self.receive_state.key, envelope.sequence) {
-            Ok(nonce) => {
-              match open(self.receive_state.key, nonce, aad, ciphertext_bytes) {
-                Ok(plaintext) => {
-                  self.receive_state.sequence = self.receive_state.sequence + 1
-                  return Ok(plaintext)
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let envelope = channel_ciphertext_from_json_text(to_string(ciphertext))?
+  validate_channel_ciphertext(envelope, self.channel_suite, self.receive_state.sequence, aad)?
+  let plaintext = open_channel_ciphertext(self.receive_state.key, envelope, aad)?
+  self.receive_state.sequence = self.receive_state.sequence + 1
+  return Ok(plaintext)
 }
 
 fn Session_rekey(self: Session) -> Result<Session, String> {
@@ -771,121 +649,40 @@ fn Session_rekey(self: Session) -> Result<Session, String> {
     let material = concat(self.send_state.key.to_bytes(),
                           concat(self.receive_state.key.to_bytes(),
                                  from_string(self.transcript_sha3_256_hex)))
-    match derive_traffic_key(client_to_server_rekey_context(), material) {
-      Ok(next_client_to_server_key) => {
-        match derive_traffic_key(server_to_client_rekey_context(), material) {
-          Ok(next_server_to_client_key) => {
-            return Ok(Session(self.channel_suite,
-                              self.transcript_sha3_256_hex,
-                              true,
-                              TrafficState(next_client_to_server_key, 0),
-                              TrafficState(next_server_to_client_key, 0)))
-          }
-          Err(msg) => {
-            return Err(msg)
-          }
-        }
-      }
-      Err(msg) => {
-        return Err(msg)
-      }
-    }
+    let next_client_to_server_key = derive_traffic_key(client_to_server_rekey_context(), material)?
+    let next_server_to_client_key = derive_traffic_key(server_to_client_rekey_context(), material)?
+    return Ok(Session(self.channel_suite,
+                      self.transcript_sha3_256_hex,
+                      true,
+                      TrafficState(next_client_to_server_key, 0),
+                      TrafficState(next_server_to_client_key, 0)))
   }
   let material = concat(self.receive_state.key.to_bytes(),
                         concat(self.send_state.key.to_bytes(),
                                from_string(self.transcript_sha3_256_hex)))
-  match derive_traffic_key(client_to_server_rekey_context(), material) {
-    Ok(next_client_to_server_key) => {
-      match derive_traffic_key(server_to_client_rekey_context(), material) {
-        Ok(next_server_to_client_key) => {
-          return Ok(Session(self.channel_suite,
-                            self.transcript_sha3_256_hex,
-                            false,
-                            TrafficState(next_server_to_client_key, 0),
-                            TrafficState(next_client_to_server_key, 0)))
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let next_client_to_server_key = derive_traffic_key(client_to_server_rekey_context(), material)?
+  let next_server_to_client_key = derive_traffic_key(server_to_client_rekey_context(), material)?
+  return Ok(Session(self.channel_suite,
+                    self.transcript_sha3_256_hex,
+                    false,
+                    TrafficState(next_server_to_client_key, 0),
+                    TrafficState(next_client_to_server_key, 0)))
 }
 
 fn seal_next(session: Session, plaintext: Bytes, aad: Bytes) -> Result<SealedMessage, String> {
   let sequence = session.send_state.sequence
-  match derive_nonce(session.send_state.key, sequence) {
-    Ok(nonce) => {
-      match seal(session.send_state.key, nonce, aad, plaintext) {
-        Ok(ciphertext) => {
-          session.send_state.sequence = session.send_state.sequence + 1
-          return Ok(SealedMessage(session,
-                                  from_string(stringify(ChannelCiphertext(channel_format_version(),
-                                                                          session.channel_suite,
-                                                                          sequence,
-                                                                          hex(sha3_256(aad)),
-                                                                          hex(ciphertext)).as_json()))))
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let nonce = derive_nonce(session.send_state.key, sequence)?
+  let ciphertext = seal(session.send_state.key, nonce, aad, plaintext)?
+  session.send_state.sequence = session.send_state.sequence + 1
+  return Ok(SealedMessage(session, channel_ciphertext_bytes(session.channel_suite, sequence, aad, ciphertext)))
 }
 
 fn open_next(session: Session, ciphertext: Bytes, aad: Bytes) -> Result<OpenedMessage, String> {
-  match channel_ciphertext_from_json_text(to_string(ciphertext)) {
-    Ok(envelope) => {
-      if envelope.format_version != channel_format_version() {
-        return Err("unsupported pqc channel ciphertext format_version")
-      }
-      if envelope.channel_suite != session.channel_suite {
-        return Err("pqc channel ciphertext suite mismatch")
-      }
-      if envelope.sequence < session.receive_state.sequence {
-        return Err("replayed pqc channel ciphertext")
-      }
-      if envelope.sequence != session.receive_state.sequence {
-        return Err("unexpected pqc channel ciphertext sequence")
-      }
-      if envelope.aad_sha3_256_hex != hex(sha3_256(aad)) {
-        return Err("pqc channel aad mismatch")
-      }
-      match from_hex(envelope.ciphertext_hex) {
-        Ok(ciphertext_bytes) => {
-          match derive_nonce(session.receive_state.key, envelope.sequence) {
-            Ok(nonce) => {
-              match open(session.receive_state.key, nonce, aad, ciphertext_bytes) {
-                Ok(plaintext) => {
-                  session.receive_state.sequence = session.receive_state.sequence + 1
-                  return Ok(OpenedMessage(session, plaintext))
-                }
-                Err(msg) => {
-                  return Err(msg)
-                }
-              }
-            }
-            Err(msg) => {
-              return Err(msg)
-            }
-          }
-        }
-        Err(msg) => {
-          return Err(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
-  }
+  let envelope = channel_ciphertext_from_json_text(to_string(ciphertext))?
+  validate_channel_ciphertext(envelope, session.channel_suite, session.receive_state.sequence, aad)?
+  let plaintext = open_channel_ciphertext(session.receive_state.key, envelope, aad)?
+  session.receive_state.sequence = session.receive_state.sequence + 1
+  return Ok(OpenedMessage(session, plaintext))
 }
 
 fn ClientInit_hello(self: ClientInit) -> ClientHello {

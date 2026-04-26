@@ -207,7 +207,8 @@ Current baseline:
   identity wiring for outbound mTLS, and explicit ALPN policy shape
 - `nebula-tls-server`: preview inbound TLS listener/server stream package for internal east-west
   service hops
-- `nebula-pqc-protocols`: application-layer helpers, not transport or PKI integration
+- `nebula-pqc-protocols`: application-layer helpers, including pinned signed initiator acceptance
+  for `pqc::channel`, not transport or PKI integration
 
 Exit criteria:
 

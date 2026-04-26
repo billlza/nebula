@@ -84,7 +84,9 @@ Repo-local preview package matrix:
 - `nebula-tls-server`: macOS + Linux; preview inbound TLS listener/server stream package for
   internal east-west service hops, plus the thin `service::tls` integration seam and narrow
   preview HTTP/2 service-to-service path
-- `nebula-pqc-protocols`: same host reach as `nebula-crypto`; current preview includes signed payload helpers, ciphertext-only KEM envelopes, and `pqc::channel`
+- `nebula-pqc-protocols`: same host reach as `nebula-crypto`; current preview includes signed
+  payload helpers, ciphertext-only KEM envelopes, and `pqc::channel` with pinned signed initiator
+  acceptance for server-side mutual-auth experiments
 - `nebula-qcomm-sim`: same host reach as `nebula-crypto`; experimental BB84 simulation-only preview
 - `nebula-thin-host-bridge`: compiler/tooling hosts; preview command/event/snapshot envelope
   contract for thin-host app cores, including `correlation_id`, `state_revision`, deterministic

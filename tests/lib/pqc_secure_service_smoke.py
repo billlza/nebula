@@ -58,8 +58,15 @@ fn main() -> Void {
         Ok(sign_pair) => {
           print(hex(kem_pair.public_key().to_bytes()))
           print(hex(kem_pair.secret_key().to_bytes()))
-          print(hex(sign_pair.public_key().to_bytes()))
-          print(hex(sign_pair.secret_key().to_bytes()))
+          match ml_dsa_65_keypair() {
+            Ok(client_sign_pair) => {
+              print(hex(sign_pair.public_key().to_bytes()))
+              print(hex(sign_pair.secret_key().to_bytes()))
+              print(hex(client_sign_pair.public_key().to_bytes()))
+              print(hex(client_sign_pair.secret_key().to_bytes()))
+            }
+            Err(msg) => { print(msg) }
+          }
         }
         Err(msg) => { print(msg) }
       }
@@ -72,7 +79,13 @@ fn main() -> Void {
     )
 
 
-def write_client_project(root: Path, repo_root: Path, port: int) -> None:
+def write_client_project(
+    root: Path,
+    repo_root: Path,
+    port: int,
+    client_sign_public_key_hex: str,
+    client_sign_secret_key_hex: str,
+) -> None:
     client_root = root / "client"
     client_root.joinpath("nebula.toml").write_text(
         f"""schema_version = 1
@@ -90,12 +103,14 @@ pqc = {{ path = "{(repo_root / 'official' / 'nebula-pqc-protocols').resolve()}" 
         encoding="utf-8",
     )
     client_root.joinpath("src", "main.nb").write_text(
-        CLIENT_SOURCE.replace("__PQC_SECURE_TEST_PORT__", str(port)),
+        CLIENT_SOURCE.replace("__PQC_SECURE_TEST_PORT__", str(port))
+        .replace("__PQC_CLIENT_SIGN_PUBLIC_KEY_HEX__", client_sign_public_key_hex)
+        .replace("__PQC_CLIENT_SIGN_SECRET_KEY_HEX__", client_sign_secret_key_hex),
         encoding="utf-8",
     )
 
 
-def extract_key_lines(run: subprocess.CompletedProcess[str]) -> tuple[str, str, str, str]:
+def extract_key_lines(run: subprocess.CompletedProcess[str]) -> tuple[str, str, str, str, str, str]:
     key_lines = [
         line.strip()
         for line in run.stdout.splitlines()
@@ -104,9 +119,9 @@ def extract_key_lines(run: subprocess.CompletedProcess[str]) -> tuple[str, str, 
         and not line.startswith("wrote:")
         and not line.startswith("wrote artifact:")
     ]
-    if len(key_lines) < 4:
-        raise SystemExit(f"expected 4 key lines, got: {key_lines!r}")
-    return tuple(key_lines[-4:])  # type: ignore[return-value]
+    if len(key_lines) < 6:
+        raise SystemExit(f"expected 6 key lines, got: {key_lines!r}")
+    return tuple(key_lines[-6:])  # type: ignore[return-value]
 
 
 def extract_client_lines(run: subprocess.CompletedProcess[str]) -> tuple[str, str, str]:
@@ -152,6 +167,8 @@ def main() -> int:
         kem_secret_key_hex,
         sign_public_key_hex,
         sign_secret_key_hex,
+        client_sign_public_key_hex,
+        client_sign_secret_key_hex,
     ) = extract_key_lines(keygen)
 
     subprocess.run(
@@ -172,6 +189,7 @@ def main() -> int:
             "PQC_SECURE_SERVICE_KEM_SECRET_KEY_HEX": kem_secret_key_hex,
             "PQC_SECURE_SERVICE_SIGN_PUBLIC_KEY_HEX": sign_public_key_hex,
             "PQC_SECURE_SERVICE_SIGN_SECRET_KEY_HEX": sign_secret_key_hex,
+            "PQC_SECURE_SERVICE_CLIENT_SIGN_PUBLIC_KEY_HEX": client_sign_public_key_hex,
         }
     )
 
@@ -210,7 +228,7 @@ def main() -> int:
             if not ready:
                 raise SystemExit("secure service example did not become ready")
 
-            write_client_project(root, repo_root, port)
+            write_client_project(root, repo_root, port, client_sign_public_key_hex, client_sign_secret_key_hex)
             subprocess.run(
                 [nebula, "fetch", str(root / "client")],
                 check=True,
@@ -271,6 +289,30 @@ struct EchoCapture {
 
 fn test_port() -> Int {
   return __PQC_SECURE_TEST_PORT__
+}
+
+fn client_signer_from_fixture() -> Result<ChannelSigner, String> {
+  match from_hex("__PQC_CLIENT_SIGN_PUBLIC_KEY_HEX__") {
+    Ok(public_key_bytes) => {
+      match ml_dsa_65_public_key_from_bytes(public_key_bytes) {
+        Ok(public_key) => {
+          match from_hex("__PQC_CLIENT_SIGN_SECRET_KEY_HEX__") {
+            Ok(secret_key_bytes) => {
+              match ml_dsa_65_secret_key_from_bytes(secret_key_bytes) {
+                Ok(secret_key) => {
+                  return Ok(ChannelSigner(public_key, secret_key))
+                }
+                Err(msg) => { return Err(msg) }
+              }
+            }
+            Err(msg) => { return Err(msg) }
+          }
+        }
+        Err(msg) => { return Err(msg) }
+      }
+    }
+    Err(msg) => { return Err(msg) }
+  }
 }
 
 async fn request_json(addr: SocketAddr, request: ClientRequest) -> Result<Json, String> {
@@ -340,9 +382,8 @@ async fn resolve_bootstrap(addr: SocketAddr) -> Result<Bootstrap, String> {
 }
 
 async fn open_channel(addr: SocketAddr, bootstrap: Bootstrap) -> Result<ClientOpen, String> {
-  match ml_dsa_65_keypair() {
-    Ok(client_sign_keys) => {
-      let signer = channel_signer(client_sign_keys)
+  match client_signer_from_fixture() {
+    Ok(signer) => {
       match initiate(bootstrap.kem_public_key, signed(signer)) {
         Ok(init) => {
           let open_body = stringify(object1(
