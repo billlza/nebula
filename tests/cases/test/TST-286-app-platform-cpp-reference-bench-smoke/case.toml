@@ -1,0 +1,55 @@
+id = "TST-286-app-platform-cpp-reference-bench-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+out_path = Path('work/app_platform_cpp_reference.json')
+out_path.parent.mkdir(parents=True, exist_ok=True)
+result = subprocess.run([
+    'python3',
+    str(repo_root / 'scripts' / 'app_platform_bench.py'),
+    'run-reference',
+    '--stack',
+    'cpp',
+    '--workload',
+    'thin_host_bridge_roundtrip',
+    '--workload',
+    'state_sync_latency',
+    '--json-out',
+    str(out_path),
+], capture_output=True, text=True, check=False)
+print(result.stdout, end='')
+print(result.stderr, end='')
+if result.returncode != 0:
+    raise SystemExit(result.returncode)
+payload = json.loads(out_path.read_text(encoding='utf-8'))
+if payload.get('kind') != 'app_platform_reference_results' or payload.get('stack') != 'cpp':
+    raise SystemExit(f'unexpected reference payload: {payload!r}')
+results = {item['workload']: item for item in payload.get('results', [])}
+for workload in ('thin_host_bridge_roundtrip', 'state_sync_latency'):
+    item = results.get(workload)
+    if not item:
+        raise SystemExit(f'missing reference workload result: {payload!r}')
+    if item.get('status') != 'ok' or item.get('stack') != 'cpp':
+        raise SystemExit(f'reference workload did not run successfully: {item!r}')
+    if item.get('comparison_layer') != 'nebula_owned':
+        raise SystemExit(f'reference workload comparison layer drifted: {item!r}')
+    metrics = item.get('metrics', {})
+    if 'mean_ms' not in metrics or 'throughput_ops_s' not in metrics:
+        raise SystemExit(f'reference metrics missing expected fields: {item!r}')
+    stderr = item.get('stderr', '')
+    if '-Wall' not in stderr or '-Wextra' not in stderr or '-Werror' not in stderr:
+        raise SystemExit(f'reference build did not use strict warning flags: {item!r}')
+print('app-platform-cpp-reference-bench-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-platform-cpp-reference-bench-ok"]

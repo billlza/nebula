@@ -1,0 +1,122 @@
+id = "TST-287-app-platform-cpp-compare-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+script = repo_root / 'scripts' / 'app_platform_bench.py'
+nebula_out = Path('work/app_platform_nebula_compare.json')
+cpp_out = Path('work/app_platform_cpp_compare_reference.json')
+compare_out = Path('work/app_platform_cpp_compare.json')
+for path in (nebula_out, cpp_out, compare_out):
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+nebula = subprocess.run([
+    'python3',
+    str(script),
+    'run-nebula',
+    '--binary',
+    os.environ['NEBULA_BINARY'],
+    '--workload',
+    'thin_host_bridge_roundtrip',
+    '--json-out',
+    str(nebula_out),
+], capture_output=True, text=True, check=False)
+print(nebula.stdout, end='')
+print(nebula.stderr, end='')
+if nebula.returncode != 0:
+    raise SystemExit(nebula.returncode)
+
+reference = subprocess.run([
+    'python3',
+    str(script),
+    'run-reference',
+    '--stack',
+    'cpp',
+    '--workload',
+    'thin_host_bridge_roundtrip',
+    '--json-out',
+    str(cpp_out),
+], capture_output=True, text=True, check=False)
+print(reference.stdout, end='')
+print(reference.stderr, end='')
+if reference.returncode != 0:
+    raise SystemExit(reference.returncode)
+
+compare = subprocess.run([
+    'python3',
+    str(script),
+    'compare',
+    '--stack',
+    'cpp',
+    '--nebula-json',
+    str(nebula_out),
+    '--reference-json',
+    str(cpp_out),
+    '--json-out',
+    str(compare_out),
+], capture_output=True, text=True, check=False)
+print(compare.stdout, end='')
+print(compare.stderr, end='')
+if compare.returncode != 0:
+    raise SystemExit(compare.returncode)
+payload = json.loads(compare_out.read_text(encoding='utf-8'))
+if payload.get('kind') != 'app_platform_comparison_results' or payload.get('stack') != 'cpp':
+    raise SystemExit(f'unexpected comparison payload: {payload!r}')
+if payload.get('claim_policy') != 'measurement_only_no_threshold':
+    raise SystemExit(f'comparison claim policy drifted: {payload!r}')
+toolchains = payload.get('toolchains', {})
+if not toolchains.get('nebula', {}).get('clang++', {}).get('available'):
+    raise SystemExit(f'comparison payload lost Nebula toolchain details: {payload!r}')
+if not toolchains.get('reference', {}).get('clang++', {}).get('available'):
+    raise SystemExit(f'comparison payload lost reference toolchain details: {payload!r}')
+results = {item['workload']: item for item in payload.get('results', [])}
+item = results.get('thin_host_bridge_roundtrip')
+if not item or item.get('status') != 'ok':
+    raise SystemExit(f'missing successful comparison result: {payload!r}')
+if item.get('nebula_status') != 'ok' or item.get('reference_status') != 'ok':
+    raise SystemExit(f'comparison did not preserve child statuses: {item!r}')
+ratios = item.get('ratios', {})
+for key in ('nebula_to_reference_mean_ms', 'nebula_to_reference_p99_ms', 'nebula_to_reference_throughput_ops_s'):
+    if key not in ratios or not isinstance(ratios[key], float):
+        raise SystemExit(f'missing comparison ratio {key}: {item!r}')
+bad_reference = json.loads(cpp_out.read_text(encoding='utf-8'))
+bad_reference['results'][0]['metrics']['mean_ms'] = 0.0
+bad_reference_out = Path('work/app_platform_cpp_compare_reference_bad_metric.json')
+bad_compare_out = Path('work/app_platform_cpp_compare_bad_metric.json')
+bad_reference_out.write_text(json.dumps(bad_reference), encoding='utf-8')
+bad_compare = subprocess.run([
+    'python3',
+    str(script),
+    'compare',
+    '--stack',
+    'cpp',
+    '--nebula-json',
+    str(nebula_out),
+    '--reference-json',
+    str(bad_reference_out),
+    '--json-out',
+    str(bad_compare_out),
+], capture_output=True, text=True, check=False)
+print(bad_compare.stdout, end='')
+print(bad_compare.stderr, end='')
+if bad_compare.returncode == 0:
+    raise SystemExit('compare unexpectedly accepted zero-valued reference metric')
+bad_payload = json.loads(bad_compare_out.read_text(encoding='utf-8'))
+bad_item = bad_payload.get('results', [{}])[0]
+if bad_item.get('status') != 'invalid_metrics':
+    raise SystemExit(f'zero-valued reference metric was not rejected: {bad_payload!r}')
+if 'reference.mean_ms' not in bad_item.get('comparison_error', ''):
+    raise SystemExit(f'bad metric diagnostic did not identify reference.mean_ms: {bad_payload!r}')
+print('app-platform-cpp-compare-ok')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-platform-cpp-compare-ok"]

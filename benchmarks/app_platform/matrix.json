@@ -85,6 +85,13 @@
         "examples/thin_host_bridge_contract"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/thin_host_bridge_roundtrip",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/thin_host_bridge_roundtrip"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
       "comparison_layer": "nebula_owned"
     },
     {
@@ -102,6 +109,13 @@
         "examples/thin_host_bridge_contract"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/state_sync_latency",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/state_sync_latency"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
       "comparison_layer": "nebula_owned"
     },
     {

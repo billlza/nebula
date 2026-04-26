@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import math
 import os
 import platform
 import selectors
@@ -28,6 +29,7 @@ EXPECTED_WORKLOAD_IDS = [
 EXPECTED_REFERENCE_STACKS = ["cpp", "rust", "swift"]
 EXPECTED_COMPARISON_LAYERS = ["nebula_owned", "host_owned", "ops_owned"]
 EXPECTED_NEBULA_RUNNERS = ["bench", "resident_memory"]
+EXPECTED_REFERENCE_RUNNERS = ["cpp_bench"]
 COMMON_TEXT_FIELDS = {
     "clock",
     "platform",
@@ -367,6 +369,13 @@ def write_json(path: str, payload: dict[str, Any]) -> None:
     out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def bounded_output(text: str, limit: int = 20000) -> str:
+    if len(text) <= limit:
+        return text
+    tail = text[-limit:]
+    return f"[output truncated to last {limit} bytes]\n{tail}"
+
+
 def verify_matrix(data: dict[str, Any]) -> None:
     if data.get("schema_version") != 1:
         raise SystemExit("app-platform matrix schema_version must be 1")
@@ -403,7 +412,7 @@ def verify_matrix(data: dict[str, Any]) -> None:
 
     workloads = data.get("workloads")
     if not isinstance(workloads, list) or len(workloads) != len(EXPECTED_WORKLOAD_IDS):
-        raise SystemExit("app-platform matrix must define exactly 5 workloads")
+        raise SystemExit("app-platform matrix must define exactly the expected workloads")
     ids = [workload.get("id") for workload in workloads]
     if ids != EXPECTED_WORKLOAD_IDS:
         raise SystemExit(f"unexpected workload ids: {ids!r}")
@@ -436,6 +445,31 @@ def verify_matrix(data: dict[str, Any]) -> None:
                 raise SystemExit(f"missing app-platform Nebula project manifest: {nebula_project}")
             if not (project_root / "src" / "main.nb").exists():
                 raise SystemExit(f"missing app-platform Nebula project entry source: {nebula_project}")
+        reference_projects = workload.get("reference_projects")
+        if reference_projects is not None:
+            if not isinstance(reference_projects, dict):
+                raise SystemExit(f"workload reference_projects must be an object when present: {workload!r}")
+            for stack, reference_project in reference_projects.items():
+                if stack not in EXPECTED_REFERENCE_STACKS:
+                    raise SystemExit(f"workload has unknown reference stack: {workload!r}")
+                if not isinstance(reference_project, str) or not reference_project:
+                    raise SystemExit(f"workload reference project must be a non-empty string: {workload!r}")
+                reference_root = repo_root() / reference_project
+                if not (reference_root / "main.cpp").exists():
+                    raise SystemExit(f"missing app-platform {stack} reference source: {reference_project}/main.cpp")
+        reference_stacks = workload.get("reference_stacks")
+        if reference_stacks is not None:
+            if not isinstance(reference_stacks, list) or not all(isinstance(item, str) and item for item in reference_stacks):
+                raise SystemExit(f"workload reference_stacks must be a string list when present: {workload!r}")
+            unknown = sorted(set(reference_stacks) - set(EXPECTED_REFERENCE_STACKS))
+            if unknown:
+                raise SystemExit(f"workload has unknown reference_stacks: {workload!r}")
+            project_keys = sorted((reference_projects or {}).keys())
+            if sorted(reference_stacks) != project_keys:
+                raise SystemExit(f"workload reference_stacks must match reference_projects keys: {workload!r}")
+        reference_runner = workload.get("reference_runner")
+        if reference_runner is not None and reference_runner not in EXPECTED_REFERENCE_RUNNERS:
+            raise SystemExit(f"unexpected reference_runner: {workload!r}")
 
 
 def build_plan_payload(nebula_binary: str | None = None) -> dict[str, Any]:
@@ -464,6 +498,34 @@ def select_workloads(data: dict[str, Any], selected: list[str]) -> list[dict[str
     if non_runnable:
         raise SystemExit(
             "selected app-platform workloads do not have runnable Nebula projects yet: "
+            + ", ".join(non_runnable)
+        )
+    return chosen
+
+
+def select_reference_workloads(data: dict[str, Any], selected: list[str], stack: str) -> list[dict[str, Any]]:
+    if stack not in EXPECTED_REFERENCE_STACKS:
+        raise SystemExit(f"unknown reference stack: {stack}")
+    workloads = data["workloads"]
+    if not selected:
+        return [
+            workload
+            for workload in workloads
+            if stack in workload.get("reference_projects", {})
+        ]
+    wanted = set(selected)
+    chosen = [workload for workload in workloads if workload["id"] in wanted]
+    missing = sorted(wanted - {workload["id"] for workload in chosen})
+    if missing:
+        raise SystemExit(f"unknown workload ids: {', '.join(missing)}")
+    non_runnable = sorted(
+        workload["id"]
+        for workload in chosen
+        if stack not in workload.get("reference_projects", {})
+    )
+    if non_runnable:
+        raise SystemExit(
+            f"selected app-platform workloads do not have runnable {stack} reference projects yet: "
             + ", ".join(non_runnable)
         )
     return chosen
@@ -629,6 +691,222 @@ def run_nebula_payload(binary: str, selected: list[str]) -> dict[str, Any]:
     }
 
 
+def run_cpp_reference_workload(workload: dict[str, Any], build_root: Path) -> dict[str, Any]:
+    clang = shutil.which("clang++")
+    if not clang:
+        return {
+            "workload": workload["id"],
+            "status": "toolchain_missing",
+            "stack": "cpp",
+            "comparison_layer": workload["comparison_layer"],
+            "project_dir": "",
+            "source_path": "",
+            "returncode": 1,
+            "metrics": {},
+            "stdout": "",
+            "stderr": "clang++ not found",
+        }
+    reference_project = workload.get("reference_projects", {}).get("cpp")
+    project_dir = (repo_root() / reference_project).resolve()
+    source = project_dir / "main.cpp"
+    workload_root = build_root / "reference" / "cpp" / workload["id"]
+    workload_root.mkdir(parents=True, exist_ok=True)
+    output_name = "main.exe" if platform.system().lower() == "windows" else "main.out"
+    output = workload_root / output_name
+    compile_cmd = [
+        clang,
+        "-std=c++23",
+        "-O2",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        str(source),
+        "-o",
+        str(output),
+    ]
+    build = run_command(compile_cmd, workload_root)
+    build_stderr = "[cmd] " + " ".join(compile_cmd) + "\n" + build.stderr
+    if build.returncode != 0:
+        return {
+            "workload": workload["id"],
+            "status": "build_failed",
+            "stack": "cpp",
+            "comparison_layer": workload["comparison_layer"],
+            "project_dir": str(project_dir),
+            "source_path": str(source),
+            "returncode": build.returncode,
+            "metrics": {},
+            "stdout": bounded_output(build.stdout),
+            "stderr": bounded_output(build_stderr),
+        }
+    run = run_command([str(output)], workload_root)
+    run_stderr = build_stderr + "[cmd] " + str(output) + "\n" + run.stderr
+    if run.returncode != 0:
+        return {
+            "workload": workload["id"],
+            "status": "run_failed",
+            "stack": "cpp",
+            "comparison_layer": workload["comparison_layer"],
+            "project_dir": str(project_dir),
+            "source_path": str(source),
+            "returncode": run.returncode,
+            "metrics": {},
+            "stdout": bounded_output(build.stdout + run.stdout),
+            "stderr": bounded_output(run_stderr),
+        }
+    try:
+        metrics = parse_bench_output(run.stdout + "\n" + run.stderr)
+    except SystemExit as exc:
+        return {
+            "workload": workload["id"],
+            "status": "parse_failed",
+            "stack": "cpp",
+            "comparison_layer": workload["comparison_layer"],
+            "project_dir": str(project_dir),
+            "source_path": str(source),
+            "returncode": run.returncode,
+            "metrics": {},
+            "stdout": bounded_output(build.stdout + run.stdout),
+            "stderr": bounded_output(run_stderr + f"\n{exc}"),
+        }
+    return {
+        "workload": workload["id"],
+        "status": "ok",
+        "stack": "cpp",
+        "comparison_layer": workload["comparison_layer"],
+        "project_dir": str(project_dir),
+        "source_path": str(source),
+        "returncode": run.returncode,
+        "metrics": metrics,
+        "stdout": bounded_output(build.stdout + run.stdout),
+        "stderr": bounded_output(run_stderr),
+    }
+
+
+def run_reference_payload(stack: str, selected: list[str]) -> dict[str, Any]:
+    if stack != "cpp":
+        raise SystemExit(f"runnable reference stack is not implemented yet: {stack}")
+    data = load_matrix()
+    verify_matrix(data)
+    workloads = select_reference_workloads(data, selected, stack)
+    build_root = benchmark_build_root()
+    results = [run_cpp_reference_workload(workload, build_root) for workload in workloads]
+    return {
+        "schema_version": 1,
+        "kind": "app_platform_reference_results",
+        "matrix": "app_platform_convergence_matrix",
+        "stack": stack,
+        "repo_version": repo_version(),
+        "machine": machine_info(),
+        "toolchains": detect_toolchains(None),
+        "results": results,
+    }
+
+
+def load_json_payload(path: str) -> dict[str, Any]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise SystemExit(f"JSON payload must be an object: {path}")
+    return payload
+
+
+def positive_metric(metrics: Any, key: str) -> float | None:
+    if not isinstance(metrics, dict):
+        return None
+    try:
+        value = float(metrics[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0.0:
+        return None
+    return value
+
+
+def compare_payload(stack: str, nebula_json: str, reference_json: str) -> dict[str, Any]:
+    nebula = load_json_payload(nebula_json)
+    reference = load_json_payload(reference_json)
+    if nebula.get("kind") != "app_platform_nebula_results":
+        raise SystemExit(f"unexpected Nebula payload kind: {nebula.get('kind')!r}")
+    if reference.get("kind") != "app_platform_reference_results" or reference.get("stack") != stack:
+        raise SystemExit(f"unexpected reference payload: kind={reference.get('kind')!r} stack={reference.get('stack')!r}")
+
+    reference_results = {item.get("workload"): item for item in reference.get("results", []) if isinstance(item, dict)}
+    results: list[dict[str, Any]] = []
+    for nebula_item in nebula.get("results", []):
+        if not isinstance(nebula_item, dict):
+            continue
+        workload = nebula_item.get("workload")
+        reference_item = reference_results.get(workload)
+        if reference_item is None:
+            results.append({
+                "workload": workload,
+                "status": "missing_reference",
+                "nebula_status": nebula_item.get("status", ""),
+                "reference_status": "",
+                "nebula_metrics": nebula_item.get("metrics", {}),
+                "reference_metrics": {},
+                "ratios": {},
+            })
+            continue
+        nebula_status = str(nebula_item.get("status", ""))
+        reference_status = str(reference_item.get("status", ""))
+        nebula_metrics = nebula_item.get("metrics", {})
+        reference_metrics = reference_item.get("metrics", {})
+        status = "ok" if nebula_status == "ok" and reference_status == "ok" else "not_comparable"
+        ratios: dict[str, float] = {}
+        comparison_error = ""
+        if status == "ok":
+            metric_values = {
+                "nebula.mean_ms": positive_metric(nebula_metrics, "mean_ms"),
+                "reference.mean_ms": positive_metric(reference_metrics, "mean_ms"),
+                "nebula.p99_ms": positive_metric(nebula_metrics, "p99_ms"),
+                "reference.p99_ms": positive_metric(reference_metrics, "p99_ms"),
+                "nebula.throughput_ops_s": positive_metric(nebula_metrics, "throughput_ops_s"),
+                "reference.throughput_ops_s": positive_metric(reference_metrics, "throughput_ops_s"),
+            }
+            invalid_metrics = sorted(key for key, value in metric_values.items() if value is None)
+            if invalid_metrics:
+                status = "invalid_metrics"
+                comparison_error = "missing, non-finite, or non-positive metric(s): " + ", ".join(invalid_metrics)
+            else:
+                ratios = {
+                    "nebula_to_reference_mean_ms": metric_values["nebula.mean_ms"] / metric_values["reference.mean_ms"],
+                    "nebula_to_reference_p99_ms": metric_values["nebula.p99_ms"] / metric_values["reference.p99_ms"],
+                    "nebula_to_reference_throughput_ops_s": (
+                        metric_values["nebula.throughput_ops_s"] / metric_values["reference.throughput_ops_s"]
+                    ),
+                }
+        result = {
+            "workload": workload,
+            "status": status,
+            "nebula_status": nebula_status,
+            "reference_status": reference_status,
+            "nebula_metrics": nebula_metrics,
+            "reference_metrics": reference_metrics,
+            "ratios": ratios,
+        }
+        if comparison_error:
+            result["comparison_error"] = comparison_error
+        results.append(result)
+
+    return {
+        "schema_version": 1,
+        "kind": "app_platform_comparison_results",
+        "matrix": "app_platform_convergence_matrix",
+        "stack": stack,
+        "repo_version": repo_version(),
+        "machine": machine_info(),
+        "toolchains": {
+            "nebula": nebula.get("toolchains", {}),
+            "reference": reference.get("toolchains", {}),
+        },
+        "claim_policy": "measurement_only_no_threshold",
+        "results": results,
+    }
+
+
 def render_text(payload: dict[str, Any]) -> str:
     lines = [
         "App platform convergence matrix",
@@ -637,9 +915,14 @@ def render_text(payload: dict[str, Any]) -> str:
         "workloads:",
     ]
     for workload in payload["matrix"]["workloads"]:
+        reference_projects = workload.get("reference_projects", {})
+        reference_text = ""
+        if reference_projects:
+            reference_text = " refs=" + ",".join(f"{key}:{value}" for key, value in sorted(reference_projects.items()))
         lines.append(
             f"- {workload['id']}: {workload['category']} [{workload['comparison_layer']}] -> "
             + ", ".join(workload["nebula_paths"])
+            + reference_text
         )
     lines.append("reference_stacks:")
     for key, stack in payload["matrix"]["reference_stacks"].items():
@@ -664,6 +947,17 @@ def main(argv: list[str]) -> int:
     run_parser.add_argument("--workload", action="append", default=[])
     run_parser.add_argument("--json-out", default="")
 
+    reference_parser = subparsers.add_parser("run-reference", help="run reference app-platform workloads")
+    reference_parser.add_argument("--stack", choices=["cpp"], required=True)
+    reference_parser.add_argument("--workload", action="append", default=[])
+    reference_parser.add_argument("--json-out", default="")
+
+    compare_parser = subparsers.add_parser("compare", help="compare Nebula and reference app-platform results")
+    compare_parser.add_argument("--stack", choices=["cpp"], required=True)
+    compare_parser.add_argument("--nebula-json", required=True)
+    compare_parser.add_argument("--reference-json", required=True)
+    compare_parser.add_argument("--json-out", default="")
+
     args = parser.parse_args(argv)
     if args.command == "verify":
         verify_matrix(load_matrix())
@@ -684,6 +978,20 @@ def main(argv: list[str]) -> int:
             write_json(args.json_out, payload)
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
+
+    if args.command == "run-reference":
+        payload = run_reference_payload(args.stack, args.workload)
+        if args.json_out:
+            write_json(args.json_out, payload)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if all(item.get("status") == "ok" for item in payload["results"]) else 1
+
+    if args.command == "compare":
+        payload = compare_payload(args.stack, args.nebula_json, args.reference_json)
+        if args.json_out:
+            write_json(args.json_out, payload)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if all(item.get("status") == "ok" for item in payload["results"]) else 1
 
     raise SystemExit(f"unsupported command: {args.command}")
 
