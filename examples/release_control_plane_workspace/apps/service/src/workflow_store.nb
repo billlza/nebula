@@ -438,23 +438,30 @@ fn workflow_stage_run_update_params(run_id: Int, stage: WorkflowStageRun) -> Jso
 }
 
 fn workflow_stage_run_active_update_params(run_id: Int, stage: WorkflowStageRun) -> Json {
+  return workflow_stage_run_active_update_expected_params(run_id, stage, stage.lease_id, stage.worker_id)
+}
+
+fn workflow_stage_run_active_update_expected_params(run_id: Int,
+                                                    stage: WorkflowStageRun,
+                                                    expected_lease_id: String,
+                                                    expected_worker_id: String) -> Json {
   let builder = array_builder()
   builder = array_push(builder, string_value(stage.status))
   builder = builder_with_workflow_stage_state(builder, stage)
   builder = array_push(builder, int_value(run_id))
   builder = array_push(builder, int_value(stage.stage_index))
-  builder = array_push(builder, string_value(stage.lease_id))
-  builder = array_push(builder, string_value(stage.worker_id))
+  builder = array_push(builder, string_value(expected_lease_id))
+  builder = array_push(builder, string_value(expected_worker_id))
   return array_build(builder)
 }
 
-fn workflow_stage_run_claim_params(run_id: Int, stage: WorkflowStageRun) -> Json {
+fn workflow_stage_run_claim_params(run_id: Int, stage: WorkflowStageRun, expected_attempt: Int) -> Json {
   let builder = array_builder()
   builder = array_push(builder, string_value(stage.status))
   builder = builder_with_workflow_stage_state(builder, stage)
   builder = array_push(builder, int_value(run_id))
   builder = array_push(builder, int_value(stage.stage_index))
-  builder = array_push(builder, int_value(stage.attempt))
+  builder = array_push(builder, int_value(expected_attempt))
   return array_build(builder)
 }
 
@@ -1097,7 +1104,7 @@ fn workflow_stage_leased(stage: WorkflowStageRun, worker_id: String, lease_id: S
                           stage.kind,
                           stage.task_kind,
                           "leased",
-                          stage.attempt,
+                          stage.attempt + 1,
                           lease_id,
                           worker_id,
                           lease_expires_unix_ms,
@@ -1129,7 +1136,7 @@ fn workflow_stage_requeued(stage: WorkflowStageRun) -> WorkflowStageRun {
                           stage.kind,
                           stage.task_kind,
                           "ready",
-                          stage.attempt + 1,
+                          stage.attempt,
                           "",
                           "",
                           0,
@@ -1137,6 +1144,24 @@ fn workflow_stage_requeued(stage: WorkflowStageRun) -> WorkflowStageRun {
                           0,
                           "",
                           null_value())
+}
+
+fn workflow_stage_requeued_with_payload(stage: WorkflowStageRun,
+                                        result_message: String,
+                                        result_payload: Json) -> WorkflowStageRun {
+  return WorkflowStageRun(stage.stage_index,
+                          stage.stage_name,
+                          stage.kind,
+                          stage.task_kind,
+                          "ready",
+                          stage.attempt,
+                          "",
+                          "",
+                          0,
+                          0,
+                          unix_millis(),
+                          result_message,
+                          result_payload)
 }
 
 fn workflow_run_projection(run_id: Int,
@@ -1166,11 +1191,7 @@ fn workflow_stage_specs_count(stages: Json) -> Result<Int, String> {
 }
 
 fn initial_workflow_stage_run(index: Int, spec: WorkflowStageSpec) -> WorkflowStageRun {
-  let attempt = 0
-  if spec.kind == "leased_task" {
-    attempt = 1
-  }
-  return WorkflowStageRun(index, spec.name, spec.kind, spec.task_kind, "blocked", attempt, "", "", 0, 0, 0, "", null_value())
+  return WorkflowStageRun(index, spec.name, spec.kind, spec.task_kind, "blocked", 0, "", "", 0, 0, 0, "", null_value())
 }
 
 fn insert_initial_workflow_stage_runs_tx(tx: Transaction, run_id: Int, stages: Json) -> Result<Bool, String> {
@@ -1205,8 +1226,11 @@ fn update_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: WorkflowSta
   return Ok(true)
 }
 
-fn claim_ready_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: WorkflowStageRun) -> Result<Bool, String> {
-  let changed = tx.execute(claim_ready_workflow_stage_run_sql(), workflow_stage_run_claim_params(run_id, stage))?
+fn claim_ready_workflow_stage_run_tx(tx: Transaction,
+                                     run_id: Int,
+                                     stage: WorkflowStageRun,
+                                     expected_attempt: Int) -> Result<Bool, String> {
+  let changed = tx.execute(claim_ready_workflow_stage_run_sql(), workflow_stage_run_claim_params(run_id, stage, expected_attempt))?
   if changed != 1 {
     return Ok(false)
   }
@@ -1217,6 +1241,24 @@ fn claim_ready_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: Workfl
 
 fn update_active_workflow_stage_run_tx(tx: Transaction, run_id: Int, stage: WorkflowStageRun) -> Result<Bool, String> {
   let changed = tx.execute(update_active_workflow_stage_run_sql(), workflow_stage_run_active_update_params(run_id, stage))?
+  if changed != 1 {
+    return Ok(false)
+  }
+  tx.execute(upsert_workflow_stage_result_payload_sql(),
+             workflow_stage_result_payload_params(run_id, stage.stage_index, stage.result_payload))?
+  return Ok(true)
+}
+
+fn update_active_workflow_stage_run_expected_tx(tx: Transaction,
+                                                run_id: Int,
+                                                stage: WorkflowStageRun,
+                                                expected_lease_id: String,
+                                                expected_worker_id: String) -> Result<Bool, String> {
+  let changed = tx.execute(update_active_workflow_stage_run_sql(),
+                           workflow_stage_run_active_update_expected_params(run_id,
+                                                                            stage,
+                                                                            expected_lease_id,
+                                                                            expected_worker_id))?
   if changed != 1 {
     return Ok(false)
   }
@@ -2287,7 +2329,7 @@ fn apply_started_audit_if_needed_tx(tx: Transaction,
 }
 
 fn lease_id_for_stage(run: WorkflowRun, stage: WorkflowStageRun) -> String {
-  let suffix = text_concat3("-", int_text(stage.stage_index), text_concat("-", int_text(stage.attempt)))
+  let suffix = text_concat3("-", int_text(stage.stage_index), text_concat("-", int_text(stage.attempt + 1)))
   return text_concat3("lease-", int_text(run.run_id), suffix)
 }
 
@@ -2302,9 +2344,10 @@ fn leased_stage_update_tx(tx: Transaction,
                           run: WorkflowRun,
                           stage: WorkflowStageRun,
                           worker_id: String) -> Result<WorkflowStageRun, String> {
+  let expected_attempt = stage.attempt
   let lease_expires_unix_ms = lease_expiration_unix_ms(tx, run, stage.stage_index)?
   let leased_stage = leased_stage_for_context(run, stage, worker_id, lease_expires_unix_ms)
-  if !claim_ready_workflow_stage_run_tx(tx, run.run_id, leased_stage)? {
+  if !claim_ready_workflow_stage_run_tx(tx, run.run_id, leased_stage, expected_attempt)? {
     return Err("worker lease was already claimed")
   }
   return Ok(leased_stage)
@@ -2510,12 +2553,64 @@ fn apply_completed_audit_if_needed_tx(tx: Transaction,
   return Ok(true)
 }
 
-fn complete_worker_lease_context_tx(tx: Transaction,
-                                    context: WorkerLeaseContext,
-                                    worker_id: String,
-                                    status: String,
-                                    result_message: String,
-                                    result_payload: Json) -> Result<WorkflowRun, String> {
+fn worker_stage_attempts_exhausted_tx(tx: Transaction, context: WorkerLeaseContext) -> Result<Bool, String> {
+  let definition = workflow_definition_required_tx(tx, context.run.app, context.run.channel)?
+  let spec = workflow_stage_spec_at(definition, context.stage.stage_index)?
+  return Ok(context.stage.attempt >= spec.max_attempts)
+}
+
+fn requeue_failed_worker_lease_context_tx(tx: Transaction,
+                                          context: WorkerLeaseContext,
+                                          result_message: String,
+                                          result_payload: Json) -> Result<WorkflowRun, String> {
+  let message = workflow_complete_result_message("failed", result_message)?
+  let requeued = workflow_stage_requeued_with_payload(context.stage, message, result_payload)
+  if !update_active_workflow_stage_run_expected_tx(tx,
+                                                   context.run.run_id,
+                                                   requeued,
+                                                   context.stage.lease_id,
+                                                   context.stage.worker_id)? {
+    return Err("worker lease is not active")
+  }
+  append_audit_event_tx(tx, workflow_stage_requeued_audit_event(context.run, requeued))?
+  return refresh_workflow_run_tx(tx, context.run.run_id)
+}
+
+fn fail_exhausted_worker_lease_context_tx(tx: Transaction,
+                                          context: WorkerLeaseContext,
+                                          worker_id: String,
+                                          result_message: String,
+                                          result_payload: Json) -> Result<WorkflowRun, String> {
+  let finished_stage = finalized_completed_stage(context.stage, "failed", result_message, result_payload)?
+  if !update_active_workflow_stage_run_tx(tx, context.run.run_id, finished_stage)? {
+    return Err("worker lease is not active")
+  }
+  append_audit_event_tx(tx, workflow_stage_completed_audit_event(context.run, finished_stage, worker_id))?
+  let refreshed = refresh_workflow_run_tx(tx, context.run.run_id)?
+  apply_completed_audit_if_needed_tx(tx, finished_stage, refreshed)?
+  return Ok(refreshed)
+}
+
+fn fail_or_retry_worker_lease_context_tx(tx: Transaction,
+                                         context: WorkerLeaseContext,
+                                         worker_id: String,
+                                         result_message: String,
+                                         result_payload: Json) -> Result<WorkflowRun, String> {
+  if context.stage.task_kind != "apply_release" {
+    return fail_exhausted_worker_lease_context_tx(tx, context, worker_id, result_message, result_payload)
+  }
+  if worker_stage_attempts_exhausted_tx(tx, context)? {
+    return fail_exhausted_worker_lease_context_tx(tx, context, worker_id, result_message, result_payload)
+  }
+  return requeue_failed_worker_lease_context_tx(tx, context, result_message, result_payload)
+}
+
+fn succeed_worker_lease_context_tx(tx: Transaction,
+                                   context: WorkerLeaseContext,
+                                   worker_id: String,
+                                   status: String,
+                                   result_message: String,
+                                   result_payload: Json) -> Result<WorkflowRun, String> {
   let finished_stage = finalized_completed_stage(context.stage, status, result_message, result_payload)?
   if !update_active_workflow_stage_run_tx(tx, context.run.run_id, finished_stage)? {
     return Err("worker lease is not active")
@@ -2524,6 +2619,18 @@ fn complete_worker_lease_context_tx(tx: Transaction,
   let refreshed = refresh_workflow_run_tx(tx, context.run.run_id)?
   apply_completed_audit_if_needed_tx(tx, finished_stage, refreshed)?
   return Ok(refreshed)
+}
+
+fn complete_worker_lease_context_tx(tx: Transaction,
+                                    context: WorkerLeaseContext,
+                                    worker_id: String,
+                                    status: String,
+                                    result_message: String,
+                                    result_payload: Json) -> Result<WorkflowRun, String> {
+  if status == "failed" {
+    return fail_or_retry_worker_lease_context_tx(tx, context, worker_id, result_message, result_payload)
+  }
+  return succeed_worker_lease_context_tx(tx, context, worker_id, status, result_message, result_payload)
 }
 
 fn complete_worker_lease_tx(tx: Transaction,

@@ -14,6 +14,8 @@ This first wave keeps the product surface intentionally narrow:
 - append-only audit events for release, approval, and apply activity
 - internal-event workflow definitions/runs keyed by `app/channel`
 - pull-based worker leases for the built-in `apply_release` task
+- `apply_release` worker failures follow the extracted `official/nebula-jobs` max-attempt retry
+  semantics before the run is marked failed
 - opt-in deterministic schedule definitions plus explicit `schedule tick --now-unix-ms ...`
 - opt-in durable broker outbox relay surface for workflow lifecycle messages
 - opt-in shell sidecar worker tasks backed by argv-based `std::process`

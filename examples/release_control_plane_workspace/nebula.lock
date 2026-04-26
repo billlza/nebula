@@ -219,7 +219,7 @@ source_kind = "path"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "6599165c1b8f6941"
-source_fingerprint = "e84e58214bbebe1f"
-integrity_fingerprint = "1917ce8895bcbc34"
+source_fingerprint = "92ce1776cfa94334"
+integrity_fingerprint = "1480227439b39840"
 is_root = 0
 dependencies = ["auth_pkg=nebula-auth", "core=release-control-plane-core", "crypto=nebula-crypto", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs_pkg=nebula-jobs", "observe=nebula-observe", "service=nebula-service"]
