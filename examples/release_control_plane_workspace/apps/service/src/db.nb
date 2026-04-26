@@ -1,7 +1,7 @@
 module db
+import app_config::config
 import postgres_backend
 import sqlite_backend
-import std::env
 import std::json
 import std::result
 
@@ -42,7 +42,7 @@ struct Row {
 }
 
 fn data_backend() -> Result<String, String> {
-  let backend = get_or_default("APP_DATA_BACKEND", "sqlite")
+  let backend = optional_env("APP_DATA_BACKEND", "sqlite")
   if backend == "" || backend == "sqlite" {
     return Ok("sqlite")
   }

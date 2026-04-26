@@ -95,6 +95,9 @@ Current convergence work should anchor to one real sample per important lane:
 - `official/nebula-auth`
   - the first official resource-server auth package for backend-first internal apps; currently
     limited to RS256 JWT verification against caller-provided JWKS text
+- `official/nebula-config`
+  - preview app-level env, mounted-secret file, and redacted startup preflight helpers; it keeps
+    secrets/config lifecycle separate from `nebula-service` HTTP bind/timeout config
 - `official/nebula-jobs`
   - the first official jobs/workflow kernel package; currently limited to DAG validation,
     SQLite-first runs, worker leases, idempotent receipts, and durable outbox preview helpers
@@ -124,6 +127,7 @@ This wave is anchored on:
 
 - `official/nebula-db-sqlite`
 - principal/auth carriage for internal apps
+- reusable app-level config and mounted-secret preflight helpers
 - deploy/config/secrets/backup/restore docs
 - `examples/release_control_plane_workspace`
 

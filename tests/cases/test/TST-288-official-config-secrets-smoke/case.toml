@@ -1,0 +1,273 @@
+id = "TST-288-official-config-secrets-smoke"
+suite = "test"
+description = "official nebula-config resolves app env and mounted secrets with redacted diagnostics"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/official-config-secrets")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "official-config-secrets"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_config = {{ path = "{repo_root / 'official' / 'nebula-config'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text('''module main
+import app_config::config
+import std::bytes
+import std::json
+import std::result
+
+fn test_text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn test_text_concat3(first: String, second: String, third: String) -> String {
+  return test_text_concat(first, test_text_concat(second, third))
+}
+
+fn expect_text(actual: String, expected: String, label: String) -> Result<Bool, String> {
+  if actual != expected {
+    return Err(test_text_concat3(label, " expected ", expected))
+  }
+  return Ok(true)
+}
+
+fn expect_int(actual: Int, expected: Int, label: String) -> Result<Bool, String> {
+  if actual != expected {
+    return Err(label)
+  }
+  return Ok(true)
+}
+
+fn expect_bool(actual: Bool, expected: Bool, label: String) -> Result<Bool, String> {
+  if actual != expected {
+    return Err(label)
+  }
+  return Ok(true)
+}
+
+fn expect_error_text(actual: String, expected: String, label: String) -> Result<Bool, String> {
+  return expect_text(actual, expected, label)
+}
+
+fn expect_any_error(result: Result<String, String>, label: String) -> Result<Bool, String> {
+  match result {
+    Ok(value) => {
+      return Err(test_text_concat(label, " unexpectedly succeeded"))
+    }
+    Err(msg) => {
+      return Ok(true)
+    }
+  }
+}
+
+fn check_happy() -> Result<Bool, String> {
+  expect_text(required_env("CFG_REQUIRED")?, "hello", "required_env")?
+  expect_text(optional_env("CFG_OPTIONAL", "fallback"), "fallback", "optional_env")?
+  expect_int(required_int_env("CFG_INT")?, 42, "required_int_env")?
+  expect_int(int_env_or("CFG_INT_DEFAULT", 7)?, 7, "int_env_or")?
+  expect_bool(required_bool_env("CFG_BOOL")?, true, "required_bool_env")?
+  expect_bool(bool_env_or("CFG_BOOL_DEFAULT", false)?, false, "bool_env_or")?
+  expect_text(optional_secret_value("CFG_SECRET_DIRECT", "CFG_SECRET_DIRECT_FILE")?, "direct-secret", "direct secret")?
+  expect_text(required_secret_value("CFG_REQUIRED_SECRET", "CFG_REQUIRED_SECRET_FILE")?, "file-secret", "file secret")?
+
+  let env_diag = env_diagnostic("CFG_SECRET_DIRECT", true, true)
+  expect_text(get_string(env_diag, "status")?, "ok", "secret env diag status")?
+  expect_text(get_string(env_diag, "value")?, "<redacted>", "secret env diag redaction")?
+  expect_bool(get_bool(env_diag, "secret")?, true, "secret env diag flag")?
+
+  let plain_diag = env_diagnostic("CFG_REQUIRED", true, false)
+  expect_text(get_string(plain_diag, "value")?, "hello", "plain env diag value")?
+
+  let secret_diag = secret_diagnostic("CFG_REQUIRED_SECRET", "CFG_REQUIRED_SECRET_FILE", true)
+  expect_text(get_string(secret_diag, "status")?, "ok", "secret file diag status")?
+  expect_text(get_string(secret_diag, "source")?, "file", "secret file diag source")?
+  expect_text(get_string(secret_diag, "value")?, "<redacted>", "secret file diag redaction")?
+  return Ok(true)
+}
+
+fn check_missing_required() -> Result<Bool, String> {
+  match required_env("CFG_REQUIRED_MISSING") {
+    Ok(value) => {
+      return Err("required_env accepted missing value")
+    }
+    Err(msg) => {
+      expect_error_text(msg, "CFG_REQUIRED_MISSING is required", "required_env missing")?
+    }
+  }
+  match required_secret_value("CFG_SECRET_MISSING", "CFG_SECRET_MISSING_FILE") {
+    Ok(value) => {
+      return Err("required_secret_value accepted missing value")
+    }
+    Err(msg) => {
+      expect_error_text(msg, "CFG_SECRET_MISSING or CFG_SECRET_MISSING_FILE is required", "required_secret missing")?
+    }
+  }
+  let diag = secret_diagnostic("CFG_SECRET_MISSING", "CFG_SECRET_MISSING_FILE", true)
+  expect_text(get_string(diag, "status")?, "missing", "missing secret diag")?
+  return Ok(true)
+}
+
+fn check_invalid_typed() -> Result<Bool, String> {
+  match bool_env_or("CFG_BAD_BOOL", false) {
+    Ok(value) => {
+      return Err("bool_env_or accepted invalid value")
+    }
+    Err(msg) => {
+      expect_error_text(msg, "CFG_BAD_BOOL must be true/false or 1/0", "invalid bool")?
+    }
+  }
+  match int_env_or("CFG_BAD_INT", 1) {
+    Ok(value) => {
+      return Err("int_env_or accepted invalid value")
+    }
+    Err(msg) => {
+      return Ok(true)
+    }
+  }
+  return Ok(true)
+}
+
+fn check_conflict() -> Result<Bool, String> {
+  match optional_secret_value("CFG_CONFLICT_SECRET", "CFG_CONFLICT_SECRET_FILE") {
+    Ok(value) => {
+      return Err("secret conflict was accepted")
+    }
+    Err(msg) => {
+      expect_error_text(msg,
+                        "CFG_CONFLICT_SECRET and CFG_CONFLICT_SECRET_FILE must not both be set",
+                        "secret conflict")?
+    }
+  }
+  let diag = secret_diagnostic("CFG_CONFLICT_SECRET", "CFG_CONFLICT_SECRET_FILE", true)
+  expect_text(get_string(diag, "status")?, "invalid", "conflict diagnostic status")?
+  expect_text(get_string(diag, "source")?, "conflict", "conflict diagnostic source")?
+  expect_text(get_string(diag, "value")?, "<redacted>", "conflict diagnostic redaction")?
+  return Ok(true)
+}
+
+fn check_file_errors() -> Result<Bool, String> {
+  expect_any_error(optional_secret_value("CFG_EMPTY_SECRET", "CFG_EMPTY_SECRET_FILE"), "empty secret file")?
+  let empty_diag = secret_diagnostic("CFG_EMPTY_SECRET", "CFG_EMPTY_SECRET_FILE", true)
+  expect_text(get_string(empty_diag, "status")?, "invalid", "empty file diagnostic")?
+  expect_text(get_string(empty_diag, "value")?, "<redacted>", "empty file redaction")?
+
+  expect_any_error(optional_secret_value("CFG_MISSING_FILE_SECRET", "CFG_MISSING_FILE_SECRET_FILE"), "missing secret file")?
+  let missing_diag = secret_diagnostic("CFG_MISSING_FILE_SECRET", "CFG_MISSING_FILE_SECRET_FILE", true)
+  expect_text(get_string(missing_diag, "status")?, "invalid", "missing file diagnostic")?
+  expect_text(get_string(missing_diag, "value")?, "<redacted>", "missing file redaction")?
+
+  expect_any_error(optional_secret_value("CFG_LARGE_SECRET", "CFG_LARGE_SECRET_FILE"), "large secret file")?
+  let large_diag = secret_diagnostic("CFG_LARGE_SECRET", "CFG_LARGE_SECRET_FILE", true)
+  expect_text(get_string(large_diag, "status")?, "invalid", "large file diagnostic")?
+  expect_text(get_string(large_diag, "value")?, "<redacted>", "large file redaction")?
+  return Ok(true)
+}
+
+fn run_scenario(name: String) -> Result<Bool, String> {
+  if name == "happy" {
+    return check_happy()
+  }
+  if name == "missing-required" {
+    return check_missing_required()
+  }
+  if name == "invalid-typed" {
+    return check_invalid_typed()
+  }
+  if name == "conflict" {
+    return check_conflict()
+  }
+  if name == "file-errors" {
+    return check_file_errors()
+  }
+  return Err(test_text_concat("unknown scenario: ", name))
+}
+
+fn main() -> Int {
+  let scenario = optional_env("SCENARIO", "happy")
+  match run_scenario(scenario) {
+    Ok(_) => {
+      print(test_text_concat("official-config-secrets-", test_text_concat(scenario, "-ok")))
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "update", str(app)], check=True)
+
+secret_file = root / "required.secret"
+secret_file.write_text("file-secret\\n", encoding="utf-8")
+conflict_file = root / "conflict.secret"
+conflict_file.write_text("file-conflict\\n", encoding="utf-8")
+empty_file = root / "empty.secret"
+empty_file.write_text("", encoding="utf-8")
+missing_file = root / "missing.secret"
+large_file = root / "large.secret"
+large_file.write_text("x" * (64 * 1024 + 1), encoding="utf-8")
+
+scenarios = [
+    ("happy", {
+        "CFG_REQUIRED": "hello",
+        "CFG_INT": "42",
+        "CFG_BOOL": "yes",
+        "CFG_SECRET_DIRECT": "direct-secret",
+        "CFG_REQUIRED_SECRET_FILE": str(secret_file),
+    }),
+    ("missing-required", {}),
+    ("invalid-typed", {
+        "CFG_BAD_BOOL": "maybe",
+        "CFG_BAD_INT": "nan",
+    }),
+    ("conflict", {
+        "CFG_CONFLICT_SECRET": "direct-conflict",
+        "CFG_CONFLICT_SECRET_FILE": str(conflict_file),
+    }),
+    ("file-errors", {
+        "CFG_EMPTY_SECRET_FILE": str(empty_file),
+        "CFG_MISSING_FILE_SECRET_FILE": str(missing_file),
+        "CFG_LARGE_SECRET_FILE": str(large_file),
+    }),
+]
+
+for scenario, extra in scenarios:
+    env = os.environ.copy()
+    env["SCENARIO"] = scenario
+    env.update(extra)
+    run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, env=env)
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    if run.returncode != 0:
+        raise SystemExit(run.returncode)
+    expected = f"official-config-secrets-{scenario}-ok"
+    if expected not in run.stdout:
+        raise SystemExit(f"missing scenario output: {expected}")
+
+print("official-config-secrets-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["official-config-secrets-ok"]

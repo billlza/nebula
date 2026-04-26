@@ -1,0 +1,174 @@
+module config
+import std::bytes
+import std::env
+import std::json
+import std::result
+
+extern fn __nebula_config_optional_secret_value(env_name: String, file_env_name: String) -> Result<String, String>
+extern fn __nebula_config_required_secret_value(env_name: String, file_env_name: String) -> Result<String, String>
+
+fn config_text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn config_empty_text() -> String {
+  return config_text_concat("", "")
+}
+
+fn required_env(name: String) -> Result<String, String> {
+  let value = get_or_default(name, "")
+  if value == "" {
+    return Err(config_text_concat(name, " is required"))
+  }
+  return Ok(value)
+}
+
+fn optional_env(name: String, fallback: String) -> String {
+  return get_or_default(name, fallback)
+}
+
+fn required_int_env(name: String) -> Result<Int, String> {
+  let raw = get_or_default(name, "")
+  if raw == "" {
+    return Err(config_text_concat(name, " is required"))
+  }
+  return get_int_or(name, 0)
+}
+
+fn int_env_or(name: String, fallback: Int) -> Result<Int, String> {
+  return get_int_or(name, fallback)
+}
+
+fn parse_bool_value(name: String, value: String) -> Result<Bool, String> {
+  if value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "on" {
+    return Ok(true)
+  }
+  if value == "0" || value == "false" || value == "FALSE" || value == "no" || value == "off" {
+    return Ok(false)
+  }
+  return Err(config_text_concat(name, " must be true/false or 1/0"))
+}
+
+fn required_bool_env(name: String) -> Result<Bool, String> {
+  let raw = get_or_default(name, "")
+  if raw == "" {
+    return Err(config_text_concat(name, " is required"))
+  }
+  return parse_bool_value(name, raw)
+}
+
+fn bool_env_or(name: String, fallback: Bool) -> Result<Bool, String> {
+  let raw = get_or_default(name, "")
+  if raw == "" {
+    return Ok(fallback)
+  }
+  return parse_bool_value(name, raw)
+}
+
+fn optional_secret_value(env_name: String, file_env_name: String) -> Result<String, String> {
+  return __nebula_config_optional_secret_value(env_name, file_env_name)
+}
+
+fn required_secret_value(env_name: String, file_env_name: String) -> Result<String, String> {
+  return __nebula_config_required_secret_value(env_name, file_env_name)
+}
+
+fn diagnostic_status(required: Bool, present: Bool) -> String {
+  if present {
+    return "ok"
+  }
+  if required {
+    return "missing"
+  }
+  return "unset"
+}
+
+fn diagnostic_value(raw: String, present: Bool, secret: Bool) -> String {
+  if !present {
+    return ""
+  }
+  if secret {
+    return "<redacted>"
+  }
+  return raw
+}
+
+fn env_diagnostic(name: String, required: Bool, secret: Bool) -> Json {
+  let raw = get_or_default(name, "")
+  let present = raw != ""
+  return object9("kind",
+                 string_value("env"),
+                 "name",
+                 string_value(name),
+                 "source",
+                 string_value("env"),
+                 "required",
+                 bool_value(required),
+                 "present",
+                 bool_value(present),
+                 "secret",
+                 bool_value(secret),
+                 "status",
+                 string_value(diagnostic_status(required, present)),
+                 "value",
+                 string_value(diagnostic_value(raw, present, secret)),
+                 "error",
+                 string_value(""))
+}
+
+fn secret_source(env_name: String, file_env_name: String) -> String {
+  let env_value = get_or_default(env_name, "")
+  let file_path = get_or_default(file_env_name, "")
+  if env_value != "" && file_path != "" {
+    return "conflict"
+  }
+  if env_value != "" {
+    return "env"
+  }
+  if file_path != "" {
+    return "file"
+  }
+  return "unset"
+}
+
+fn secret_diagnostic(env_name: String, file_env_name: String, required: Bool) -> Json {
+  let source = secret_source(env_name, file_env_name)
+  let present = source != "unset"
+  let status = diagnostic_status(required, present)
+  let error = config_empty_text()
+  match optional_secret_value(env_name, file_env_name) {
+    Ok(value) => {
+      if value == "" {
+        if required {
+          status = "missing"
+        } else {
+          status = "unset"
+        }
+      } else {
+        status = "ok"
+      }
+    }
+    Err(msg) => {
+      status = "invalid"
+      error = msg
+    }
+  }
+  return object9("kind",
+                 string_value("secret"),
+                 "env_name",
+                 string_value(env_name),
+                 "file_env_name",
+                 string_value(file_env_name),
+                 "source",
+                 string_value(source),
+                 "required",
+                 bool_value(required),
+                 "present",
+                 bool_value(present),
+                 "status",
+                 string_value(status),
+                 "value",
+                 string_value(diagnostic_value("", present, true)),
+                 "error",
+                 string_value(error))
+}

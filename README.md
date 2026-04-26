@@ -394,6 +394,17 @@ Repo-local preview packages currently include:
       dual-write behavior
   - current explicit non-goals: ORM, query DSL, connection pools, transparent SQLite/Postgres
     abstraction, database server orchestration
+- `official/nebula-config`
+  - preview app-level config and mounted-secret lifecycle helpers for backend-first internal apps
+  - current shipped surface:
+    - required/optional env accessors
+    - typed `Int` / `Bool` env parsing
+    - direct-env or mounted-secret file resolution with mutual-exclusion checks
+    - redacted diagnostic JSON for startup preflight
+  - current distribution posture:
+    - repo-local preview package from a checkout
+    - not included in the opt-in Linux backend SDK installed-preview payload yet
+  - current explicit non-goals: cloud KMS, dynamic secret rotation, secret storage, policy DSL
 - `official/nebula-crypto`
   - import path: `import crypto::rand`, `import crypto::hash`, `import crypto::pqc.kem`,
     `import crypto::pqc.sign`

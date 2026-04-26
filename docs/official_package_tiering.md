@@ -19,6 +19,7 @@ Backend-SDK expectations:
 Repo-local preview packages:
 
 - `nebula-db-postgres`
+- `nebula-config`
 - `nebula-crypto`
 - `nebula-tls`
 - `nebula-pqc-protocols`
@@ -50,6 +51,7 @@ Current package intent:
 - `nebula-observe`: structured logs and counter-shaped metrics events, including request-correlated error logs
 - `nebula-db-sqlite`: embedded SQLite data-plane slice for backend-first internal apps
 - `nebula-db-postgres`: network PostgreSQL data-plane slice with dynamic `libpq` probing, migrations, and narrow query/execute helpers
+- `nebula-config`: preview app-level env, mounted-secret, and redacted preflight helpers
 - `nebula-crypto`: low-level crypto + PQC primitives
 - `nebula-tls`: outbound client-side TLS/HTTPS helpers
 - `nebula-pqc-protocols`: application-layer PQC signed helpers + authenticated secure-channel helpers

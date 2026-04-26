@@ -13,9 +13,11 @@ Expected files:
 
 The static token contract is startup-only:
 
-- the service reads token files during startup validation
+- the service resolves token files through the preview `official/nebula-config` mounted-secret
+  helper during startup validation
 - the resolved values become the running process snapshot
 - changing token files later requires a process restart to take effect
+- direct `APP_*_TOKEN` env values and matching `APP_*_TOKEN_FILE` mounts are mutually exclusive
 
 JWT auth is a resource-server preview. It verifies RS256 Bearer tokens against `APP_AUTH_JWKS_FILE`
 and does not fetch JWKS URLs, create sessions, or run an OIDC login flow. The JWKS file is validated

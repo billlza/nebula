@@ -38,6 +38,23 @@ native_cxx_sources = ["native/bridge.cpp"]
 dependencies = []
 
 [[package]]
+name = "nebula-config"
+version = "0.1.0"
+root = "../../official/nebula-config"
+manifest = "../../official/nebula-config/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-config"
+resolved_rev = ""
+manifest_hash = "d1a9ed532ab65b9e"
+source_fingerprint = "b3515cb727a50bfb"
+integrity_fingerprint = "ec8cd676d0985b6b"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
 name = "nebula-crypto"
 version = "0.1.0"
 root = "../../official/nebula-crypto"
@@ -185,12 +202,12 @@ src_dir = "src"
 source_kind = "path"
 source_hint = "packages/core"
 resolved_rev = ""
-manifest_hash = "c468836b794cf1f5"
-source_fingerprint = "9e3c22d6186f0fc"
-integrity_fingerprint = "2caa74c46390e1c7"
+manifest_hash = "8b1ee81374dd7346"
+source_fingerprint = "1e47a1809558f7ce"
+integrity_fingerprint = "9b696eaae64fc8c9"
 is_root = 0
 host_cxx = ["host.cpp"]
-dependencies = ["jobs_pkg=nebula-jobs"]
+dependencies = ["app_config=nebula-config", "jobs_pkg=nebula-jobs"]
 
 [[package]]
 name = "release-control-plane-ctl"
@@ -218,8 +235,8 @@ src_dir = "src"
 source_kind = "path"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "6599165c1b8f6941"
-source_fingerprint = "92ce1776cfa94334"
-integrity_fingerprint = "1480227439b39840"
+manifest_hash = "1ec254dbcaebd9c8"
+source_fingerprint = "c8b85dc4d4a47a05"
+integrity_fingerprint = "16829875b421962"
 is_root = 0
-dependencies = ["auth_pkg=nebula-auth", "core=release-control-plane-core", "crypto=nebula-crypto", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs_pkg=nebula-jobs", "observe=nebula-observe", "service=nebula-service"]
+dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "core=release-control-plane-core", "crypto=nebula-crypto", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs_pkg=nebula-jobs", "observe=nebula-observe", "service=nebula-service"]

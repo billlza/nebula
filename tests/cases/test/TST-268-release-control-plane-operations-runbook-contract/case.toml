@@ -40,6 +40,8 @@ for fragment in [
     "/var/log/nebula/release-control-plane.observe.ndjson",
     "deploy/logrotate/release-control-plane.observe",
     "## Common Failure Triage",
+    "official/nebula-config",
+    "startup/preflight diagnostics for secret-bearing values must stay redacted",
     "APP_*_TOKEN and APP_*_TOKEN_FILE for the same role are mutually exclusive",
     "Missing mounted token files are deployment errors",
     "APP_WORKER_TOKEN_FILE",

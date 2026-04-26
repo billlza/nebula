@@ -314,7 +314,9 @@ NEBULA_SHUTDOWN_FILE=/run/my-service/shutdown
 
 If the application needs secrets:
 
-- prefer a mounted file such as `/run/secrets/...` and load it in app code
+- prefer a mounted file such as `/run/secrets/...`; the preview `official/nebula-config` package
+  provides the current reusable app-level helper for env/file mutual exclusion, mounted-secret
+  reads, and redacted startup diagnostics
 - if your platform only supports env-style secret injection, keep it limited to the app-specific
   load site and treat it as an exposure boundary
 - for the current release-control-plane forcing app, prefer:

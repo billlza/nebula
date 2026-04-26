@@ -15,6 +15,7 @@ root = Path('work/control_plane_workspace_template')
 shutil.rmtree(root, ignore_errors=True)
 subprocess.run([binary, 'new', str(root), '--template', 'control-plane-workspace'], check=True)
 service_manifest = (root / 'apps' / 'service' / 'nebula.toml').read_text(encoding='utf-8')
+core_manifest = (root / 'packages' / 'core' / 'nebula.toml').read_text(encoding='utf-8')
 ctl_manifest = (root / 'apps' / 'ctl' / 'nebula.toml').read_text(encoding='utf-8')
 readme = (root / 'README.md').read_text(encoding='utf-8')
 if 'installed = "nebula-db-sqlite"' not in service_manifest:
@@ -23,6 +24,8 @@ if '../../../../official/nebula-tls' in ctl_manifest:
     raise SystemExit('control-plane-workspace ctl manifest still contains the repo-relative preview tls path')
 if '../../../../official/nebula-crypto' in service_manifest or '../../../../official/nebula-crypto' in ctl_manifest:
     raise SystemExit('control-plane-workspace manifests still contain the repo-relative preview crypto path')
+if '../../../../official/nebula-config' in service_manifest or '../../../../official/nebula-config' in core_manifest:
+    raise SystemExit('control-plane-workspace manifests still contain the repo-relative preview config path')
 if '../../../../official/nebula-db-postgres' in service_manifest:
     raise SystemExit('control-plane-workspace service manifest still contains the repo-relative preview postgres path')
 if 'release-control-plane.db' not in readme:
@@ -39,6 +42,7 @@ for fragment in [
     'deploy/k8s/README.md',
     'single-replica SQLite +',
     'mounted-secret contract',
+    'official/nebula-config',
 ]:
     if fragment not in readme:
         raise SystemExit(f'control-plane-workspace README missing fragment: {fragment!r}')
@@ -69,8 +73,10 @@ if missing_assets:
     raise SystemExit(f'control-plane-workspace template missing deploy assets: {missing_assets!r}')
 subprocess.run([binary, 'fetch', str(root)], check=True)
 lock_text = (root / 'nebula.lock').read_text(encoding='utf-8')
-if 'name = "nebula-db-sqlite"' not in lock_text or 'name = "nebula-tls"' not in lock_text:
-    raise SystemExit('control-plane-workspace lockfile did not record db/tls dependencies')
+if ('name = "nebula-db-sqlite"' not in lock_text
+        or 'name = "nebula-tls"' not in lock_text
+        or 'name = "nebula-config"' not in lock_text):
+    raise SystemExit('control-plane-workspace lockfile did not record db/tls/config dependencies')
 blocks = [block for block in lock_text.split("\n[[package]]\n") if block.strip()]
 if not any('name = "nebula-db-sqlite"' in block and 'source_kind = "installed"' in block for block in blocks):
     raise SystemExit('control-plane-workspace lockfile did not record installed-preview nebula-db-sqlite')

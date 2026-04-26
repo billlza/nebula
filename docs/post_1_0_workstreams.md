@@ -126,6 +126,10 @@ Current status:
 - public webhook integrations have a first opt-in signed ingress path for the forcing app:
   HMAC-SHA256 verified requests submit provider-neutral workflow events and reuse workflow receipt
   idempotency
+- `official/nebula-config` now exists as a repo-local preview for app-level env, mounted-secret
+  files, and redacted startup preflight diagnostics; it is deliberately separate from
+  `official/nebula-service` HTTP bind/timeout configuration and does not claim cloud KMS,
+  dynamic rotation, or secret storage
 - auth/identity now has a first repo-local resource-server preview:
   `official/nebula-auth` verifies RS256 JWTs against caller-provided JWKS text, and the
   release-control-plane forcing app can opt into `APP_AUTH_MODE=jwt` while keeping static token mode

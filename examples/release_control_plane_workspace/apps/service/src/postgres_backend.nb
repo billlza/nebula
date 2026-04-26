@@ -1,7 +1,6 @@
 module postgres_backend
+import app_config::config
 import db_postgres::postgres
-import std::env
-import std::fs
 import std::json
 import std::result
 
@@ -22,13 +21,9 @@ struct PostgresRow {
 }
 
 fn postgres_dsn() -> Result<String, String> {
-  let dsn = get_or_default("APP_POSTGRES_DSN", "")
+  let dsn = optional_secret_value("APP_POSTGRES_DSN", "APP_POSTGRES_DSN_FILE")?
   if dsn != "" {
     return Ok(dsn)
-  }
-  let path = get_or_default("APP_POSTGRES_DSN_FILE", "")
-  if path != "" {
-    return read_string(path)
   }
   return Err("postgres data backend requires APP_POSTGRES_DSN or APP_POSTGRES_DSN_FILE")
 }

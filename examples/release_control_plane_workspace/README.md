@@ -27,6 +27,8 @@ This first wave keeps the product surface intentionally narrow:
 - embedded SQLite persistence through the preview `official/nebula-db-sqlite` package
 - repo-local Postgres preview package can be selected as the active data plane, while SQLite
   remains the default
+- app-level env and mounted-secret inputs are resolved through the preview `official/nebula-config`
+  package with redacted diagnostics and explicit mutual-exclusion errors
 - preview DAG workflow dependencies and default-off capability contracts for schedules, brokers, Postgres, shell tasks,
   public webhooks, and distributed deploy orchestration
 - `official/nebula-jobs` as the extracted repo-local preview kernel for reusable jobs/workflow
@@ -88,6 +90,12 @@ with `APP_PUBLIC_WEBHOOKS_PREVIEW=1`, `APP_AUTH_REQUIRED=1`, and `APP_PUBLIC_WEB
 `APP_PUBLIC_WEBHOOK_SECRET_FILE`. V1 verifies `HMAC-SHA256` over
 `timestamp_unix_ms + "." + raw_body`, enforces a 300 second replay window, and submits only the
 existing workflow event shape.
+
+App-level config and mounted-secret inputs are a preview package boundary, not a secret-management
+platform. `official/nebula-config` resolves direct env values or mounted files, rejects conflicting
+`APP_*` and `APP_*_FILE` pairs, trims trailing newline bytes from mounted secrets, and emits only
+redacted diagnostics for secret-bearing values. It does not provide cloud KMS, dynamic rotation,
+encrypted-at-rest secret storage, or a policy DSL.
 
 Distributed deploy orchestration has a first opt-in sidecar-backed alias, not a remote agent
 platform. Enable it with `APP_DISTRIBUTED_DEPLOY_PREVIEW=1`, `APP_AUTH_REQUIRED=1`, and

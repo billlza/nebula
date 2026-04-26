@@ -9,3 +9,4 @@ host_cxx = ["host.cpp"]
 
 [dependencies]
 jobs_pkg = { path = "../../../../official/nebula-jobs" }
+app_config = { path = "../../../../official/nebula-config" }

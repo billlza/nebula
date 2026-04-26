@@ -181,6 +181,8 @@ collector instead of adding an in-container logrotate sidecar.
 
 Keep startup failures explicit. Do not paper over them with broad fallback defaults:
 
+- App-level config and mounted-secret inputs use the preview `official/nebula-config` package;
+  startup/preflight diagnostics for secret-bearing values must stay redacted.
 - APP_*_TOKEN and APP_*_TOKEN_FILE for the same role are mutually exclusive.
 - Missing mounted token files are deployment errors when `APP_AUTH_REQUIRED=1`.
 - Worker and outbox routes need `APP_WORKER_TOKEN_FILE` or `APP_WORKER_TOKEN` for dedicated workers.

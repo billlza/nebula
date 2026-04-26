@@ -47,6 +47,10 @@ def copy_example(repo_root: Path, dest: Path) -> None:
             f'auth_pkg = {{ path = "{repo_root / "official" / "nebula-auth"}" }}',
         )
         text = text.replace(
+            'app_config = { path = "../../../../official/nebula-config" }',
+            f'app_config = {{ path = "{repo_root / "official" / "nebula-config"}" }}',
+        )
+        text = text.replace(
             'jobs_pkg = { path = "../../../../official/nebula-jobs" }',
             f'jobs_pkg = {{ path = "{repo_root / "official" / "nebula-jobs"}" }}',
         )
@@ -58,6 +62,10 @@ def copy_example(repo_root: Path, dest: Path) -> None:
         text = text.replace(
             'jobs_pkg = { path = "../../../../official/nebula-jobs" }',
             f'jobs_pkg = {{ path = "{repo_root / "official" / "nebula-jobs"}" }}',
+        )
+        text = text.replace(
+            'app_config = { path = "../../../../official/nebula-config" }',
+            f'app_config = {{ path = "{repo_root / "official" / "nebula-config"}" }}',
         )
         core_manifest.write_text(text, encoding="utf-8")
 

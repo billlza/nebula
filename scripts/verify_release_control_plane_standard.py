@@ -52,6 +52,8 @@ def copy_example(repo_root: Path, dest: Path) -> None:
             f'crypto = {{ path = "{repo_root / "official" / "nebula-crypto"}" }}',
         'auth_pkg = { path = "../../../../official/nebula-auth" }':
             f'auth_pkg = {{ path = "{repo_root / "official" / "nebula-auth"}" }}',
+        'app_config = { path = "../../../../official/nebula-config" }':
+            f'app_config = {{ path = "{repo_root / "official" / "nebula-config"}" }}',
         'jobs_pkg = { path = "../../../../official/nebula-jobs" }':
             f'jobs_pkg = {{ path = "{repo_root / "official" / "nebula-jobs"}" }}',
         'tls = { path = "../../../../official/nebula-tls" }':

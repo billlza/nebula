@@ -15,3 +15,4 @@ db_postgres = { path = "../../../../official/nebula-db-postgres" }
 crypto = { path = "../../../../official/nebula-crypto" }
 auth_pkg = { path = "../../../../official/nebula-auth" }
 jobs_pkg = { path = "../../../../official/nebula-jobs" }
+app_config = { path = "../../../../official/nebula-config" }

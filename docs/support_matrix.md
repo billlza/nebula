@@ -55,6 +55,9 @@ Repo-local preview package matrix:
 - `nebula-auth`: macOS + Linux; current preview resource-server authentication slice for
   backend-first internal apps, with RS256 JWT verification against caller-provided JWKS text and no
   local accounts, browser login flow, JWKS URL fetch/cache, or session platform claim.
+- `nebula-config`: macOS + Linux; current preview app-level env and mounted-secret helper for
+  backend-first internal apps, with typed env parsing and redacted diagnostics. It is repo-local
+  only in this wave and does not claim cloud KMS, dynamic rotation, or secret storage.
 - `nebula-jobs`: macOS + Linux; current preview jobs/workflow kernel with DAG stage validation,
   SQLite-first run storage, pull-based worker leases, retry/dead-letter, idempotent event receipt,
   and durable outbox helpers. It is repo-local only in this wave and does not claim Postgres jobs
