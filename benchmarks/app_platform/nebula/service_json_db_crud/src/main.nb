@@ -794,7 +794,7 @@ fn bench_service_json_db_crud() -> Void {
   match run_service_json_db_crud() {
     Ok(_) => {}
     Err(msg) => {
-      print(msg)
+      panic(msg)
     }
   }
 }

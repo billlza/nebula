@@ -713,6 +713,7 @@ def run_cpp_reference_workload(workload: dict[str, Any], build_root: Path) -> di
     workload_root.mkdir(parents=True, exist_ok=True)
     output_name = "main.exe" if platform.system().lower() == "windows" else "main.out"
     output = workload_root / output_name
+    link_flags = ["-lsqlite3"] if workload["id"] == "service_json_db_crud" else []
     compile_cmd = [
         clang,
         "-std=c++23",
@@ -724,7 +725,7 @@ def run_cpp_reference_workload(workload: dict[str, Any], build_root: Path) -> di
         str(source),
         "-o",
         str(output),
-    ]
+    ] + link_flags
     build = run_command(compile_cmd, workload_root)
     build_stderr = "[cmd] " + " ".join(compile_cmd) + "\n" + build.stderr
     if build.returncode != 0:

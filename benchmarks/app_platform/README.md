@@ -52,7 +52,8 @@ pure Nebula runtime behavior.
 
 - the workload manifest is fixed in `matrix.json`
 - the current planning/validation helper is `scripts/app_platform_bench.py`
-- C++ reference workloads now exist for the first Nebula-owned thin-host hot paths:
+- C++ reference workloads now exist for the first Nebula-owned backend and thin-host hot paths:
+  - `service_json_db_crud`
   - `thin_host_bridge_roundtrip`
   - `state_sync_latency`
 - Nebula-backed runnable workloads now exist for:
@@ -73,8 +74,8 @@ pure Nebula runtime behavior.
 - this wave now includes real Nebula workload execution for the current CLI, service, thin-host,
   and ops-memory lanes, while the broader cross-language matrix still remains a staged plan rather
   than a filled diff table
-- the C++ reference lane is measurement-only and currently covers single-file STL app-core
-  baselines, not Qt/asio/sqlite/renderer parity
+- the C++ reference lane is measurement-only and currently covers a SQLite-backed backend CRUD
+  baseline plus single-file STL app-core baselines, not Qt/asio/beast/renderer parity
 - thin-host timed workloads validate canonical event/snapshot wire text in the timed loop, matching
   the C++ reference lane; broader malformed/schema-mismatch parsing remains covered by bridge
   contract tests rather than repeated inside the microbenchmark
@@ -86,6 +87,6 @@ python3 scripts/app_platform_bench.py verify
 python3 scripts/app_platform_bench.py plan --format json
 python3 scripts/app_platform_bench.py plan
 python3 scripts/app_platform_bench.py run-nebula --binary ./build/nebula --workload thin_host_bridge_roundtrip --workload state_sync_latency --json-out artifacts/app-platform-nebula.json
-python3 scripts/app_platform_bench.py run-reference --stack cpp --workload thin_host_bridge_roundtrip --workload state_sync_latency --json-out artifacts/app-platform-cpp.json
+python3 scripts/app_platform_bench.py run-reference --stack cpp --workload service_json_db_crud --workload thin_host_bridge_roundtrip --workload state_sync_latency --json-out artifacts/app-platform-cpp.json
 python3 scripts/app_platform_bench.py compare --stack cpp --nebula-json artifacts/app-platform-nebula.json --reference-json artifacts/app-platform-cpp.json
 ```

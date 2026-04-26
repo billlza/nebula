@@ -67,6 +67,13 @@
         "official/nebula-db-sqlite"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/service_json_db_crud",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/service_json_db_crud"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
       "comparison_layer": "nebula_owned"
     },
     {

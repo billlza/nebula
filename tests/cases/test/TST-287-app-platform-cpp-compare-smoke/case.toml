@@ -25,6 +25,8 @@ nebula = subprocess.run([
     '--binary',
     os.environ['NEBULA_BINARY'],
     '--workload',
+    'service_json_db_crud',
+    '--workload',
     'thin_host_bridge_roundtrip',
     '--json-out',
     str(nebula_out),
@@ -40,6 +42,8 @@ reference = subprocess.run([
     'run-reference',
     '--stack',
     'cpp',
+    '--workload',
+    'service_json_db_crud',
     '--workload',
     'thin_host_bridge_roundtrip',
     '--json-out',
@@ -78,15 +82,16 @@ if not toolchains.get('nebula', {}).get('clang++', {}).get('available'):
 if not toolchains.get('reference', {}).get('clang++', {}).get('available'):
     raise SystemExit(f'comparison payload lost reference toolchain details: {payload!r}')
 results = {item['workload']: item for item in payload.get('results', [])}
-item = results.get('thin_host_bridge_roundtrip')
-if not item or item.get('status') != 'ok':
-    raise SystemExit(f'missing successful comparison result: {payload!r}')
-if item.get('nebula_status') != 'ok' or item.get('reference_status') != 'ok':
-    raise SystemExit(f'comparison did not preserve child statuses: {item!r}')
-ratios = item.get('ratios', {})
-for key in ('nebula_to_reference_mean_ms', 'nebula_to_reference_p99_ms', 'nebula_to_reference_throughput_ops_s'):
-    if key not in ratios or not isinstance(ratios[key], float):
-        raise SystemExit(f'missing comparison ratio {key}: {item!r}')
+for workload in ('service_json_db_crud', 'thin_host_bridge_roundtrip'):
+    item = results.get(workload)
+    if not item or item.get('status') != 'ok':
+        raise SystemExit(f'missing successful comparison result for {workload}: {payload!r}')
+    if item.get('nebula_status') != 'ok' or item.get('reference_status') != 'ok':
+        raise SystemExit(f'comparison did not preserve child statuses: {item!r}')
+    ratios = item.get('ratios', {})
+    for key in ('nebula_to_reference_mean_ms', 'nebula_to_reference_p99_ms', 'nebula_to_reference_throughput_ops_s'):
+        if key not in ratios or not isinstance(ratios[key], float):
+            raise SystemExit(f'missing comparison ratio {key}: {item!r}')
 bad_reference = json.loads(cpp_out.read_text(encoding='utf-8'))
 bad_reference['results'][0]['metrics']['mean_ms'] = 0.0
 bad_reference_out = Path('work/app_platform_cpp_compare_reference_bad_metric.json')
@@ -110,7 +115,10 @@ print(bad_compare.stderr, end='')
 if bad_compare.returncode == 0:
     raise SystemExit('compare unexpectedly accepted zero-valued reference metric')
 bad_payload = json.loads(bad_compare_out.read_text(encoding='utf-8'))
-bad_item = bad_payload.get('results', [{}])[0]
+bad_items = [item for item in bad_payload.get('results', []) if item.get('status') == 'invalid_metrics']
+if not bad_items:
+    raise SystemExit(f'zero-valued reference metric was not rejected: {bad_payload!r}')
+bad_item = bad_items[0]
 if bad_item.get('status') != 'invalid_metrics':
     raise SystemExit(f'zero-valued reference metric was not rejected: {bad_payload!r}')
 if 'reference.mean_ms' not in bad_item.get('comparison_error', ''):

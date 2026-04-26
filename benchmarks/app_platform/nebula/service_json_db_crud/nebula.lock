@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "457c3cb90cee71fb"
-source_fingerprint = "584f910728443aea"
-integrity_fingerprint = "b4e89cc1d42c55d8"
+source_fingerprint = "ae23fbd09c060338"
+integrity_fingerprint = "20c4abc830df4a2f"
 is_root = 1
 dependencies = ["core=ctl-service-core", "db_sqlite=nebula-db-sqlite", "service=nebula-service"]
 

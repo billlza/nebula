@@ -20,6 +20,8 @@ result = subprocess.run([
     '--stack',
     'cpp',
     '--workload',
+    'service_json_db_crud',
+    '--workload',
     'thin_host_bridge_roundtrip',
     '--workload',
     'state_sync_latency',
@@ -34,7 +36,7 @@ payload = json.loads(out_path.read_text(encoding='utf-8'))
 if payload.get('kind') != 'app_platform_reference_results' or payload.get('stack') != 'cpp':
     raise SystemExit(f'unexpected reference payload: {payload!r}')
 results = {item['workload']: item for item in payload.get('results', [])}
-for workload in ('thin_host_bridge_roundtrip', 'state_sync_latency'):
+for workload in ('service_json_db_crud', 'thin_host_bridge_roundtrip', 'state_sync_latency'):
     item = results.get(workload)
     if not item:
         raise SystemExit(f'missing reference workload result: {payload!r}')
@@ -48,6 +50,8 @@ for workload in ('thin_host_bridge_roundtrip', 'state_sync_latency'):
     stderr = item.get('stderr', '')
     if '-Wall' not in stderr or '-Wextra' not in stderr or '-Werror' not in stderr:
         raise SystemExit(f'reference build did not use strict warning flags: {item!r}')
+    if workload == 'service_json_db_crud' and '-lsqlite3' not in stderr:
+        raise SystemExit(f'service_json_db_crud reference did not link sqlite3 explicitly: {item!r}')
 print('app-platform-cpp-reference-bench-ok')
 PY
 """

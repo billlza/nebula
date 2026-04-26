@@ -54,6 +54,10 @@ if workloads['cli_cold_start'].get('nebula_project') != 'benchmarks/app_platform
     raise SystemExit(f'missing runnable cli_cold_start project: {workloads!r}')
 if workloads['service_json_db_crud'].get('nebula_project') != 'benchmarks/app_platform/nebula/service_json_db_crud':
     raise SystemExit(f'missing runnable service_json_db_crud project: {workloads!r}')
+if workloads['service_json_db_crud'].get('reference_stacks') != ['cpp']:
+    raise SystemExit(f'missing cpp service_json_db_crud reference stack: {workloads!r}')
+if workloads['service_json_db_crud'].get('reference_projects', {}).get('cpp') != 'benchmarks/app_platform/reference/cpp/service_json_db_crud':
+    raise SystemExit(f'missing cpp service_json_db_crud reference project: {workloads!r}')
 if workloads['thin_host_bridge_roundtrip'].get('nebula_project') != 'benchmarks/app_platform/nebula/thin_host_bridge_roundtrip':
     raise SystemExit(f'missing runnable thin_host_bridge_roundtrip project: {workloads!r}')
 if workloads['thin_host_bridge_roundtrip'].get('reference_stacks') != ['cpp']:
