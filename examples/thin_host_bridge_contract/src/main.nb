@@ -1,0 +1,185 @@
+module main
+import bridge::host_bridge
+import counter::counter_core
+import std::json
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text_eq(actual: String, expected: String) -> Void {
+  if actual == expected {
+  } else {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_int_eq(actual: Int, expected: Int) -> Void {
+  expect_eq(actual, expected)
+}
+
+fn expect_bool_eq(actual: Bool, expected: Bool) -> Void {
+  if actual == expected {
+  } else {
+    fail()
+  }
+}
+
+fn expect_command_decode(command_text: String, kind: String, correlation_id: String, state_revision: Int) -> Void {
+  match decode_command_text(command_text) {
+    Ok(command) => {
+      expect_text_eq(command.kind(), kind)
+      expect_text_eq(command.correlation_id(), correlation_id)
+      expect_int_eq(command.state_revision(), state_revision)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn expect_command_decode_error(command_text: String, expected: String) -> Void {
+  match decode_command_text(command_text) {
+    Ok(command) => {
+      print(command.kind())
+      fail()
+    }
+    Err(msg) => {
+      expect_text_eq(msg, expected)
+    }
+  }
+}
+
+fn expect_apply_error(state: CounterState, command_text: String, expected: String) -> Void {
+  match apply_command_text(state, command_text) {
+    Ok(step) => {
+      print(step.event_text())
+      fail()
+    }
+    Err(msg) => {
+      expect_text_eq(msg, expected)
+    }
+  }
+}
+
+fn expect_payload_counter(payload: Json, expected: Int) -> Void {
+  match get_int(payload, "counter") {
+    Ok(counter) => {
+      expect_int_eq(counter, expected)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn expect_event(event_text: String,
+                expected_kind: String,
+                expected_correlation_id: String,
+                expected_state_revision: Int,
+                expected_terminal: Bool) -> Void {
+  match decode_event_text(event_text) {
+    Ok(event) => {
+      expect_text_eq(event.kind(), expected_kind)
+      expect_text_eq(event.correlation_id(), expected_correlation_id)
+      expect_int_eq(event.state_revision(), expected_state_revision)
+      expect_bool_eq(event.terminal(), expected_terminal)
+      expect_payload_counter(event.payload(), 1)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn expect_snapshot(snapshot_text: String, expected_state_revision: Int) -> Void {
+  match decode_snapshot_text(snapshot_text) {
+    Ok(snapshot) => {
+      expect_text_eq(snapshot.screen(), "counter")
+      expect_int_eq(snapshot.state_revision(), expected_state_revision)
+      expect_payload_counter(snapshot.payload(), 1)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn expect_event_decode_error(event_text: String, expected: String) -> Void {
+  match decode_event_text(event_text) {
+    Ok(event) => {
+      print(event.kind())
+      fail()
+    }
+    Err(msg) => {
+      expect_text_eq(msg, expected)
+    }
+  }
+}
+
+fn expect_snapshot_decode_error(snapshot_text: String, expected: String) -> Void {
+  match decode_snapshot_text(snapshot_text) {
+    Ok(snapshot) => {
+      print(snapshot.screen())
+      fail()
+    }
+    Err(msg) => {
+      expect_text_eq(msg, expected)
+    }
+  }
+}
+
+fn verify_valid_roundtrip() -> Void {
+  let state = initial_state()
+  let command_text = command_text_at_revision("increment", "contract-1", state.revision())
+  expect_command_decode(command_text, "increment", "contract-1", 0)
+
+  match apply_command_text(state, command_text) {
+    Ok(step) => {
+      expect_event(step.event_text(), "increment_applied", "contract-1", 1, false)
+      expect_snapshot(query_snapshot_text(step.state()), 1)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn verify_command_negative_contracts() -> Void {
+  let state = initial_state()
+  expect_command_decode_error("{", "malformed thin-host command envelope")
+  expect_command_decode_error("{\"schema\":\"thin-host-bridge.command.v2\",\"kind\":\"increment\",\"correlation_id\":\"bad-schema\",\"state_revision\":0}",
+                              "unsupported thin-host command schema")
+  expect_command_decode_error("{\"schema\":\"thin-host-bridge.command.v1\",\"correlation_id\":\"missing-kind\",\"state_revision\":0}",
+                              "missing thin-host command kind")
+  expect_apply_error(state,
+                     command_text_at_revision("warp", "contract-unknown", state.revision()),
+                     "unknown thin-host command kind")
+  expect_apply_error(state,
+                     command_text_at_revision("decrement", "contract-invalid", state.revision()),
+                     "invalid counter transition: cannot decrement below zero")
+  expect_apply_error(state,
+                     command_text_at_revision("increment", "contract-stale", 3),
+                     "stale thin-host command state_revision")
+}
+
+fn verify_event_snapshot_negative_contracts() -> Void {
+  expect_event_decode_error("{\"schema\":\"thin-host-bridge.event.v2\",\"kind\":\"x\",\"payload\":{},\"terminal\":false,\"correlation_id\":\"c\",\"state_revision\":0}",
+                            "unsupported thin-host event schema")
+  expect_snapshot_decode_error("{\"schema\":\"thin-host-bridge.snapshot.v1\",\"screen\":\"counter\",\"payload\":{}}",
+                               "missing thin-host snapshot state_revision")
+}
+
+fn main() -> Int {
+  verify_valid_roundtrip()
+  verify_command_negative_contracts()
+  verify_event_snapshot_negative_contracts()
+  print("thin-host-bridge-contract-v1-ok")
+  return 0
+}

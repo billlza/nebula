@@ -42,18 +42,35 @@ fn expect_payload_last_command(payload: Json, expected: String) -> Void {
   }
 }
 
+fn expect_field_string(value: Json, field: String, expected: String) -> Void {
+  match get_string(value, field) {
+    Ok(actual) => {
+      expect_text_eq(actual, expected)
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn expect_field_int(value: Json, field: String, expected: Int) -> Void {
+  match get_int(value, field) {
+    Ok(actual) => {
+      expect_eq(actual, expected)
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
 fn verify_event_text(event_text: String) -> Void {
   match parse(event_text) {
     Ok(event_json) => {
       expect_schema(event_json, "thin-host-bridge.event.v1")
-      match get_string(event_json, "kind") {
-        Ok(kind) => {
-          expect_text_eq(kind, "increment_applied")
-        }
-        Err(msg) => {
-          print(msg)
-        }
-      }
+      expect_field_string(event_json, "kind", "increment_applied")
+      expect_field_string(event_json, "correlation_id", "cmd-increment")
+      expect_field_int(event_json, "state_revision", 1)
     }
     Err(msg) => {
       print(msg)
@@ -65,6 +82,7 @@ fn verify_snapshot_text(snapshot_text: String) -> Void {
   match parse(snapshot_text) {
     Ok(snapshot_json) => {
       expect_schema(snapshot_json, "thin-host-bridge.snapshot.v1")
+      expect_field_int(snapshot_json, "state_revision", 1)
       match get_value(snapshot_json, "payload") {
         Ok(payload) => {
           expect_payload_counter(payload, 1)

@@ -79,8 +79,10 @@
         "stable_snapshot_contract"
       ],
       "nebula_paths": [
+        "official/nebula-thin-host-bridge",
         "examples/thin_host_app_core",
-        "examples/thin_host_bridge_replay"
+        "examples/thin_host_bridge_replay",
+        "examples/thin_host_bridge_contract"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/thin_host_bridge_roundtrip",
       "comparison_layer": "nebula_owned"
@@ -94,8 +96,10 @@
         "deterministic_state_progression"
       ],
       "nebula_paths": [
+        "official/nebula-thin-host-bridge",
         "examples/thin_host_app_core",
-        "examples/thin_host_bridge_replay"
+        "examples/thin_host_bridge_replay",
+        "examples/thin_host_bridge_contract"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/state_sync_latency",
       "comparison_layer": "nebula_owned"

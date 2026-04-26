@@ -1,6 +1,7 @@
 module main
 import counter::counter_core
 import std::json
+import std::result
 
 fn expect_text_eq(actual: String, expected: String) -> Void {
   if actual == expected {
@@ -45,6 +46,14 @@ fn expect_payload_last_command(payload: Json, expected: String) -> Void {
 fn verify_snapshot_text(snapshot_text: String) -> Void {
   match parse(snapshot_text) {
     Ok(snapshot_json) => {
+      match get_int(snapshot_json, "state_revision") {
+        Ok(revision) => {
+          expect_eq(revision, 3)
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
       match get_value(snapshot_json, "payload") {
         Ok(payload) => {
           expect_payload_counter(payload, 1)
@@ -62,13 +71,24 @@ fn verify_snapshot_text(snapshot_text: String) -> Void {
   }
 }
 
+fn state_after_sync_tape() -> Result<CounterState, String> {
+  let state0 = initial_state()
+  let step1 = apply_command_text(state0, command_text_at_revision("increment", "sync-1", state0.revision()))?
+  let step2 = apply_command_text(step1.state(), command_text_at_revision("increment", "sync-2", step1.state().revision()))?
+  let step3 = apply_command_text(step2.state(), command_text_at_revision("decrement", "sync-3", step2.state().revision()))?
+  return Ok(step3.state())
+}
+
 @bench
 fn bench_state_sync_latency() -> Void {
-  let state0 = initial_state()
-  let step1 = reduce_command(state0, Increment)
-  let step2 = reduce_command(step1.state(), Increment)
-  let step3 = reduce_command(step2.state(), Decrement)
-  verify_snapshot_text(query_snapshot_text(step3.state()))
+  match state_after_sync_tape() {
+    Ok(state) => {
+      verify_snapshot_text(query_snapshot_text(state))
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
 }
 
 fn main() -> Void {

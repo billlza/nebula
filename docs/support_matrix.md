@@ -68,6 +68,10 @@ Repo-local preview package matrix:
   preview HTTP/2 service-to-service path
 - `nebula-pqc-protocols`: same host reach as `nebula-crypto`; current preview includes signed payload helpers, ciphertext-only KEM envelopes, and `pqc::channel`
 - `nebula-qcomm-sim`: same host reach as `nebula-crypto`; experimental BB84 simulation-only preview
+- `nebula-thin-host-bridge`: compiler/tooling hosts; preview command/event/snapshot envelope
+  contract for thin-host app cores, including `correlation_id`, `state_revision`, deterministic
+  replay, and rejection semantics; no renderer, widget, layout, style, accessibility, packaging, or
+  native UI platform contract
 - `nebula-ui`: compiler/tooling hosts; preview semantic UI tree package paired with `ui` / `view`
   syntax, JSON IR, and a headless adapter, without a mature native renderer or app-store
   distribution contract
@@ -77,6 +81,8 @@ Repo-local preview example matrix:
 - `examples/pqc_secure_service`: development/smoke on macOS + Linux from a repo checkout; illustrative application-layer PQC flow, not an installed GA service surface
 - `examples/qcomm_bb84_lab`: development/smoke on macOS + Linux from a repo checkout; simulation-only lab example
 - `examples/thin_host_app_core`: development/smoke on compiler/tooling hosts from a repo checkout; thin-host architecture sample, not a native UI platform contract
+- `examples/thin_host_bridge_contract`: development/smoke on compiler/tooling hosts from a repo
+  checkout; focused v1 envelope and negative-path smoke for `official/nebula-thin-host-bridge`
 
 Important caveat:
 

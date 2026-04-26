@@ -182,6 +182,10 @@ Try the thin-host app-core sample with:
 build/nebula run examples/thin_host_app_core --run-gate none
 ```
 
+Its bridge contract is the repo-local preview package `official/nebula-thin-host-bridge`; it owns
+versioned command/event/snapshot envelopes for an external host shell, not rendering or native UI
+platform behavior.
+
 Thin-host app-shell guidance lives in:
 
 - `docs/thin_host_app_shell.md`
@@ -422,6 +426,11 @@ Repo-local preview packages currently include:
 - `official/nebula-qcomm-sim`
   - simulation-only BB84 experiments and report helpers
   - explicit experimental preview, not hardware/QKD support
+- `official/nebula-thin-host-bridge`
+  - command/event/snapshot envelope helpers for thin-host app cores
+  - `correlation_id` and `state_revision` fields for replay parity and telemetry correlation
+  - current explicit non-goals: renderer, widget toolkit, layout/style/animation, accessibility
+    stack, native UI platform, packaging/signing/update lifecycle
 - `official/nebula-ui`
   - semantic UI tree helpers for the preview `ui` / `view` syntax
   - headless adapter for deterministic CI/debug rendering

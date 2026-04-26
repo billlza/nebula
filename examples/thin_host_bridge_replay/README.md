@@ -1,7 +1,7 @@
 # Thin Host Bridge Replay
 
 This example is the second real consumer of the extracted thin-host bridge contract from
-`examples/thin_host_app_core/packages/bridge`.
+`official/nebula-thin-host-bridge`.
 
 It deliberately keeps the same counter app-core while swapping in a different host shape:
 
@@ -12,6 +12,11 @@ It deliberately keeps the same counter app-core while swapping in a different ho
 
 That keeps the bridge contract honest: the reusable part is the coarse command/event/snapshot seam,
 not one specific console shim.
+
+The first replay section uses the same command tape as `thin_host_app_core`, so contract tests can
+compare normalized `event:` and `render:` lines for host/replay parity. The second section exercises
+negative paths for malformed JSON, schema mismatch, missing kind, unknown command, and invalid
+state transition.
 
 Run it with:
 

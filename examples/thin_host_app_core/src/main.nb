@@ -1,4 +1,5 @@
 module main
+import bridge::host_bridge
 import counter::counter_core
 
 extern fn host_shell_begin() -> Void
@@ -30,7 +31,9 @@ fn main() -> Int {
         }
       }
       Err(msg) => {
-        host_shell_publish_event(command_rejected_event_text(state, msg))
+        host_shell_publish_event(command_rejected_event_text(state,
+                                                             command_correlation_id_or(command_text, "host-command-rejected"),
+                                                             msg))
         render_state(state)
       }
     }

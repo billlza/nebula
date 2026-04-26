@@ -8,5 +8,5 @@ src_dir = "src"
 host_cxx = ["host.cpp"]
 
 [dependencies]
-bridge = { path = "packages/bridge" }
+bridge = { path = "../../official/nebula-thin-host-bridge" }
 counter = { path = "packages/counter_core" }

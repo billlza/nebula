@@ -1,6 +1,6 @@
 schema_version = 2
 root_package = "thin-host-app-core"
-root_manifest_hash = "2ca86b237c6d5465"
+root_manifest_hash = "bbcd95b2cc71af0e"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
@@ -14,26 +14,26 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "2ca86b237c6d5465"
-source_fingerprint = "c9b416c615d8fb32"
-integrity_fingerprint = "9d3ab0119b6f5545"
+manifest_hash = "bbcd95b2cc71af0e"
+source_fingerprint = "5b142874e1e414e8"
+integrity_fingerprint = "face86dabe5f446e"
 is_root = 1
 host_cxx = ["host.cpp"]
-dependencies = ["bridge=thin-host-bridge", "counter=thin-host-counter-core"]
+dependencies = ["bridge=nebula-thin-host-bridge", "counter=thin-host-counter-core"]
 
 [[package]]
-name = "thin-host-bridge"
+name = "nebula-thin-host-bridge"
 version = "0.1.0"
-root = "packages/bridge"
-manifest = "packages/bridge/nebula.toml"
+root = "../../official/nebula-thin-host-bridge"
+manifest = "../../official/nebula-thin-host-bridge/nebula.toml"
 entry = "src/host_bridge.nb"
 src_dir = "src"
 source_kind = "path"
-source_hint = "packages/bridge"
+source_hint = "../../official/nebula-thin-host-bridge"
 resolved_rev = ""
-manifest_hash = "ff765a900084745e"
-source_fingerprint = "28f4280b9012f2ad"
-integrity_fingerprint = "b7b981912b0bd3d0"
+manifest_hash = "d92fb0306b68536a"
+source_fingerprint = "6f143fa152a1ba2"
+integrity_fingerprint = "e1b7e7589bf9ef39"
 is_root = 0
 dependencies = []
 
@@ -47,8 +47,8 @@ src_dir = "src"
 source_kind = "path"
 source_hint = "packages/counter_core"
 resolved_rev = ""
-manifest_hash = "fae73102dae29bdd"
-source_fingerprint = "eb90ddf7810417c5"
-integrity_fingerprint = "aa69ada2993f3749"
+manifest_hash = "a7f7d99e350c6543"
+source_fingerprint = "b274c643d24bf5eb"
+integrity_fingerprint = "17424d57286ce415"
 is_root = 0
-dependencies = ["bridge=thin-host-bridge"]
+dependencies = ["bridge=nebula-thin-host-bridge"]

@@ -7,4 +7,4 @@ entry = "src/counter_core.nb"
 src_dir = "src"
 
 [dependencies]
-bridge = { path = "../bridge" }
+bridge = { path = "../../../../official/nebula-thin-host-bridge" }

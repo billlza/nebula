@@ -52,6 +52,8 @@ Wave C.5 is post-1.0 / `1.1+` scope and must land before broad pure-Nebula app-p
 
 - treat `release_control_plane_workspace` as the forcing-app lane for a publishable internal app
 - stabilize the thin-host split as an app-core contract rather than a GUI-platform claim
+- anchor thin-host on versioned command/event/snapshot envelopes with deterministic replay and
+  negative-path contract coverage
 - hold broader APP-platform comparisons behind the fixed `benchmarks/app_platform` matrix
 - keep public positioning aligned with `docs/app_platform_convergence.md`
 

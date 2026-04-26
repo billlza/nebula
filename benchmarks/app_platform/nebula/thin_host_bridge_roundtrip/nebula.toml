@@ -7,5 +7,5 @@ entry = "src/main.nb"
 src_dir = "src"
 
 [dependencies]
-bridge = { path = "../../../../examples/thin_host_app_core/packages/bridge" }
+bridge = { path = "../../../../official/nebula-thin-host-bridge" }
 counter = { path = "../../../../examples/thin_host_app_core/packages/counter_core" }

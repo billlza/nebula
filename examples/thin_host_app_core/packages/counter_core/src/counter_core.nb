@@ -5,24 +5,25 @@ import std::result
 
 struct CounterState {
   counter: Int,
-  last_command: String
+  last_command: String,
+  revision: Int
 }
 
 struct CounterStep {
   state: CounterState,
   should_exit: Bool,
-  event_kind: String
+  event_kind: String,
+  correlation_id: String
 }
 
 enum CounterCommand {
   Increment(Void)
   Decrement(Void)
   Quit(Void)
-  Unknown(Void)
 }
 
 fn initial_state() -> CounterState {
-  return CounterState(0, "boot")
+  return CounterState(0, "boot", 0)
 }
 
 fn CounterStep_state(self: CounterStep) -> CounterState {
@@ -31,6 +32,10 @@ fn CounterStep_state(self: CounterStep) -> CounterState {
 
 fn CounterStep_should_exit_value(self: CounterStep) -> Bool {
   return self.should_exit
+}
+
+fn CounterState_revision(self: CounterState) -> Int {
+  return self.revision
 }
 
 fn counter_status(counter: Int) -> String {
@@ -55,81 +60,101 @@ fn counter_payload(state: CounterState) -> Json {
 }
 
 fn query_snapshot_text(state: CounterState) -> String {
-  return encode_snapshot_text("counter", counter_payload(state))
+  return encode_snapshot_text_with_revision("counter", counter_payload(state), state.revision)
 }
 
 fn boot_event_text(state: CounterState) -> String {
-  return encode_event_text("booted", counter_payload(state), false)
+  return encode_event_text_with_context("booted", counter_payload(state), false, "boot", state.revision)
 }
 
-fn command_rejected_event_text(state: CounterState, reason: String) -> String {
-  return encode_event_text("command_rejected",
-                           object5("counter",
-                                   int_value(state.counter),
-                                   "can_decrement",
-                                   bool_value(state.counter > 0),
-                                   "status",
-                                   string_value(counter_status(state.counter)),
-                                   "last_command",
-                                   string_value(state.last_command),
-                                   "reason",
-                                   string_value(reason)),
-                           false)
+fn command_rejected_event_text(state: CounterState, correlation_id: String, reason: String) -> String {
+  return encode_event_text_with_context("command_rejected",
+                                        object5("counter",
+                                                int_value(state.counter),
+                                                "can_decrement",
+                                                bool_value(state.counter > 0),
+                                                "status",
+                                                string_value(counter_status(state.counter)),
+                                                "last_command",
+                                                string_value(state.last_command),
+                                                "reason",
+                                                string_value(reason)),
+                                        false,
+                                        correlation_id,
+                                        state.revision)
 }
 
 fn CounterStep_event_text(self: CounterStep) -> String {
-  return encode_event_text(self.event_kind, counter_payload(self.state), self.should_exit)
+  return encode_event_text_with_context(self.event_kind,
+                                        counter_payload(self.state),
+                                        self.should_exit,
+                                        self.correlation_id,
+                                        self.state.revision)
 }
 
 fn increment_command_text() -> String {
-  return encode_command_text("increment")
+  return encode_command_text_with_context("increment", "cmd-increment", 0)
 }
 
 fn decrement_command_text() -> String {
-  return encode_command_text("decrement")
+  return encode_command_text_with_context("decrement", "cmd-decrement", 0)
 }
 
 fn quit_command_text() -> String {
-  return encode_command_text("quit")
+  return encode_command_text_with_context("quit", "cmd-quit", 0)
 }
 
-fn decode_command(value: String) -> CounterCommand {
+fn command_text_at_revision(kind: String, correlation_id: String, state_revision: Int) -> String {
+  return encode_command_text_with_context(kind, correlation_id, state_revision)
+}
+
+fn decode_command(value: String) -> Result<CounterCommand, String> {
   if value == "increment" {
-    return Increment
+    return Ok(Increment)
   }
   if value == "decrement" {
-    return Decrement
+    return Ok(Decrement)
   }
   if value == "quit" {
-    return Quit
+    return Ok(Quit)
   }
-  return Unknown
+  return Err("unknown thin-host command kind")
 }
 
-fn reduce_command(state: CounterState, command: CounterCommand) -> CounterStep {
+fn reduce_command_with_correlation(state: CounterState, command: CounterCommand, correlation_id: String) -> Result<CounterStep, String> {
   match command {
     Increment => {
-      return CounterStep(CounterState(state.counter + 1, "increment"), false, "increment_applied")
+      return Ok(CounterStep(CounterState(state.counter + 1, "increment", state.revision + 1),
+                            false,
+                            "increment_applied",
+                            correlation_id))
     }
     Decrement => {
-      return CounterStep(CounterState(state.counter - 1, "decrement"), false, "decrement_applied")
+      if state.counter <= 0 {
+        return Err("invalid counter transition: cannot decrement below zero")
+      }
+      return Ok(CounterStep(CounterState(state.counter - 1, "decrement", state.revision + 1),
+                            false,
+                            "decrement_applied",
+                            correlation_id))
     }
     Quit => {
-      return CounterStep(CounterState(state.counter, "quit"), true, "quit_requested")
-    }
-    Unknown => {
-      return CounterStep(CounterState(state.counter, "unknown"), false, "unknown_command_ignored")
+      return Ok(CounterStep(CounterState(state.counter, "quit", state.revision + 1),
+                            true,
+                            "quit_requested",
+                            correlation_id))
     }
   }
+}
+
+fn reduce_command(state: CounterState, command: CounterCommand) -> Result<CounterStep, String> {
+  return reduce_command_with_correlation(state, command, "local-reduce")
 }
 
 fn apply_command_text(state: CounterState, command_text: String) -> Result<CounterStep, String> {
-  match decode_command_kind(command_text) {
-    Ok(kind) => {
-      return Ok(reduce_command(state, decode_command(kind)))
-    }
-    Err(msg) => {
-      return Err(msg)
-    }
+  let command = decode_command_text(command_text)?
+  if command.state_revision() != state.revision {
+    return Err("stale thin-host command state_revision")
   }
+  return reduce_command_with_correlation(state, decode_command(command.kind())?, command.correlation_id())
 }

@@ -93,6 +93,12 @@ command/query/event seam:
 - commands in from the host
 - lifecycle events back out to the host
 - snapshot queries for render state
+- versioned `thin-host-bridge.command.v1`, `event.v1`, and `snapshot.v1` envelopes from
+  `official/nebula-thin-host-bridge`
+- `correlation_id` and `state_revision` fields for deterministic replay, stale-command rejection,
+  and telemetry/crash correlation
+- rejected commands preserve state and return a `command_rejected` event instead of silently
+  applying hidden fallback behavior
 
 Avoid:
 

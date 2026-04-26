@@ -272,6 +272,7 @@ Current baseline:
 - the repo already has the first backend-first internal-app substrate:
   - installed Linux backend SDK
   - `official/nebula-db-sqlite`
+  - `official/nebula-thin-host-bridge`
   - `examples/release_control_plane_workspace`
   - `examples/thin_host_app_core`
 - there is still no broad pure-Nebula desktop/mobile/web platform contract
@@ -284,6 +285,7 @@ Exit criteria:
 - `benchmarks/app_platform` fixes the representative workload set and reference stacks for broader
   APP-platform comparisons
 - internal-app and thin-host reference lanes both have explicit, maintained repo samples
+- thin-host bridge contracts have deterministic host/replay parity and negative-path smoke coverage
 - `control-plane-workspace` scaffolding consumes installed-preview `nebula-db-sqlite` when the
   backend SDK is present, while keeping remaining preview-only deps explicit
 - README/support-matrix/thin-host/roadmap docs all describe the same positioning

@@ -5,16 +5,18 @@
 
 namespace {
 
-std::string command_text(const char* kind) {
-  return std::string("{\"schema\":\"thin-host-bridge.command.v1\",\"kind\":\"") + kind + "\"}";
+std::string command_text(const char* kind, const char* correlation_id, int state_revision) {
+  return std::string("{\"schema\":\"thin-host-bridge.command.v1\",\"kind\":\"") + kind +
+         "\",\"correlation_id\":\"" + correlation_id + "\",\"state_revision\":" +
+         std::to_string(state_revision) + "}";
 }
 
 std::vector<std::string> g_commands = {
-    command_text("increment"),
-    command_text("increment"),
-    command_text("decrement"),
-    command_text("increment"),
-    command_text("quit"),
+    command_text("increment", "host-1", 0),
+    command_text("increment", "host-2", 1),
+    command_text("decrement", "host-3", 2),
+    command_text("increment", "host-4", 3),
+    command_text("quit", "host-5", 4),
 };
 std::size_t g_index = 0;
 
@@ -29,7 +31,7 @@ bool host_shell_open() {
 }
 
 std::string host_shell_next_command_text() {
-  if (g_index >= g_commands.size()) return command_text("quit");
+  if (g_index >= g_commands.size()) return command_text("quit", "host-fallback", 0);
   const std::string command = g_commands[g_index];
   g_index += 1;
   return command;

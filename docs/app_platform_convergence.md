@@ -84,6 +84,10 @@ Current convergence work should anchor to one real sample per important lane:
     release/apply workflow lane and pull-based worker leases
 - `examples/thin_host_app_core`
   - current host/core split sample for future frontend/native directions
+- `official/nebula-thin-host-bridge`
+  - preview command/event/snapshot envelope contract for thin-host app cores; it standardizes
+    correlation, state revision, deterministic replay, and explicit rejection semantics without
+    claiming renderer or GUI ownership
 - `examples/local_ops_console_ui`
   - first Nebula UI preview slice: `ui` / `view` syntax lowered to semantic JSON IR
 - `official/nebula-db-sqlite`
@@ -139,7 +143,7 @@ accessibility stack, AppKit/GTK adapter parity, or distribution pipeline.
 
 This wave should stabilize:
 
-- coarse-grained command/query/event bridge shapes
+- versioned command/event/snapshot bridge contracts with replay parity
 - lifecycle/auth/state-sync seams
 - host-side packaging/update recipes
 - shared crash/telemetry correlation rules

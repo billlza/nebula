@@ -16,8 +16,10 @@ fn emit_boot(state: CounterState) -> Void {
   emit_snapshot(state)
 }
 
-fn emit_rejected(state: CounterState, reason: String) -> Void {
-  print(line("event:", command_rejected_event_text(state, reason)))
+fn emit_rejected(state: CounterState, command_text: String, reason: String) -> Void {
+  print(line("event:", command_rejected_event_text(state,
+                                                   command_correlation_id_or(command_text, "replay-command-rejected"),
+                                                   reason)))
   emit_snapshot(state)
 }
 
@@ -34,31 +36,62 @@ fn replay_command(state: CounterState, command_text: String) -> CounterStep {
       return step
     }
     Err(msg) => {
-      emit_rejected(state, msg)
-      return CounterStep(state, false, "command_rejected")
+      emit_rejected(state, command_text, msg)
+      return CounterStep(state, false, "command_rejected", "replay-command-rejected")
     }
   }
 }
 
-fn main() -> Int {
+fn replay_negative(state: CounterState, command_text: String) -> Void {
+  let step = replay_command(state, command_text)
+}
+
+fn replay_host_prefix(state: CounterState) -> CounterState {
+  let step1 = replay_command(state, command_text_at_revision("increment", "host-1", state.revision()))
+  state = step1.state()
+
+  let step2 = replay_command(state, command_text_at_revision("increment", "host-2", state.revision()))
+  state = step2.state()
+
+  let step3 = replay_command(state, command_text_at_revision("decrement", "host-3", state.revision()))
+  state = step3.state()
+  return state
+}
+
+fn replay_host_suffix(state: CounterState) -> CounterStep {
+  let step4 = replay_command(state, command_text_at_revision("increment", "host-4", state.revision()))
+  state = step4.state()
+
+  let step5 = replay_command(state, command_text_at_revision("quit", "host-5", state.revision()))
+  return step5
+}
+
+fn replay_host_tape() -> Bool {
   let state = initial_state()
   print("replay-begin")
   emit_boot(state)
 
-  let step1 = replay_command(state, increment_command_text())
-  state = step1.state()
-
-  let step2 = replay_command(state, encode_command_text("warp"))
-  state = step2.state()
-
-  let step3 = replay_command(state, decrement_command_text())
-  state = step3.state()
-
-  let step4 = replay_command(state, quit_command_text())
-  state = step4.state()
-
+  state = replay_host_prefix(state)
+  let step5 = replay_host_suffix(state)
   print("replay-end")
-  if step4.should_exit_value() {
+  return step5.should_exit_value()
+}
+
+fn replay_negative_cases() -> Void {
+  print("negative-begin")
+  let negative_state = initial_state()
+  replay_negative(negative_state, "{")
+  replay_negative(negative_state, "{\"schema\":\"thin-host-bridge.command.v2\",\"kind\":\"increment\",\"correlation_id\":\"bad-schema\",\"state_revision\":0}")
+  replay_negative(negative_state, "{\"schema\":\"thin-host-bridge.command.v1\",\"correlation_id\":\"missing-kind\",\"state_revision\":0}")
+  replay_negative(negative_state, command_text_at_revision("warp", "negative-unknown", 0))
+  replay_negative(negative_state, command_text_at_revision("decrement", "negative-decrement", 0))
+  print("negative-end")
+}
+
+fn main() -> Int {
+  let should_exit = replay_host_tape()
+  replay_negative_cases()
+  if should_exit {
     return 0
   }
   return 1

@@ -1,0 +1,289 @@
+module host_bridge
+import std::json
+import std::result
+
+struct ThinHostCommand {
+  kind: String,
+  correlation_id: String,
+  state_revision: Int
+}
+
+struct ThinHostEvent {
+  kind: String,
+  payload: Json,
+  terminal: Bool,
+  correlation_id: String,
+  state_revision: Int
+}
+
+struct ThinHostEventMeta {
+  kind: String,
+  terminal: Bool,
+  correlation_id: String,
+  state_revision: Int
+}
+
+struct ThinHostSnapshot {
+  screen: String,
+  payload: Json,
+  state_revision: Int
+}
+
+fn command_schema() -> String {
+  return "thin-host-bridge.command.v1"
+}
+
+fn event_schema() -> String {
+  return "thin-host-bridge.event.v1"
+}
+
+fn snapshot_schema() -> String {
+  return "thin-host-bridge.snapshot.v1"
+}
+
+fn ThinHostCommand_kind(self: ThinHostCommand) -> String {
+  return self.kind
+}
+
+fn ThinHostCommand_correlation_id(self: ThinHostCommand) -> String {
+  return self.correlation_id
+}
+
+fn ThinHostCommand_state_revision(self: ThinHostCommand) -> Int {
+  return self.state_revision
+}
+
+fn ThinHostEvent_kind(self: ThinHostEvent) -> String {
+  return self.kind
+}
+
+fn ThinHostEvent_payload(self: ThinHostEvent) -> Json {
+  return self.payload
+}
+
+fn ThinHostEvent_terminal(self: ThinHostEvent) -> Bool {
+  return self.terminal
+}
+
+fn ThinHostEvent_correlation_id(self: ThinHostEvent) -> String {
+  return self.correlation_id
+}
+
+fn ThinHostEvent_state_revision(self: ThinHostEvent) -> Int {
+  return self.state_revision
+}
+
+fn ThinHostSnapshot_screen(self: ThinHostSnapshot) -> String {
+  return self.screen
+}
+
+fn ThinHostSnapshot_payload(self: ThinHostSnapshot) -> Json {
+  return self.payload
+}
+
+fn ThinHostSnapshot_state_revision(self: ThinHostSnapshot) -> Int {
+  return self.state_revision
+}
+
+fn encode_command_text(kind: String) -> String {
+  return encode_command_text_with_context(kind, "local-command", 0)
+}
+
+fn encode_command_text_with_context(kind: String, correlation_id: String, state_revision: Int) -> String {
+  return stringify(object4("schema",
+                           string_value(command_schema()),
+                           "kind",
+                           string_value(kind),
+                           "correlation_id",
+                           string_value(correlation_id),
+                           "state_revision",
+                           int_value(state_revision)))
+}
+
+fn expect_schema(value: Json, key: String, expected: String, missing_msg: String, unsupported_msg: String) -> Result<Bool, String> {
+  match get_string(value, key) {
+    Ok(schema) => {
+      if schema != expected {
+        return Err(unsupported_msg)
+      }
+      return Ok(true)
+    }
+    Err(msg) => {
+      return Err(missing_msg)
+    }
+  }
+}
+
+fn expect_string_field(value: Json, key: String, missing_msg: String) -> Result<String, String> {
+  match get_string(value, key) {
+    Ok(text) => {
+      return Ok(text)
+    }
+    Err(msg) => {
+      return Err(missing_msg)
+    }
+  }
+}
+
+fn expect_int_field(value: Json, key: String, missing_msg: String) -> Result<Int, String> {
+  match get_int(value, key) {
+    Ok(number) => {
+      return Ok(number)
+    }
+    Err(msg) => {
+      return Err(missing_msg)
+    }
+  }
+}
+
+fn expect_bool_field(value: Json, key: String, missing_msg: String) -> Result<Bool, String> {
+  match get_bool(value, key) {
+    Ok(flag) => {
+      return Ok(flag)
+    }
+    Err(msg) => {
+      return Err(missing_msg)
+    }
+  }
+}
+
+fn expect_value_field(value: Json, key: String, missing_msg: String) -> Result<Json, String> {
+  match get_value(value, key) {
+    Ok(payload) => {
+      return Ok(payload)
+    }
+    Err(msg) => {
+      return Err(missing_msg)
+    }
+  }
+}
+
+fn decode_command_text(text: String) -> Result<ThinHostCommand, String> {
+  match parse(text) {
+    Ok(value) => {
+      return command_from_json(value)
+    }
+    Err(msg) => {
+      return Err("malformed thin-host command envelope")
+    }
+  }
+}
+
+fn command_from_json(value: Json) -> Result<ThinHostCommand, String> {
+  expect_schema(value,
+                "schema",
+                command_schema(),
+                "missing thin-host command schema",
+                "unsupported thin-host command schema")?
+  let kind = expect_string_field(value, "kind", "missing thin-host command kind")?
+  let correlation_id = expect_string_field(value, "correlation_id", "missing thin-host command correlation_id")?
+  let state_revision = expect_int_field(value, "state_revision", "missing thin-host command state_revision")?
+  return Ok(ThinHostCommand(kind, correlation_id, state_revision))
+}
+
+fn decode_command_kind(text: String) -> Result<String, String> {
+  let command = decode_command_text(text)?
+  return Ok(command.kind())
+}
+
+fn command_correlation_id_or(text: String, fallback: String) -> String {
+  match decode_command_text(text) {
+    Ok(command) => {
+      return command.correlation_id()
+    }
+    Err(msg) => {
+      return fallback
+    }
+  }
+}
+
+fn encode_event_text(kind: String, payload: Json, terminal: Bool) -> String {
+  return encode_event_text_with_context(kind, payload, terminal, "local-event", 0)
+}
+
+fn encode_event_text_with_context(kind: String,
+                                  payload: Json,
+                                  terminal: Bool,
+                                  correlation_id: String,
+                                  state_revision: Int) -> String {
+  return stringify(object6("schema",
+                           string_value(event_schema()),
+                           "kind",
+                           string_value(kind),
+                           "payload",
+                           payload,
+                           "terminal",
+                           bool_value(terminal),
+                           "correlation_id",
+                           string_value(correlation_id),
+                           "state_revision",
+                           int_value(state_revision)))
+}
+
+fn decode_event_text(text: String) -> Result<ThinHostEvent, String> {
+  match parse(text) {
+    Ok(value) => {
+      return event_from_json(value)
+    }
+    Err(msg) => {
+      return Err("malformed thin-host event envelope")
+    }
+  }
+}
+
+fn event_from_json(value: Json) -> Result<ThinHostEvent, String> {
+  let meta = event_meta_from_json(value)?
+  let payload = expect_value_field(value, "payload", "missing thin-host event payload")?
+  return Ok(ThinHostEvent(meta.kind, payload, meta.terminal, meta.correlation_id, meta.state_revision))
+}
+
+fn event_meta_from_json(value: Json) -> Result<ThinHostEventMeta, String> {
+  expect_schema(value,
+                "schema",
+                event_schema(),
+                "missing thin-host event schema",
+                "unsupported thin-host event schema")?
+  let kind = expect_string_field(value, "kind", "missing thin-host event kind")?
+  let terminal = expect_bool_field(value, "terminal", "missing thin-host event terminal")?
+  let correlation_id = expect_string_field(value, "correlation_id", "missing thin-host event correlation_id")?
+  let state_revision = expect_int_field(value, "state_revision", "missing thin-host event state_revision")?
+  return Ok(ThinHostEventMeta(kind, terminal, correlation_id, state_revision))
+}
+
+fn encode_snapshot_text(screen: String, payload: Json) -> String {
+  return encode_snapshot_text_with_revision(screen, payload, 0)
+}
+
+fn encode_snapshot_text_with_revision(screen: String, payload: Json, state_revision: Int) -> String {
+  return stringify(object4("schema",
+                           string_value(snapshot_schema()),
+                           "screen",
+                           string_value(screen),
+                           "payload",
+                           payload,
+                           "state_revision",
+                           int_value(state_revision)))
+}
+
+fn decode_snapshot_text(text: String) -> Result<ThinHostSnapshot, String> {
+  match parse(text) {
+    Ok(value) => {
+      return snapshot_from_json(value)
+    }
+    Err(msg) => {
+      return Err("malformed thin-host snapshot envelope")
+    }
+  }
+}
+
+fn snapshot_from_json(value: Json) -> Result<ThinHostSnapshot, String> {
+  expect_schema(value,
+                "schema",
+                snapshot_schema(),
+                "missing thin-host snapshot schema",
+                "unsupported thin-host snapshot schema")?
+  let screen = expect_string_field(value, "screen", "missing thin-host snapshot screen")?
+  let payload = expect_value_field(value, "payload", "missing thin-host snapshot payload")?
+  let state_revision = expect_int_field(value, "state_revision", "missing thin-host snapshot state_revision")?
+  return Ok(ThinHostSnapshot(screen, payload, state_revision))
+}

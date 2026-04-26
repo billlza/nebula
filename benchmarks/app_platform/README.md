@@ -62,8 +62,10 @@ pure Nebula runtime behavior.
   - `ui_action_roundtrip`
   - `ui_snapshot_render`
 - the extracted thin-host bridge is now consumed by:
+  - `official/nebula-thin-host-bridge`
   - `examples/thin_host_app_core`
   - `examples/thin_host_bridge_replay`
+  - `examples/thin_host_bridge_contract`
 - the representative Nebula paths are fixed to the existing repo samples
 - this wave now includes real Nebula workload execution for the current CLI, service, thin-host,
   and ops-memory lanes, while the broader cross-language matrix still remains a staged plan rather

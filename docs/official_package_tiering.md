@@ -23,6 +23,7 @@ Repo-local preview packages:
 - `nebula-tls`
 - `nebula-pqc-protocols`
 - `nebula-qcomm-sim`
+- `nebula-thin-host-bridge`
 - `nebula-ui`
 
 Preview-package expectations:
@@ -53,4 +54,6 @@ Current package intent:
 - `nebula-tls`: outbound client-side TLS/HTTPS helpers
 - `nebula-pqc-protocols`: application-layer PQC signed helpers + authenticated secure-channel helpers
 - `nebula-qcomm-sim`: simulation-only BB84 quantum-communication lab package
+- `nebula-thin-host-bridge`: preview command/event/snapshot envelope contract for thin-host app
+  cores, including correlation, state revision, replay validation, and explicit non-UI non-goals
 - `nebula-ui`: preview semantic UI tree package for `ui` / `view` source syntax and adapter-facing JSON IR
