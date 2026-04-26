@@ -99,8 +99,8 @@ completed by local dry-run work alone:
 - `[ ]` GA surface and preview-package language are still aligned everywhere:
   - compiler/CLI/package workflow/bundled `std`/runtime headers are GA
   - CLI/tooling docs still present 1.0 as a small-to-medium CLI / system tool release
-  - installed-preview wording stays explicit where `nebula-db-sqlite` ships inside the opt-in
-    backend SDK asset
+  - installed-preview wording stays explicit where `nebula-auth`, `nebula-config`, and
+    `nebula-db-sqlite` ship inside the opt-in backend SDK asset
   - remaining `official/*` packages still remain preview/pilot, not installed GA surface
 - `[ ]` no unresolved release blocker remains in:
   - install/upgrade/rollback/uninstall docs

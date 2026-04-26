@@ -309,8 +309,10 @@ if [[ "$with_backend_sdk" == "1" ]]; then
   backend_payload_dir="$extract_root/$(basename "${backend_sdk_asset%.tar.gz}")"
   backend_manifest="$backend_payload_dir/share/nebula/sdk/backend/nebula-service/nebula.toml"
   backend_observe_manifest="$backend_payload_dir/share/nebula/sdk/backend/nebula-observe/nebula.toml"
+  backend_auth_manifest="$backend_payload_dir/share/nebula/sdk/backend/nebula-auth/nebula.toml"
+  backend_config_manifest="$backend_payload_dir/share/nebula/sdk/backend/nebula-config/nebula.toml"
   backend_db_manifest="$backend_payload_dir/share/nebula/sdk/backend/nebula-db-sqlite/nebula.toml"
-  if [[ ! -f "$backend_manifest" || ! -f "$backend_observe_manifest" || ! -f "$backend_db_manifest" ]]; then
+  if [[ ! -f "$backend_manifest" || ! -f "$backend_observe_manifest" || ! -f "$backend_auth_manifest" || ! -f "$backend_config_manifest" || ! -f "$backend_db_manifest" ]]; then
     echo "error: extracted backend SDK archive missing package manifest: $backend_manifest" >&2
     exit 1
   fi
@@ -357,7 +359,7 @@ fi
 echo "Nebula build/run/test/bench uses a host C++23 compiler. Default contract: clang++ when CXX is unset."
 if [[ "$with_backend_sdk" == "1" ]]; then
   echo "Installed the Nebula backend SDK under $prefix/share/nebula/sdk/backend."
-  echo "That payload includes GA backend packages (nebula-service, nebula-observe) plus preview installed package nebula-db-sqlite."
+  echo "That payload includes GA backend packages (nebula-service, nebula-observe) plus preview installed packages nebula-auth, nebula-config, and nebula-db-sqlite."
 else
   echo "Nebula backend SDK is not installed by default; pass --with-backend-sdk on Linux to install it."
 fi

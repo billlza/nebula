@@ -35,6 +35,13 @@ Installed Linux backend SDK package matrix:
 
 Installed Linux backend SDK preview package matrix:
 
+- `nebula-auth`: Linux x86_64 installed preview package for backend-first internal apps when the
+  backend SDK asset is installed; still documented as preview rather than backend SDK GA, with
+  RS256 JWT verification against caller-provided JWKS text and no local accounts, browser login
+  flow, JWKS URL fetch/cache, or session platform claim.
+- `nebula-config`: Linux x86_64 installed preview package for backend-first internal apps when the
+  backend SDK asset is installed; still documented as preview rather than backend SDK GA, with
+  typed env parsing, mounted-secret file reads, mutual-exclusion checks, and redacted diagnostics.
 - `nebula-db-sqlite`: Linux x86_64 installed preview package for backend-first internal apps when
   the backend SDK asset is installed; still documented as preview rather than backend SDK GA, with
   runtime-backed SQLite connection / transaction / result-set handles, migration runner, narrow
@@ -54,10 +61,13 @@ Repo-local preview package matrix:
   the default data plane.
 - `nebula-auth`: macOS + Linux; current preview resource-server authentication slice for
   backend-first internal apps, with RS256 JWT verification against caller-provided JWKS text and no
-  local accounts, browser login flow, JWKS URL fetch/cache, or session platform claim.
+  local accounts, browser login flow, JWKS URL fetch/cache, or session platform claim. It is
+  additionally shipped as an installed preview package inside the Linux backend SDK asset on Linux
+  x86_64.
 - `nebula-config`: macOS + Linux; current preview app-level env and mounted-secret helper for
-  backend-first internal apps, with typed env parsing and redacted diagnostics. It is repo-local
-  only in this wave and does not claim cloud KMS, dynamic rotation, or secret storage.
+  backend-first internal apps, with typed env parsing and redacted diagnostics. It is additionally
+  shipped as an installed preview package inside the Linux backend SDK asset on Linux x86_64 and
+  does not claim cloud KMS, dynamic rotation, or secret storage.
 - `nebula-jobs`: macOS + Linux; current preview jobs/workflow kernel with DAG stage validation,
   SQLite-first run storage, pull-based worker leases, retry/dead-letter, idempotent event receipt,
   and durable outbox helpers. It is repo-local only in this wave and does not claim Postgres jobs

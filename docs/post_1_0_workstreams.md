@@ -126,15 +126,16 @@ Current status:
 - public webhook integrations have a first opt-in signed ingress path for the forcing app:
   HMAC-SHA256 verified requests submit provider-neutral workflow events and reuse workflow receipt
   idempotency
-- `official/nebula-config` now exists as a repo-local preview for app-level env, mounted-secret
-  files, and redacted startup preflight diagnostics; it is deliberately separate from
-  `official/nebula-service` HTTP bind/timeout configuration and does not claim cloud KMS,
-  dynamic rotation, or secret storage
+- `official/nebula-config` now exists as a preview for app-level env, mounted-secret files, and
+  redacted startup preflight diagnostics; it is additionally shipped as an opt-in Linux backend SDK
+  installed-preview package, remains deliberately separate from `official/nebula-service` HTTP
+  bind/timeout configuration, and does not claim cloud KMS, dynamic rotation, or secret storage
 - auth/identity now has a first repo-local resource-server preview:
   `official/nebula-auth` verifies RS256 JWTs against caller-provided JWKS text, and the
   release-control-plane forcing app can opt into `APP_AUTH_MODE=jwt` while keeping static token mode
-  as the default; local accounts, browser login, sessions, JWKS URL fetch/cache, and full OIDC client
-  flows remain future work
+  as the default; it is additionally shipped as an opt-in Linux backend SDK installed-preview
+  package, while local accounts, browser login, sessions, JWKS URL fetch/cache, and full OIDC
+  client flows remain future work
 - free-form shell command tasks have a first opt-in sidecar worker path for the forcing app:
   service workflow stages produce `shell_command` leases, while operator-owned CLI sidecars validate
   allowlists and execute argv-based `std::process` commands with timeout and capped-output result
@@ -290,8 +291,9 @@ Exit criteria:
   APP-platform comparisons
 - internal-app and thin-host reference lanes both have explicit, maintained repo samples
 - thin-host bridge contracts have deterministic host/replay parity and negative-path smoke coverage
-- `control-plane-workspace` scaffolding consumes installed-preview `nebula-db-sqlite` when the
-  backend SDK is present, while keeping remaining preview-only deps explicit
+- `control-plane-workspace` scaffolding consumes installed-preview `nebula-auth`, `nebula-config`,
+  and `nebula-db-sqlite` when the backend SDK is present, while keeping remaining preview-only deps
+  explicit
 - README/support-matrix/thin-host/roadmap docs all describe the same positioning
 
 Current status:

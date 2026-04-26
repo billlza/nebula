@@ -137,7 +137,29 @@ def package_backend_sdk(repo_root: Path, version: str, output_dir: Path) -> Path
     sdk_root = stage_root / "share" / "nebula" / "sdk" / "backend"
     sdk_root.mkdir(parents=True, exist_ok=True)
     _copytree(repo_root / "official" / "nebula-service", sdk_root / "nebula-service")
+    service_manifest = sdk_root / "nebula-service" / "nebula.toml"
+    service_manifest.write_text(
+        service_manifest.read_text(encoding="utf-8").replace(
+            'tlss = { path = "../nebula-tls-server" }',
+            "",
+        ),
+        encoding="utf-8",
+    )
+    service_tls_module = sdk_root / "nebula-service" / "src" / "tls.nb"
+    if service_tls_module.exists():
+        service_tls_module.unlink()
+    service_readme = sdk_root / "nebula-service" / "README.md"
+    if service_readme.exists():
+        service_readme.write_text(
+            "Installed SDK note: this payload exposes the Linux backend service GA subset. "
+            "The preview `service::tls` adapter remains repo-local and is not shipped in the "
+            "installed `nebula-service` package.\n\n"
+            + service_readme.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
     _copytree(repo_root / "official" / "nebula-observe", sdk_root / "nebula-observe")
+    _copytree(repo_root / "official" / "nebula-auth", sdk_root / "nebula-auth")
+    _copytree(repo_root / "official" / "nebula-config", sdk_root / "nebula-config")
     _copytree(repo_root / "official" / "nebula-db-sqlite", sdk_root / "nebula-db-sqlite")
     hello_api_root = sdk_root / "examples" / "hello_api"
     _copytree(repo_root / "examples" / "hello_api", hello_api_root)

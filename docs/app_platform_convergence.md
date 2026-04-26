@@ -94,9 +94,11 @@ Current convergence work should anchor to one real sample per important lane:
   - the first official embedded-data package for backend-first internal apps
 - `official/nebula-auth`
   - the first official resource-server auth package for backend-first internal apps; currently
-    limited to RS256 JWT verification against caller-provided JWKS text
+    limited to RS256 JWT verification against caller-provided JWKS text and additionally shipped as
+    an opt-in Linux backend SDK installed-preview package
 - `official/nebula-config`
-  - preview app-level env, mounted-secret file, and redacted startup preflight helpers; it keeps
+  - preview app-level env, mounted-secret file, and redacted startup preflight helpers; it is
+    additionally shipped as an opt-in Linux backend SDK installed-preview package and keeps
     secrets/config lifecycle separate from `nebula-service` HTTP bind/timeout config
 - `official/nebula-jobs`
   - the first official jobs/workflow kernel package; currently limited to DAG validation,

@@ -45,10 +45,11 @@ Current profile:
     redirected log file
 - Operator-facing deployment, config layering, and secrets guidance now lives in
   `docs/backend_operator_guide.md`
-- backend-first internal apps may pair the GA service layer with the preview
-  `official/nebula-db-sqlite` package for embedded state, either from a repo checkout or from the
-  installed-preview package shipped inside the opt-in backend SDK asset on Linux x86_64; that
-  database story still remains outside the installed backend SDK GA contract in this wave
+- backend-first internal apps may pair the GA service layer with preview app auth, app config, and
+  embedded state packages, either from a repo checkout or from the installed-preview
+  `official/nebula-auth`, `official/nebula-config`, and `official/nebula-db-sqlite` payloads shipped
+  inside the opt-in backend SDK asset on Linux x86_64; those preview packages still remain outside
+  the installed backend SDK GA contract in this wave
 - Preview application examples such as `examples/pqc_secure_service` are intended as repo-local patterns for application-layer secure payloads, not as a promise of full transport/framework maturity
 - Preview transport helpers now include `official/nebula-tls-server` plus the thin
   `service::tls` adapter for internal/private TLS listener integration; this does not change the

@@ -8,6 +8,11 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
+run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\")\nbackend_stage=\"work/release_signoff/nebula-backend-sdk-v${version}-linux-x86_64\"\nfor package in nebula-auth nebula-config; do\n  mkdir -p \"$backend_stage/share/nebula/sdk/backend/$package\"\n  printf 'schema_version = 1\\n' > \"$backend_stage/share/nebula/sdk/backend/$package/nebula.toml\"\ndone\ntar -C work/release_signoff -czf \"work/release_signoff/nebula-backend-sdk-v${version}-linux-x86_64.tar.gz\" \"nebula-backend-sdk-v${version}-linux-x86_64\"\npython3 \"$NEBULA_REPO_ROOT/scripts/generate_release_manifest.py\" --artifact-dir work/release_signoff --checksums-out work/release_signoff/SHA256SUMS.txt --manifest-out work/release_signoff/release-manifest.json --base-url \"file://$PWD/work/release_signoff\" --require-all on"
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
 run = "python3 \"$NEBULA_REPO_ROOT/scripts/release_signoff.py\" --artifact-dir work/release_signoff --json-out work/release_signoff/signoff.json --markdown-out work/release_signoff/signoff.md"
 expect_rc = 0
 must_exist = ["work/release_signoff/signoff.json", "work/release_signoff/signoff.md"]

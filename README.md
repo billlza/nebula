@@ -402,9 +402,23 @@ Repo-local preview packages currently include:
     - direct-env or mounted-secret file resolution with mutual-exclusion checks
     - redacted diagnostic JSON for startup preflight
   - current distribution posture:
-    - repo-local preview package from a checkout
-    - not included in the opt-in Linux backend SDK installed-preview payload yet
+    - repo-local preview package from a checkout on supported hosts
+    - additionally shipped as an installed preview package inside the opt-in Linux backend SDK asset
+      on Linux x86_64 via `app_config = { installed = "nebula-config" }`
+    - still not part of the Linux backend SDK GA contract
   - current explicit non-goals: cloud KMS, dynamic secret rotation, secret storage, policy DSL
+- `official/nebula-auth`
+  - preview resource-server authentication slice for backend-first internal apps
+  - current shipped surface:
+    - RS256 JWT verification against caller-provided JWKS text
+    - issuer, audience, expiration, not-before, and role claim checks for internal services
+  - current distribution posture:
+    - repo-local preview package from a checkout on supported hosts
+    - additionally shipped as an installed preview package inside the opt-in Linux backend SDK asset
+      on Linux x86_64 via `auth = { installed = "nebula-auth" }`
+    - still not part of the Linux backend SDK GA contract
+  - current explicit non-goals: local accounts, browser login, sessions, JWKS URL fetch/cache,
+    full OIDC client flows, policy platform
 - `official/nebula-crypto`
   - import path: `import crypto::rand`, `import crypto::hash`, `import crypto::pqc.kem`,
     `import crypto::pqc.sign`
@@ -455,10 +469,11 @@ Preview examples for these repo-local surfaces include:
 - `examples/local_ops_console_ui`
 
 These preview packages remain outside the installed GA surface even when one of them is shipped for
-convenience inside the opt-in backend SDK payload. Today `official/nebula-db-sqlite` is the only
-installed preview package in that category; `official/nebula-db-postgres` and the rest are still
-consumed from the repo checkout with `path` dependencies until they have their own stable release
-channels.
+convenience inside the opt-in backend SDK payload. Today `official/nebula-auth`,
+`official/nebula-config`, and `official/nebula-db-sqlite` are the installed preview packages in
+that category; `official/nebula-db-postgres`, `official/nebula-jobs`, and the remaining previews
+are still consumed from the repo checkout with `path` dependencies until they have their own stable
+release channels.
 
 Performance positioning stays narrow on purpose: the next hard-win program focuses on
 `std::bytes/std::json/std::http`, `nebula-service`, `nebula-crypto`, `nebula-tls`, and
@@ -552,8 +567,8 @@ Starter templates:
 - `http-service`: long-lived stdlib HTTP service starter with `PORT`, `/healthz`, and `/hello/:name`
 - `backend-service`: installed backend-SDK starter with `service::*`, `/healthz`, `/readyz`, request-id policy, and drain/shutdown handling
 - `control-plane-workspace`: repo-preview backend-first internal app workspace starter that layers
-  the backend SDK with installed-preview `nebula-db-sqlite`, repo-preview `nebula-db-postgres` /
-  `nebula-tls`, and a release-state control-plane slice
+  the backend SDK with installed-preview `nebula-auth`, `nebula-config`, `nebula-db-sqlite`,
+  repo-preview `nebula-db-postgres` / `nebula-tls`, and a release-state control-plane slice
 
 For Linux backend GA work, prefer `backend-service`. The repo-local `examples/hello_api` project
 remains a preview/reference example from a source checkout rather than the recommended installed

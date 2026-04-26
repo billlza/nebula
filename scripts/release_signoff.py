@@ -178,6 +178,8 @@ def _verify_archive_layout(artifact_dir: Path, version: str) -> list[CheckResult
     required_backend = [
         f"{backend_root}/share/nebula/sdk/backend/nebula-service/nebula.toml",
         f"{backend_root}/share/nebula/sdk/backend/nebula-observe/nebula.toml",
+        f"{backend_root}/share/nebula/sdk/backend/nebula-auth/nebula.toml",
+        f"{backend_root}/share/nebula/sdk/backend/nebula-config/nebula.toml",
         f"{backend_root}/share/nebula/sdk/backend/nebula-db-sqlite/nebula.toml",
         f"{backend_root}/share/nebula/sdk/backend/nebula-observe/prometheus_bridge.py",
         f"{backend_root}/share/nebula/sdk/backend/examples/hello_api/nebula.toml",

@@ -104,14 +104,14 @@ def nebula(binary: str,
     )
 
 
-def fetch_workspace(binary: str, root: Path) -> None:
-    require_success(nebula(binary, "fetch", root), "workspace fetch")
+def fetch_workspace(binary: str, root: Path, env: dict[str, str] | None = None) -> None:
+    require_success(nebula(binary, "fetch", root, env=env), "workspace fetch")
 
 
-def build_service_binary(binary: str, root: Path) -> Path:
+def build_service_binary(binary: str, root: Path, env: dict[str, str] | None = None) -> Path:
     out_dir = root / ".service-out"
     require_success(
-        nebula(binary, "build", root / "apps" / "service", "--out-dir", out_dir),
+        nebula(binary, "build", root / "apps" / "service", "--out-dir", out_dir, env=env),
         "service build",
     )
     return out_dir / "main.out"
@@ -119,8 +119,9 @@ def build_service_binary(binary: str, root: Path) -> Path:
 
 def start_service(binary: str,
                   root: Path,
-                  extra_env: dict[str, str] | None = None) -> tuple[subprocess.Popen[str], list[str], int]:
-    service_binary = build_service_binary(binary, root)
+                  extra_env: dict[str, str] | None = None,
+                  build_env: dict[str, str] | None = None) -> tuple[subprocess.Popen[str], list[str], int]:
+    service_binary = build_service_binary(binary, root, env=build_env)
     env = {
         **os.environ,
         "NEBULA_BIND_HOST": "127.0.0.1",

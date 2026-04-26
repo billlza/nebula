@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+JWKS = '{"keys":[{"kty":"RSA","kid":"test-key","alg":"RS256","n":"u1XzrSC7xLK4FJVZNaJ578TOvBS0g6Gv2P66IUCnzWx6kAi0W1tkI5skloF75EjLCPvi-CT4AP07PTee62TEiLQNC9MkVATTT_mbCkhMWqeUr4S6Bj3N19yhL2Fmymfg7RU8kTA7R2l9XhPdUGNqXfpLTD7aXXtSrlgvw-6WjHa1vAR60QJb31PAjmQKwo8EoJtkrY-DsEgKhhFqKmfhTp_H119vB5UfygkvcypsLdOXK89Iz7t2E1RmqDLe1-ngiOnYbIIJueB33VKnJCITo5RZb0Qj6-zbu7iBcz9lgztezT-kN-orcmkoYTrSkCBzszDO7_lKvLLk2pQadMBmpw","e":"AQAB"}]}'
+
+READER = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6InJlYWRlciIsInJvbGVzIjpbInJlYWRlciJdfQ.ODsFGAvLT3lIkDuhA28kGBUg-dCvVNiVAxPUg_hB5QEiwr8C58qnZwJGYNYmuM2TBXYOXLyDkPg8wwXdNng3Hzv1dAFWrsPRDl6oFiY0TE7WnwV3B0Ik-wgTdu5u8VryRWJjMArJOdC3Uiqb7dTukNhcWKL3GMIL3qwgjulOUa5KUeJfdcNBYwyNrnJY14rNpaeGBSRB47Te_LAA-HtPvkq4P4Ohd565IaeWzT0hgc4PozqH7YEgxb4CEsIefWunpGIBgRzFEkYGWev17Oa8SfrKRFvPTQNbT2A6GnHhZGH8eMDTLf7Od1gbjQNIcrhJ6oUz1UjNApGSyS-AwHAWvw"
+WRITER = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6IndyaXRlciIsInJvbGVzIjpbIndyaXRlciJdfQ.KEId8JtcdsFVuWVUbgoqnbeNvx6ZILEp4lEK_TaOZCE3FYUATNBCzBKLWgiEEH8gkK7GLoK6EJ4yKAQfRbrRMoqVY8JTDA6hUrwpDsHFgfIRuzluMDspjCY6MtJaTxy8sxoBTlN1rerR0zBLJ1nJ8Mn9pQBdlSKpk8-qn1SImV1WJVraET_jj8pQUKM5PQapimCSyrCWQ87miV0IpmcdUncKWWfAYEkgNfExqXrxIFTjdNwS9c4CE-iH2Af2uTY5zHO8PZ0huaqrZo3AWdw09-mgtEeOGzkmUCG_BPgP7zoOjfWDTKzNIPV9RhP4xzKPwJrv-PK35rm939ppRI9JmQ"
+ADMIN = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6ImFkbWluIiwicm9sZXMiOlsiYWRtaW4iXX0.RpiboD2z984vRU17KGuUSKOEYJYts5Z1kXPiPdISDtrSZdN3CLoNqLRhGPCqXie54RO577jtyG08fW9_3WYulSrJ05YDFM5AjPv3O7BTI4oDsD4UyAYzQCHX28hNUifLr-ZqMzk7-E2OFSyhBRZ9ngoJqMW5brnD6xLFRn4mSusPHaw0DqgiQhfG-OhYyzH81lqnlA5ZKYSyB6OHNTsNsVawiT07TcDNqyHD8Ibs4ex088Ejp5OO4wAytSCAK4L01iBRh3KpE7tF9lx9FEmIG8_N1DyUp6Gp5Jd3NELU9pk8fQeo4Zh1armmKAN3oCpFObhkCOJdwhm3yKTf6-t1Dw"
+WORKER = "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwiYXVkIjoicmVsZWFzZS1jb250cm9sLXBsYW5lIiwiZXhwIjo0MTAyNDQ0ODAwLCJuYmYiOjEwMDAsInN1YiI6IndvcmtlciIsInJvbGVzIjpbIndvcmtlciJdfQ.REMRvBKQPWgw32gFJlQ9UqgJPcbwPQIOfyp90URpWBD-7uYk-LnStdR9BkfrZQ7HJguRQrI-y0cI_ERag-qoq_lKWpW62k-y7WBtt8PG3M4c7Zf_5UfsJyhjBhSE3HRgDrYcVvLIc3BUcHijG5nvqPR-bqBRJfyQIbgO_EMVKV6Zuu812Fk90mm1XTsjvavaZE2do002mRSLS6UQgvl_bpxarY0o-ZGe4H11VYvm0yEytYHeAoL4WU-74OqEA_PbY5-pIbb7hSet8sTMp91m-L2slLpovc5r_e6wCexKizDFQQHo3oyxuR88orkP-n63PXqF2nG2ZU7tadbuFXa9bA"
+
+TOKENS = {
+    "reader": READER,
+    "writer": WRITER,
+    "admin": ADMIN,
+    "worker": WORKER,
+}
+
+
+def write_jwt_fixture_files(dest: Path) -> dict[str, Path]:
+    dest.mkdir(parents=True, exist_ok=True)
+    paths = {"jwks": dest / "jwks.json"}
+    paths["jwks"].write_text(JWKS, encoding="utf-8")
+    for role, token in TOKENS.items():
+        path = dest / f"{role}.jwt"
+        path.write_text(token + "\n", encoding="utf-8")
+        paths[role] = path
+    return paths

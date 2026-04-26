@@ -1,0 +1,187 @@
+id = "TST-289-backend-sdk-config-auth-installed-preview-smoke"
+suite = "test"
+description = "backend SDK ships nebula-config and nebula-auth as installed preview packages"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import hashlib
+import json
+import os
+import platform
+import shutil
+import subprocess
+from pathlib import Path
+
+if platform.system() != "Linux" or platform.machine().lower() not in ("x86_64", "amd64"):
+    print("backend-sdk-config-auth-install-skip-unsupported-host")
+    raise SystemExit(0)
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+root = Path("work/backend_sdk_config_auth_install")
+shutil.rmtree(root, ignore_errors=True)
+root.mkdir(parents=True, exist_ok=True)
+version = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
+subprocess.run([
+    "python3",
+    str(repo_root / "scripts" / "package_release.py"),
+    "--binary",
+    os.environ["NEBULA_BINARY"],
+    "--target",
+    "linux-x86_64",
+    "--output-dir",
+    str(root),
+    "--include-backend-sdk",
+], check=True)
+checksums = []
+for asset in sorted(root.glob("nebula-*.tar.gz")):
+    h = hashlib.sha256()
+    with asset.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    checksums.append(f"{h.hexdigest()}  {asset.name}")
+(root / "SHA256SUMS.txt").write_text("\\n".join(checksums) + "\\n", encoding="utf-8")
+
+install_root = root / "prefix"
+subprocess.run([
+    "bash",
+    str(repo_root / "scripts" / "install.sh"),
+    "--version",
+    version,
+    "--prefix",
+    str(install_root),
+    "--base-url",
+    str(root),
+    "--with-backend-sdk",
+], check=True)
+
+backend_root = install_root / "share" / "nebula" / "sdk" / "backend"
+for package in ("nebula-auth", "nebula-config"):
+    manifest = backend_root / package / "nebula.toml"
+    if not manifest.exists():
+        raise SystemExit(f"backend SDK missing installed preview package: {package}")
+
+nebula_bin = install_root / "bin" / "nebula"
+
+config_project = root / "config_preview_app"
+subprocess.run([str(nebula_bin), "new", str(config_project)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+(config_project / "nebula.toml").write_text("""schema_version = 1
+
+[package]
+name = "config-preview-app"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_config = { installed = "nebula-config" }
+""", encoding="utf-8")
+secret_path = root / "installed-config.secret"
+secret_path.write_text("from-file\\n", encoding="utf-8")
+(config_project / "src" / "main.nb").write_text("""module main
+import app_config::config
+import std::json
+import std::result
+
+fn run_checks() -> Result<Bool, String> {
+  let required = required_env("INSTALLED_CFG_REQUIRED")?
+  if required != "hello" {
+    return Err("required env mismatch")
+  }
+  let secret = required_secret_value("INSTALLED_CFG_SECRET", "INSTALLED_CFG_SECRET_FILE")?
+  if secret != "from-file" {
+    return Err("secret file mismatch")
+  }
+  let diag = secret_diagnostic("INSTALLED_CFG_SECRET", "INSTALLED_CFG_SECRET_FILE", true)
+  if get_string(diag, "value")? != "<redacted>" {
+    return Err("secret diagnostic leaked value")
+  }
+  return Ok(true)
+}
+
+fn main() -> Int {
+  match run_checks() {
+    Ok(_) => {
+      print("config-installed-preview-ok")
+      return 0
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+""", encoding="utf-8")
+subprocess.run([str(nebula_bin), "fetch", str(config_project)], check=True)
+config_lock = (config_project / "nebula.lock").read_text(encoding="utf-8")
+if 'name = "nebula-config"' not in config_lock or 'source_kind = "installed"' not in config_lock:
+    raise SystemExit("installed-preview config project lock did not record installed nebula-config")
+config_run = subprocess.run(
+    [str(nebula_bin), "run", str(config_project), "--run-gate", "none"],
+    capture_output=True,
+    text=True,
+    env={**os.environ, "INSTALLED_CFG_REQUIRED": "hello", "INSTALLED_CFG_SECRET_FILE": str(secret_path)},
+)
+if config_run.returncode != 0 or "config-installed-preview-ok" not in config_run.stdout:
+    print(config_run.stdout, end="")
+    print(config_run.stderr, end="")
+    raise SystemExit("installed-preview config project did not run successfully")
+
+auth_project = root / "auth_preview_app"
+subprocess.run([str(nebula_bin), "new", str(auth_project)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+(auth_project / "nebula.toml").write_text("""schema_version = 1
+
+[package]
+name = "auth-preview-app"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+auth = { installed = "nebula-auth" }
+""", encoding="utf-8")
+jwks_text = '{"keys":[{"kty":"RSA","kid":"test-key","alg":"RS256","n":"u1XzrSC7xLK4FJVZNaJ578TOvBS0g6Gv2P66IUCnzWx6kAi0W1tkI5skloF75EjLCPvi-CT4AP07PTee62TEiLQNC9MkVATTT_mbCkhMWqeUr4S6Bj3N19yhL2Fmymfg7RU8kTA7R2l9XhPdUGNqXfpLTD7aXXtSrlgvw-6WjHa1vAR60QJb31PAjmQKwo8EoJtkrY-DsEgKhhFqKmfhTp_H119vB5UfygkvcypsLdOXK89Iz7t2E1RmqDLe1-ngiOnYbIIJueB33VKnJCITo5RZb0Qj6-zbu7iBcz9lgztezT-kN-orcmkoYTrSkCBzszDO7_lKvLLk2pQadMBmpw","e":"AQAB"}]}'
+(auth_project / "src" / "main.nb").write_text(f"""module main
+import auth::jwt
+import std::result
+
+fn run_checks() -> Result<Bool, String> {{
+  validate_rs256_jwks({json.dumps(jwks_text)})?
+  match validate_rs256_jwks("not-json") {{
+    Ok(_) => {{
+      return Err("invalid jwks accepted")
+    }}
+    Err(_) => {{
+      return Ok(true)
+    }}
+  }}
+}}
+
+fn main() -> Int {{
+  match run_checks() {{
+    Ok(_) => {{
+      print("auth-installed-preview-ok")
+      return 0
+    }}
+    Err(msg) => {{
+      print(msg)
+      return 1
+    }}
+  }}
+}}
+""", encoding="utf-8")
+subprocess.run([str(nebula_bin), "fetch", str(auth_project)], check=True)
+auth_lock = (auth_project / "nebula.lock").read_text(encoding="utf-8")
+if 'name = "nebula-auth"' not in auth_lock or 'source_kind = "installed"' not in auth_lock:
+    raise SystemExit("installed-preview auth project lock did not record installed nebula-auth")
+auth_run = subprocess.run([str(nebula_bin), "run", str(auth_project), "--run-gate", "none"], capture_output=True, text=True)
+if auth_run.returncode != 0 or "auth-installed-preview-ok" not in auth_run.stdout:
+    print(auth_run.stdout, end="")
+    print(auth_run.stderr, end="")
+    raise SystemExit("installed-preview auth project did not run successfully")
+
+print("backend-sdk-config-auth-installed-preview-ok")
+PY
+'''
+expect_rc = 0

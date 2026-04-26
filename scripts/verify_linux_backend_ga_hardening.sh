@@ -122,6 +122,8 @@ installed_bin="$install_root/bin/nebula"
 test -x "$installed_bin"
 test -f "$install_root/share/nebula/sdk/backend/nebula-service/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/nebula-observe/nebula.toml"
+test -f "$install_root/share/nebula/sdk/backend/nebula-auth/nebula.toml"
+test -f "$install_root/share/nebula/sdk/backend/nebula-config/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/nebula-db-sqlite/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/examples/hello_api/nebula.toml"
 

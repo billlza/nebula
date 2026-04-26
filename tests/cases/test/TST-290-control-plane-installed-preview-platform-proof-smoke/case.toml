@@ -1,0 +1,160 @@
+id = "TST-290-control-plane-installed-preview-platform-proof-smoke"
+suite = "test"
+description = "control-plane workspace runs with staged backend SDK installed-preview auth/config/sqlite dependencies"
+
+[[steps]]
+kind = "shell"
+timeout = 300
+run = '''
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "scripts"))
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from package_release import package_backend_sdk
+from release_lib import backend_sdk_stage_name
+from release_control_plane_jwt_fixtures import write_jwt_fixture_files
+from release_control_plane_workspace import (
+    fetch_workspace,
+    print_completed,
+    require_success,
+    run_ctl,
+    start_service,
+    terminate_process,
+    wait_until_health_ok,
+)
+
+binary = os.environ["NEBULA_BINARY"]
+version = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
+root = Path("work/control_plane_installed_preview_platform")
+shutil.rmtree(root, ignore_errors=True)
+root.mkdir(parents=True, exist_ok=True)
+
+sdk_dist = root / "sdk-dist"
+package_backend_sdk(repo_root, version, sdk_dist)
+backend_sdk_root = sdk_dist / backend_sdk_stage_name(version) / "share" / "nebula" / "sdk" / "backend"
+for package in ("nebula-auth", "nebula-config", "nebula-db-sqlite", "nebula-service", "nebula-observe"):
+    manifest = backend_sdk_root / package / "nebula.toml"
+    if not manifest.exists():
+        raise SystemExit(f"staged backend SDK missing {package}: {manifest}")
+
+sdk_env = {**os.environ, "NEBULA_BACKEND_SDK_ROOT": str(backend_sdk_root)}
+workspace = root / "workspace"
+subprocess.run([binary, "new", str(workspace), "--template", "control-plane-workspace"], check=True, env=sdk_env)
+
+service_manifest = (workspace / "apps" / "service" / "nebula.toml").read_text(encoding="utf-8")
+core_manifest = (workspace / "packages" / "core" / "nebula.toml").read_text(encoding="utf-8")
+ctl_manifest = (workspace / "apps" / "ctl" / "nebula.toml").read_text(encoding="utf-8")
+for needle, text, label in [
+    ('auth_pkg = { installed = "nebula-auth" }', service_manifest, "service auth"),
+    ('auth_pkg = { installed = "nebula-auth" }', ctl_manifest, "ctl auth"),
+    ('app_config = { installed = "nebula-config" }', service_manifest, "service config"),
+    ('app_config = { installed = "nebula-config" }', core_manifest, "core config"),
+    ('db_sqlite = { installed = "nebula-db-sqlite" }', service_manifest, "service sqlite"),
+]:
+    if needle not in text:
+        raise SystemExit(f"missing installed dependency in {label}: {needle}")
+
+fetch_workspace(binary, workspace, env=sdk_env)
+lock_text = (workspace / "nebula.lock").read_text(encoding="utf-8")
+blocks = [block for block in lock_text.split("\n[[package]]\n") if block.strip()]
+
+def require_source(name: str, source_kind: str) -> None:
+    if not any(f'name = "{name}"' in block and f'source_kind = "{source_kind}"' in block for block in blocks):
+        raise SystemExit(f"lock missing {source_kind} source for {name}")
+
+for package in ("nebula-auth", "nebula-config", "nebula-db-sqlite"):
+    require_source(package, "installed")
+for package in ("nebula-crypto", "nebula-db-postgres", "nebula-jobs", "nebula-tls"):
+    require_source(package, "path")
+
+require_success(subprocess.run([binary, "check", str(workspace)], capture_output=True, text=True, env=sdk_env),
+                "installed-preview workspace check")
+validate = subprocess.run(
+    [binary, "run", str(workspace), "--run-gate", "none", "--", "control-plane-validate"],
+    capture_output=True,
+    text=True,
+    env=sdk_env,
+)
+if validate.returncode != 0 or "base_url=http://127.0.0.1:40480" not in validate.stdout:
+    print(validate.stdout, end="")
+    print(validate.stderr, end="")
+    raise SystemExit("installed-preview workspace validation did not hit control-plane validate")
+
+jwt_paths = write_jwt_fixture_files(root / "jwt")
+state_dir = root / "state"
+ctl_out_dir = root / ".ctl-out"
+proc, stderr_lines, port = start_service(
+    binary,
+    workspace,
+    {
+        "APP_STATE_DIR": str(state_dir),
+        "APP_AUTH_REQUIRED": "1",
+        "APP_AUTH_MODE": "jwt",
+        "APP_AUTH_JWT_PREVIEW": "1",
+        "APP_AUTH_JWT_ISSUER": "https://issuer.example",
+        "APP_AUTH_JWT_AUDIENCE": "release-control-plane",
+        "APP_AUTH_JWKS_FILE": str(jwt_paths["jwks"]),
+    },
+    build_env=sdk_env,
+)
+try:
+    wait_until_health_ok(proc, stderr_lines, port)
+    base_url = f"http://127.0.0.1:{port}"
+    reader_token = jwt_paths["reader"].read_text(encoding="utf-8").strip()
+    writer_token = jwt_paths["writer"].read_text(encoding="utf-8").strip()
+
+    prewarm = run_ctl(binary, workspace, "control-plane-validate", "--url", base_url, env=sdk_env, out_dir=ctl_out_dir)
+    require_success(prewarm, "prewarm installed-preview ctl")
+
+    whoami = run_ctl(binary, workspace, "auth", "whoami", "--url", base_url, "--token", reader_token,
+                     "--json", env=sdk_env, out_dir=ctl_out_dir, no_build=True)
+    require_success(whoami, "reader whoami")
+    whoami_payload = json.loads(whoami.stdout)
+    if whoami_payload.get("actor") != "reader" or whoami_payload.get("role") != "reader":
+        print_completed(whoami)
+        raise SystemExit(f"unexpected whoami payload: {whoami_payload!r}")
+
+    no_token = run_ctl(binary, workspace, "config", "list", "--app", "control-plane", "--channel", "prod",
+                       "--url", base_url, env=sdk_env, out_dir=ctl_out_dir, no_build=True)
+    if no_token.returncode != 1 or "authorization header is required" not in no_token.stdout:
+        print_completed(no_token)
+        raise SystemExit("missing authorization header did not fail")
+
+    writer_put = run_ctl(binary, workspace, "config", "put", "--app", "control-plane", "--channel", "prod",
+                         "--key", "feature.flag", "--bool", "true", "--description",
+                         "installed-preview proof", "--url", base_url, "--token", writer_token, "--json",
+                         env=sdk_env, out_dir=ctl_out_dir, no_build=True)
+    require_success(writer_put, "writer config put")
+    writer_payload = json.loads(writer_put.stdout)
+    current_revision_id = writer_payload.get("entry", {}).get("revision_id")
+    if current_revision_id != 1 or writer_payload.get("entry", {}).get("meta", {}).get("updated_by") != "writer":
+        print_completed(writer_put)
+        raise SystemExit(f"unexpected writer config payload: {writer_payload!r}")
+
+    reader_get = run_ctl(binary, workspace, "config", "get", "--app", "control-plane", "--channel", "prod",
+                         "--key", "feature.flag", "--url", base_url, "--token", reader_token, "--json",
+                         env=sdk_env, out_dir=ctl_out_dir, no_build=True)
+    require_success(reader_get, "reader config get")
+
+    reader_put = run_ctl(binary, workspace, "config", "put", "--app", "control-plane", "--channel", "prod",
+                         "--key", "feature.flag", "--bool", "false", "--if-match", str(current_revision_id),
+                         "--url", base_url, "--token", reader_token, env=sdk_env, out_dir=ctl_out_dir,
+                         no_build=True)
+    if reader_put.returncode != 1 or "required role: writer" not in reader_put.stdout:
+        print_completed(reader_put)
+        raise SystemExit("reader unexpectedly wrote config")
+finally:
+    terminate_process(proc)
+
+print("control-plane-installed-preview-platform-proof-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["control-plane-installed-preview-platform-proof-ok"]

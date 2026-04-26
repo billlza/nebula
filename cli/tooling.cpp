@@ -5801,9 +5801,9 @@ std::optional<fs::path> control_plane_template_source_root(const CliOptions& opt
 
 bool control_plane_template_ready(const CliOptions& opt) {
   return backend_sdk_ready(opt) && control_plane_template_source_root(opt).has_value() &&
+         installed_backend_package_ready(opt, "nebula-auth") &&
+         installed_backend_package_ready(opt, "nebula-config") &&
          installed_backend_package_ready(opt, "nebula-db-sqlite") &&
-         repo_preview_package_root(opt, "nebula-auth").has_value() &&
-         repo_preview_package_root(opt, "nebula-config").has_value() &&
          repo_preview_package_root(opt, "nebula-crypto").has_value() &&
          repo_preview_package_root(opt, "nebula-db-postgres").has_value() &&
          repo_preview_package_root(opt, "nebula-jobs").has_value() &&
@@ -5835,7 +5835,9 @@ std::string scaffold_preview_package_dependency(const fs::path& from_dir, const 
   return path;
 }
 
-bool append_scaffold_files_from_directory(ScaffoldProject& project, const fs::path& source_root) {
+bool append_scaffold_files_from_directory_at(ScaffoldProject& project,
+                                            const fs::path& source_root,
+                                            const fs::path& target_root) {
   std::vector<fs::path> files;
   for (fs::recursive_directory_iterator it(source_root), end; it != end; ++it) {
     if (!it->is_regular_file()) continue;
@@ -5847,9 +5849,13 @@ bool append_scaffold_files_from_directory(ScaffoldProject& project, const fs::pa
   for (const auto& rel : files) {
     std::string text;
     if (!read_scaffold_text_file(source_root / rel, text)) return false;
-    project.files.push_back({rel, std::move(text)});
+    project.files.push_back({target_root / rel, std::move(text)});
   }
   return true;
+}
+
+bool append_scaffold_files_from_directory(ScaffoldProject& project, const fs::path& source_root) {
+  return append_scaffold_files_from_directory_at(project, source_root, {});
 }
 
 std::string scaffold_gitignore() {
@@ -6167,37 +6173,33 @@ ScaffoldProject make_scaffold_project(NewProjectTemplateKind kind,
   case NewProjectTemplateKind::ControlPlaneWorkspace: {
     project.template_name = "control-plane-workspace";
     const auto source_root = control_plane_template_source_root(opt);
-    const auto auth_root = repo_preview_package_root(opt, "nebula-auth");
-    const auto config_root = repo_preview_package_root(opt, "nebula-config");
     const auto crypto_root = repo_preview_package_root(opt, "nebula-crypto");
     const auto postgres_root = repo_preview_package_root(opt, "nebula-db-postgres");
     const auto jobs_root = repo_preview_package_root(opt, "nebula-jobs");
     const auto tls_root = repo_preview_package_root(opt, "nebula-tls");
-    if (!source_root.has_value() || !installed_backend_package_ready(opt, "nebula-db-sqlite") ||
-        !auth_root.has_value() || !config_root.has_value() || !crypto_root.has_value() || !postgres_root.has_value() ||
-        !jobs_root.has_value() || !tls_root.has_value()) {
+    if (!source_root.has_value() || !installed_backend_package_ready(opt, "nebula-auth") ||
+        !installed_backend_package_ready(opt, "nebula-config") ||
+        !installed_backend_package_ready(opt, "nebula-db-sqlite") || !crypto_root.has_value() ||
+        !postgres_root.has_value() || !jobs_root.has_value() || !tls_root.has_value()) {
       return project;
     }
     if (!append_scaffold_files_from_directory(project, *source_root)) {
       project.files.clear();
       return project;
     }
-    const std::string auth_service_path =
-        scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *auth_root);
-    const std::string auth_ctl_path =
-        scaffold_preview_package_dependency(scaffold_root / "apps" / "ctl", *auth_root);
+    if (!append_scaffold_files_from_directory_at(project, *jobs_root, fs::path("packages/preview/nebula-jobs"))) {
+      project.files.clear();
+      return project;
+    }
     const std::string crypto_service_path =
         scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *crypto_root);
     const std::string crypto_ctl_path =
         scaffold_preview_package_dependency(scaffold_root / "apps" / "ctl", *crypto_root);
-    const std::string config_service_path =
-        scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *config_root);
-    const std::string config_core_path =
-        scaffold_preview_package_dependency(scaffold_root / "packages" / "core", *config_root);
+    const fs::path workspace_jobs_root = scaffold_root / "packages" / "preview" / "nebula-jobs";
     const std::string jobs_service_path =
-        scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *jobs_root);
+        scaffold_path_dependency(scaffold_root / "apps" / "service", workspace_jobs_root);
     const std::string jobs_core_path =
-        scaffold_preview_package_dependency(scaffold_root / "packages" / "core", *jobs_root);
+        scaffold_path_dependency(scaffold_root / "packages" / "core", workspace_jobs_root);
     const std::string postgres_path =
         scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *postgres_root);
     const std::string tls_path =
@@ -6208,21 +6210,41 @@ ScaffoldProject make_scaffold_project(NewProjectTemplateKind kind,
                     "db_sqlite = { path = \"../../../../official/nebula-db-sqlite\" }",
                     "db_sqlite = { installed = \"nebula-db-sqlite\" }");
         replace_all(file.text, "../../../../official/nebula-db-postgres", postgres_path);
-        replace_all(file.text, "../../../../official/nebula-auth", auth_service_path);
-        replace_all(file.text, "../../../../official/nebula-config", config_service_path);
+        replace_all(file.text,
+                    "auth_pkg = { path = \"../../../../official/nebula-auth\" }",
+                    "auth_pkg = { installed = \"nebula-auth\" }");
+        replace_all(file.text,
+                    "app_config = { path = \"../../../../official/nebula-config\" }",
+                    "app_config = { installed = \"nebula-config\" }");
         replace_all(file.text, "../../../../official/nebula-crypto", crypto_service_path);
         replace_all(file.text, "../../../../official/nebula-jobs", jobs_service_path);
       } else if (file.path == fs::path("apps/ctl/nebula.toml")) {
         replace_all(file.text, "../../../../official/nebula-tls", tls_path);
-        replace_all(file.text, "../../../../official/nebula-auth", auth_ctl_path);
+        replace_all(file.text,
+                    "auth_pkg = { path = \"../../../../official/nebula-auth\" }",
+                    "auth_pkg = { installed = \"nebula-auth\" }");
         replace_all(file.text, "../../../../official/nebula-crypto", crypto_ctl_path);
       } else if (file.path == fs::path("packages/core/nebula.toml")) {
         replace_all(file.text, "../../../../official/nebula-jobs", jobs_core_path);
-        replace_all(file.text, "../../../../official/nebula-config", config_core_path);
+        replace_all(file.text,
+                    "app_config = { path = \"../../../../official/nebula-config\" }",
+                    "app_config = { installed = \"nebula-config\" }");
+      } else if (file.path == fs::path("packages/preview/nebula-jobs/nebula.toml")) {
+        replace_all(file.text,
+                    "db_sqlite = { path = \"../nebula-db-sqlite\" }",
+                    "db_sqlite = { installed = \"nebula-db-sqlite\" }");
       } else if (file.path == fs::path("README.md")) {
         replace_all(file.text,
                     "embedded SQLite persistence through the preview `official/nebula-db-sqlite` package",
                     "embedded SQLite persistence through the preview installed `nebula-db-sqlite` package");
+        replace_all(file.text,
+                    "app-level env and mounted-secret inputs are resolved through the preview `official/nebula-config`\n"
+                    "  package",
+                    "app-level env and mounted-secret inputs are resolved through the preview installed `nebula-config`\n"
+                    "  package");
+        replace_all(file.text,
+                    "`official/nebula-config` resolves direct env values or mounted files",
+                    "The preview installed `nebula-config` package resolves direct env values or mounted files");
       }
     }
     return project;
@@ -6294,7 +6316,7 @@ int cmd_new(const std::vector<std::string>& args, const CliOptions& opt) {
   }
   if (template_kind == NewProjectTemplateKind::ControlPlaneWorkspace && !control_plane_template_ready(opt)) {
     std::cerr << "error: control-plane-workspace template requires a repo checkout build with the Nebula backend SDK,\n"
-                 "       installed-preview nebula-db-sqlite, official/nebula-auth, official/nebula-config, official/nebula-crypto,\n"
+                 "       installed-preview nebula-auth, nebula-config, nebula-db-sqlite, official/nebula-crypto,\n"
                  "       official/nebula-db-postgres, official/nebula-jobs, official/nebula-tls,\n"
                  "       and examples/release_control_plane_workspace\n";
     if (!backend_sdk_ready(opt) && !opt.backend_sdk_root_error.empty()) {

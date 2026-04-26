@@ -7,6 +7,8 @@ Installed Linux backend SDK packages:
 
 Installed Linux backend SDK preview packages:
 
+- `nebula-auth`
+- `nebula-config`
 - `nebula-db-sqlite`
 
 Backend-SDK expectations:
@@ -19,8 +21,8 @@ Backend-SDK expectations:
 Repo-local preview packages:
 
 - `nebula-db-postgres`
-- `nebula-config`
 - `nebula-crypto`
+- `nebula-jobs`
 - `nebula-tls`
 - `nebula-pqc-protocols`
 - `nebula-qcomm-sim`
@@ -49,10 +51,12 @@ Current package intent:
 
 - `nebula-service`: bounded HTTP service helpers with env-driven config, request-id header policy, request context, JSON framework errors, and drain/shutdown-file based graceful quiesce
 - `nebula-observe`: structured logs and counter-shaped metrics events, including request-correlated error logs
+- `nebula-auth`: preview RS256 JWT resource-server verification against caller-provided JWKS text
+- `nebula-config`: preview app-level env, mounted-secret, and redacted preflight helpers
 - `nebula-db-sqlite`: embedded SQLite data-plane slice for backend-first internal apps
 - `nebula-db-postgres`: network PostgreSQL data-plane slice with dynamic `libpq` probing, migrations, and narrow query/execute helpers
-- `nebula-config`: preview app-level env, mounted-secret, and redacted preflight helpers
 - `nebula-crypto`: low-level crypto + PQC primitives
+- `nebula-jobs`: preview jobs/workflow kernel with DAG validation, SQLite-first run storage, worker leases, retry/dead-letter, idempotent receipts, and durable outbox helpers
 - `nebula-tls`: outbound client-side TLS/HTTPS helpers
 - `nebula-pqc-protocols`: application-layer PQC signed helpers + authenticated secure-channel helpers
 - `nebula-qcomm-sim`: simulation-only BB84 quantum-communication lab package
