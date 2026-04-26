@@ -5804,9 +5804,9 @@ bool control_plane_template_ready(const CliOptions& opt) {
          installed_backend_package_ready(opt, "nebula-auth") &&
          installed_backend_package_ready(opt, "nebula-config") &&
          installed_backend_package_ready(opt, "nebula-db-sqlite") &&
+         installed_backend_package_ready(opt, "nebula-jobs") &&
          repo_preview_package_root(opt, "nebula-crypto").has_value() &&
          repo_preview_package_root(opt, "nebula-db-postgres").has_value() &&
-         repo_preview_package_root(opt, "nebula-jobs").has_value() &&
          repo_preview_package_root(opt, "nebula-tls").has_value();
 }
 
@@ -5835,9 +5835,7 @@ std::string scaffold_preview_package_dependency(const fs::path& from_dir, const 
   return path;
 }
 
-bool append_scaffold_files_from_directory_at(ScaffoldProject& project,
-                                            const fs::path& source_root,
-                                            const fs::path& target_root) {
+bool append_scaffold_files_from_directory(ScaffoldProject& project, const fs::path& source_root) {
   std::vector<fs::path> files;
   for (fs::recursive_directory_iterator it(source_root), end; it != end; ++it) {
     if (!it->is_regular_file()) continue;
@@ -5849,13 +5847,9 @@ bool append_scaffold_files_from_directory_at(ScaffoldProject& project,
   for (const auto& rel : files) {
     std::string text;
     if (!read_scaffold_text_file(source_root / rel, text)) return false;
-    project.files.push_back({target_root / rel, std::move(text)});
+    project.files.push_back({rel, std::move(text)});
   }
   return true;
-}
-
-bool append_scaffold_files_from_directory(ScaffoldProject& project, const fs::path& source_root) {
-  return append_scaffold_files_from_directory_at(project, source_root, {});
 }
 
 std::string scaffold_gitignore() {
@@ -6175,19 +6169,15 @@ ScaffoldProject make_scaffold_project(NewProjectTemplateKind kind,
     const auto source_root = control_plane_template_source_root(opt);
     const auto crypto_root = repo_preview_package_root(opt, "nebula-crypto");
     const auto postgres_root = repo_preview_package_root(opt, "nebula-db-postgres");
-    const auto jobs_root = repo_preview_package_root(opt, "nebula-jobs");
     const auto tls_root = repo_preview_package_root(opt, "nebula-tls");
     if (!source_root.has_value() || !installed_backend_package_ready(opt, "nebula-auth") ||
         !installed_backend_package_ready(opt, "nebula-config") ||
-        !installed_backend_package_ready(opt, "nebula-db-sqlite") || !crypto_root.has_value() ||
-        !postgres_root.has_value() || !jobs_root.has_value() || !tls_root.has_value()) {
+        !installed_backend_package_ready(opt, "nebula-db-sqlite") ||
+        !installed_backend_package_ready(opt, "nebula-jobs") || !crypto_root.has_value() ||
+        !postgres_root.has_value() || !tls_root.has_value()) {
       return project;
     }
     if (!append_scaffold_files_from_directory(project, *source_root)) {
-      project.files.clear();
-      return project;
-    }
-    if (!append_scaffold_files_from_directory_at(project, *jobs_root, fs::path("packages/preview/nebula-jobs"))) {
       project.files.clear();
       return project;
     }
@@ -6195,11 +6185,6 @@ ScaffoldProject make_scaffold_project(NewProjectTemplateKind kind,
         scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *crypto_root);
     const std::string crypto_ctl_path =
         scaffold_preview_package_dependency(scaffold_root / "apps" / "ctl", *crypto_root);
-    const fs::path workspace_jobs_root = scaffold_root / "packages" / "preview" / "nebula-jobs";
-    const std::string jobs_service_path =
-        scaffold_path_dependency(scaffold_root / "apps" / "service", workspace_jobs_root);
-    const std::string jobs_core_path =
-        scaffold_path_dependency(scaffold_root / "packages" / "core", workspace_jobs_root);
     const std::string postgres_path =
         scaffold_preview_package_dependency(scaffold_root / "apps" / "service", *postgres_root);
     const std::string tls_path =
@@ -6217,7 +6202,9 @@ ScaffoldProject make_scaffold_project(NewProjectTemplateKind kind,
                     "app_config = { path = \"../../../../official/nebula-config\" }",
                     "app_config = { installed = \"nebula-config\" }");
         replace_all(file.text, "../../../../official/nebula-crypto", crypto_service_path);
-        replace_all(file.text, "../../../../official/nebula-jobs", jobs_service_path);
+        replace_all(file.text,
+                    "jobs_pkg = { path = \"../../../../official/nebula-jobs\" }",
+                    "jobs_pkg = { installed = \"nebula-jobs\" }");
       } else if (file.path == fs::path("apps/ctl/nebula.toml")) {
         replace_all(file.text, "../../../../official/nebula-tls", tls_path);
         replace_all(file.text,
@@ -6225,14 +6212,12 @@ ScaffoldProject make_scaffold_project(NewProjectTemplateKind kind,
                     "auth_pkg = { installed = \"nebula-auth\" }");
         replace_all(file.text, "../../../../official/nebula-crypto", crypto_ctl_path);
       } else if (file.path == fs::path("packages/core/nebula.toml")) {
-        replace_all(file.text, "../../../../official/nebula-jobs", jobs_core_path);
+        replace_all(file.text,
+                    "jobs_pkg = { path = \"../../../../official/nebula-jobs\" }",
+                    "jobs_pkg = { installed = \"nebula-jobs\" }");
         replace_all(file.text,
                     "app_config = { path = \"../../../../official/nebula-config\" }",
                     "app_config = { installed = \"nebula-config\" }");
-      } else if (file.path == fs::path("packages/preview/nebula-jobs/nebula.toml")) {
-        replace_all(file.text,
-                    "db_sqlite = { path = \"../nebula-db-sqlite\" }",
-                    "db_sqlite = { installed = \"nebula-db-sqlite\" }");
       } else if (file.path == fs::path("README.md")) {
         replace_all(file.text,
                     "embedded SQLite persistence through the preview `official/nebula-db-sqlite` package",
@@ -6316,8 +6301,8 @@ int cmd_new(const std::vector<std::string>& args, const CliOptions& opt) {
   }
   if (template_kind == NewProjectTemplateKind::ControlPlaneWorkspace && !control_plane_template_ready(opt)) {
     std::cerr << "error: control-plane-workspace template requires a repo checkout build with the Nebula backend SDK,\n"
-                 "       installed-preview nebula-auth, nebula-config, nebula-db-sqlite, official/nebula-crypto,\n"
-                 "       official/nebula-db-postgres, official/nebula-jobs, official/nebula-tls,\n"
+                 "       installed-preview nebula-auth, nebula-config, nebula-db-sqlite, nebula-jobs,\n"
+                 "       official/nebula-crypto, official/nebula-db-postgres, official/nebula-tls,\n"
                  "       and examples/release_control_plane_workspace\n";
     if (!backend_sdk_ready(opt) && !opt.backend_sdk_root_error.empty()) {
       std::cerr << "note: " << opt.backend_sdk_root_error << "\n";

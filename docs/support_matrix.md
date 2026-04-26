@@ -46,6 +46,10 @@ Installed Linux backend SDK preview package matrix:
   the backend SDK asset is installed; still documented as preview rather than backend SDK GA, with
   runtime-backed SQLite connection / transaction / result-set handles, migration runner, narrow
   query/execute helpers, and row getters
+- `nebula-jobs`: Linux x86_64 installed preview package for backend-first internal apps when the
+  backend SDK asset is installed; still documented as preview rather than backend SDK GA, with DAG
+  validation, SQLite-first run storage, worker leases, retry/dead-letter, idempotent event receipt,
+  and durable outbox helpers
 
 Repo-local preview package matrix:
 
@@ -70,8 +74,9 @@ Repo-local preview package matrix:
   does not claim cloud KMS, dynamic rotation, or secret storage.
 - `nebula-jobs`: macOS + Linux; current preview jobs/workflow kernel with DAG stage validation,
   SQLite-first run storage, pull-based worker leases, retry/dead-letter, idempotent event receipt,
-  and durable outbox helpers. It is repo-local only in this wave and does not claim Postgres jobs
-  storage, native broker clients, cron daemon ownership, workflow UI, or distributed agents.
+  and durable outbox helpers. It is additionally shipped as an installed preview package inside the
+  Linux backend SDK asset on Linux x86_64 and does not claim Postgres jobs storage, native broker
+  clients, cron daemon ownership, workflow UI, in-process shell execution, or distributed agents.
 - `nebula-crypto`: macOS + Linux
 - `nebula-tls`: macOS + Linux; preview outbound/client TLS with TLS 1.2 / TLS 1.3 policy,
   explicit client identity attach for mTLS, explicit ALPN policy shape, and a narrow preview

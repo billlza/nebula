@@ -125,6 +125,7 @@ test -f "$install_root/share/nebula/sdk/backend/nebula-observe/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/nebula-auth/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/nebula-config/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/nebula-db-sqlite/nebula.toml"
+test -f "$install_root/share/nebula/sdk/backend/nebula-jobs/nebula.toml"
 test -f "$install_root/share/nebula/sdk/backend/examples/hello_api/nebula.toml"
 
 project_root="$work_root/backend-service"

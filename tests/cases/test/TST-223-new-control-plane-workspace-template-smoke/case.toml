@@ -17,7 +17,6 @@ subprocess.run([binary, 'new', str(root), '--template', 'control-plane-workspace
 service_manifest = (root / 'apps' / 'service' / 'nebula.toml').read_text(encoding='utf-8')
 core_manifest = (root / 'packages' / 'core' / 'nebula.toml').read_text(encoding='utf-8')
 ctl_manifest = (root / 'apps' / 'ctl' / 'nebula.toml').read_text(encoding='utf-8')
-jobs_manifest = (root / 'packages' / 'preview' / 'nebula-jobs' / 'nebula.toml').read_text(encoding='utf-8')
 readme = (root / 'README.md').read_text(encoding='utf-8')
 if 'installed = "nebula-db-sqlite"' not in service_manifest:
     raise SystemExit('control-plane-workspace service manifest did not switch db_sqlite to installed-preview')
@@ -25,6 +24,8 @@ if 'installed = "nebula-auth"' not in service_manifest or 'installed = "nebula-a
     raise SystemExit('control-plane-workspace manifests did not switch nebula-auth to installed-preview')
 if 'installed = "nebula-config"' not in service_manifest or 'installed = "nebula-config"' not in core_manifest:
     raise SystemExit('control-plane-workspace manifests did not switch nebula-config to installed-preview')
+if 'installed = "nebula-jobs"' not in service_manifest or 'installed = "nebula-jobs"' not in core_manifest:
+    raise SystemExit('control-plane-workspace manifests did not switch nebula-jobs to installed-preview')
 if '../../../../official/nebula-tls' in ctl_manifest:
     raise SystemExit('control-plane-workspace ctl manifest still contains the repo-relative preview tls path')
 if '../../../../official/nebula-crypto' in service_manifest or '../../../../official/nebula-crypto' in ctl_manifest:
@@ -37,8 +38,8 @@ if '../../../../official/nebula-jobs' in service_manifest or '../../../../offici
     raise SystemExit('control-plane-workspace manifests still contain the repo-relative preview jobs path')
 if '../../../../official/nebula-db-postgres' in service_manifest:
     raise SystemExit('control-plane-workspace service manifest still contains the repo-relative preview postgres path')
-if 'installed = "nebula-db-sqlite"' not in jobs_manifest:
-    raise SystemExit('control-plane-workspace copied jobs preview did not switch sqlite to installed-preview')
+if (root / 'packages' / 'preview' / 'nebula-jobs').exists():
+    raise SystemExit('control-plane-workspace still copied workspace-local nebula-jobs preview')
 if 'release-control-plane.db' not in readme:
     raise SystemExit('control-plane-workspace README did not scaffold the expected release-state contract')
 if 'preview installed `nebula-db-sqlite` package' not in readme:
@@ -87,8 +88,9 @@ lock_text = (root / 'nebula.lock').read_text(encoding='utf-8')
 if ('name = "nebula-db-sqlite"' not in lock_text
         or 'name = "nebula-tls"' not in lock_text
         or 'name = "nebula-auth"' not in lock_text
-        or 'name = "nebula-config"' not in lock_text):
-    raise SystemExit('control-plane-workspace lockfile did not record db/tls/auth/config dependencies')
+        or 'name = "nebula-config"' not in lock_text
+        or 'name = "nebula-jobs"' not in lock_text):
+    raise SystemExit('control-plane-workspace lockfile did not record db/tls/auth/config/jobs dependencies')
 blocks = [block for block in lock_text.split("\n[[package]]\n") if block.strip()]
 if not any('name = "nebula-db-sqlite"' in block and 'source_kind = "installed"' in block for block in blocks):
     raise SystemExit('control-plane-workspace lockfile did not record installed-preview nebula-db-sqlite')
@@ -96,6 +98,8 @@ if not any('name = "nebula-auth"' in block and 'source_kind = "installed"' in bl
     raise SystemExit('control-plane-workspace lockfile did not record installed-preview nebula-auth')
 if not any('name = "nebula-config"' in block and 'source_kind = "installed"' in block for block in blocks):
     raise SystemExit('control-plane-workspace lockfile did not record installed-preview nebula-config')
+if not any('name = "nebula-jobs"' in block and 'source_kind = "installed"' in block for block in blocks):
+    raise SystemExit('control-plane-workspace lockfile did not record installed-preview nebula-jobs')
 if not any('name = "nebula-tls"' in block and 'source_kind = "path"' in block for block in blocks):
     raise SystemExit('control-plane-workspace lockfile did not keep nebula-tls on repo-preview path wiring')
 subprocess.run([binary, 'check', str(root)], check=True)

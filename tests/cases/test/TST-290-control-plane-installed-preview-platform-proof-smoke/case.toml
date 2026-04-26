@@ -39,7 +39,7 @@ root.mkdir(parents=True, exist_ok=True)
 sdk_dist = root / "sdk-dist"
 package_backend_sdk(repo_root, version, sdk_dist)
 backend_sdk_root = sdk_dist / backend_sdk_stage_name(version) / "share" / "nebula" / "sdk" / "backend"
-for package in ("nebula-auth", "nebula-config", "nebula-db-sqlite", "nebula-service", "nebula-observe"):
+for package in ("nebula-auth", "nebula-config", "nebula-db-sqlite", "nebula-jobs", "nebula-service", "nebula-observe"):
     manifest = backend_sdk_root / package / "nebula.toml"
     if not manifest.exists():
         raise SystemExit(f"staged backend SDK missing {package}: {manifest}")
@@ -57,9 +57,13 @@ for needle, text, label in [
     ('app_config = { installed = "nebula-config" }', service_manifest, "service config"),
     ('app_config = { installed = "nebula-config" }', core_manifest, "core config"),
     ('db_sqlite = { installed = "nebula-db-sqlite" }', service_manifest, "service sqlite"),
+    ('jobs_pkg = { installed = "nebula-jobs" }', service_manifest, "service jobs"),
+    ('jobs_pkg = { installed = "nebula-jobs" }', core_manifest, "core jobs"),
 ]:
     if needle not in text:
         raise SystemExit(f"missing installed dependency in {label}: {needle}")
+if (workspace / "packages" / "preview" / "nebula-jobs").exists():
+    raise SystemExit("control-plane workspace still contains a workspace-local nebula-jobs copy")
 
 fetch_workspace(binary, workspace, env=sdk_env)
 lock_text = (workspace / "nebula.lock").read_text(encoding="utf-8")
@@ -69,9 +73,9 @@ def require_source(name: str, source_kind: str) -> None:
     if not any(f'name = "{name}"' in block and f'source_kind = "{source_kind}"' in block for block in blocks):
         raise SystemExit(f"lock missing {source_kind} source for {name}")
 
-for package in ("nebula-auth", "nebula-config", "nebula-db-sqlite"):
+for package in ("nebula-auth", "nebula-config", "nebula-db-sqlite", "nebula-jobs"):
     require_source(package, "installed")
-for package in ("nebula-crypto", "nebula-db-postgres", "nebula-jobs", "nebula-tls"):
+for package in ("nebula-crypto", "nebula-db-postgres", "nebula-tls"):
     require_source(package, "path")
 
 require_success(subprocess.run([binary, "check", str(workspace)], capture_output=True, text=True, env=sdk_env),

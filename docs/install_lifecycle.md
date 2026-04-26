@@ -117,6 +117,7 @@ Installed backend SDK docs currently include:
 - `share/nebula/sdk/backend/nebula-auth/nebula.toml` as an installed preview package payload
 - `share/nebula/sdk/backend/nebula-config/nebula.toml` as an installed preview package payload
 - `share/nebula/sdk/backend/nebula-db-sqlite/nebula.toml` as an installed preview package payload
+- `share/nebula/sdk/backend/nebula-jobs/nebula.toml` as an installed preview package payload
 
 If you installed into the default prefix, remove only Nebula-managed files, not the entire prefix,
 unless you created that prefix exclusively for Nebula.

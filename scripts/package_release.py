@@ -56,6 +56,12 @@ def _copytree(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
+def _replace_required(text: str, needle: str, replacement: str, label: str) -> str:
+    if needle not in text:
+        raise SystemExit(f"backend SDK packaging could not rewrite {label}")
+    return text.replace(needle, replacement)
+
+
 def render_installed_hello_api_manifest() -> str:
     return """schema_version = 1
 
@@ -161,6 +167,17 @@ def package_backend_sdk(repo_root: Path, version: str, output_dir: Path) -> Path
     _copytree(repo_root / "official" / "nebula-auth", sdk_root / "nebula-auth")
     _copytree(repo_root / "official" / "nebula-config", sdk_root / "nebula-config")
     _copytree(repo_root / "official" / "nebula-db-sqlite", sdk_root / "nebula-db-sqlite")
+    _copytree(repo_root / "official" / "nebula-jobs", sdk_root / "nebula-jobs")
+    jobs_manifest = sdk_root / "nebula-jobs" / "nebula.toml"
+    jobs_manifest.write_text(
+        _replace_required(
+            jobs_manifest.read_text(encoding="utf-8"),
+            'db_sqlite = { path = "../nebula-db-sqlite" }',
+            'db_sqlite = { installed = "nebula-db-sqlite" }',
+            "nebula-jobs db_sqlite dependency to installed preview",
+        ),
+        encoding="utf-8",
+    )
     hello_api_root = sdk_root / "examples" / "hello_api"
     _copytree(repo_root / "examples" / "hello_api", hello_api_root)
     (hello_api_root / "nebula.toml").write_text(render_installed_hello_api_manifest(), encoding="utf-8")

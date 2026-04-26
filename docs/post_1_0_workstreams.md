@@ -292,8 +292,8 @@ Exit criteria:
 - internal-app and thin-host reference lanes both have explicit, maintained repo samples
 - thin-host bridge contracts have deterministic host/replay parity and negative-path smoke coverage
 - `control-plane-workspace` scaffolding consumes installed-preview `nebula-auth`, `nebula-config`,
-  and `nebula-db-sqlite` when the backend SDK is present, while keeping remaining preview-only deps
-  explicit
+  `nebula-db-sqlite`, and `nebula-jobs` when the backend SDK is present, while keeping remaining
+  preview-only deps explicit
 - README/support-matrix/thin-host/roadmap docs all describe the same positioning
 
 Current status:
@@ -328,27 +328,29 @@ Exit criteria:
 
 ## Execution Order
 
-Recommended order:
+Recommended order after the installed-preview backend closure:
 
-1. Track 1: LSP Daily-Use
-2. Track 2: Hosted Registry GA
-3. Track 3: Service Platform Lift
-4. Track 3.5: Embedded Data Plane
-5. Track 6: App Platform Convergence
-6. Track 7: Nebula UI Preview
-7. Track 4: Crypto / TLS / PQC Hardening
+1. Track 4: Crypto / TLS / PQC Hardening
+2. Track 7: Nebula UI Preview
+3. Track 1: LSP Daily-Use
+4. Track 2: Hosted Registry GA
+5. Track 3: Service Platform Lift
+6. Track 3.5: Embedded Data Plane
+7. Track 6: App Platform Convergence
 8. Track 5: Quantum Direction
 
 Why this order:
 
-- Track 1 improves daily developer ergonomics immediately
+- Track 4 is now the next deliberate push: it changes security claims, so it should be isolated
+  after the backend SDK installed-preview closure instead of mixed into jobs/control-plane churn
+- Track 7 follows as GUI preview work, still semantics/IR first before native renderer maturity
+  claims
+- Track 1 improves daily developer ergonomics immediately once the security and GUI direction is
+  staged
 - Track 2 removes a distribution/product bottleneck
 - Track 3 should build on stable package/distribution expectations
 - Track 3.5 gives backend-first internal apps a reusable data story before the project widens into
   thin-host/UI platform claims
 - Track 6 fixes the truthful APP-platform lane and benchmark shape before Nebula starts making
   broader parity claims
-- Track 7 starts the Nebula + Nebula UI split as preview semantics/IR first, before native renderer
-  maturity claims
-- Track 4 changes security claims and must not be mixed casually with platform-lift churn
 - Track 5 branches product direction and should not be smuggled in as an implementation detail

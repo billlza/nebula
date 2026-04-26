@@ -1,0 +1,189 @@
+id = "TST-291-backend-sdk-jobs-installed-preview-smoke"
+suite = "test"
+description = "backend SDK ships nebula-jobs as installed preview with SQLite leases, retries, and outbox semantics"
+
+[[steps]]
+kind = "shell"
+timeout = 300
+run = '''
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "scripts"))
+from package_release import package_backend_sdk
+from release_lib import backend_sdk_stage_name
+
+binary = os.environ["NEBULA_BINARY"]
+version = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
+root = Path("work/backend_sdk_jobs_installed_preview")
+shutil.rmtree(root, ignore_errors=True)
+root.mkdir(parents=True, exist_ok=True)
+
+sdk_dist = root / "sdk-dist"
+package_backend_sdk(repo_root, version, sdk_dist)
+backend_sdk_root = sdk_dist / backend_sdk_stage_name(version) / "share" / "nebula" / "sdk" / "backend"
+jobs_manifest = backend_sdk_root / "nebula-jobs" / "nebula.toml"
+sqlite_manifest = backend_sdk_root / "nebula-db-sqlite" / "nebula.toml"
+if not jobs_manifest.exists() or not sqlite_manifest.exists():
+    raise SystemExit("staged backend SDK missing installed jobs/sqlite manifests")
+jobs_manifest_text = jobs_manifest.read_text(encoding="utf-8")
+if 'db_sqlite = { installed = "nebula-db-sqlite" }' not in jobs_manifest_text:
+    raise SystemExit("installed nebula-jobs manifest did not use installed nebula-db-sqlite")
+if "../nebula-db-sqlite" in jobs_manifest_text:
+    raise SystemExit("installed nebula-jobs manifest retained repo-local sqlite path")
+
+app = root / "app"
+(app / "src").mkdir(parents=True)
+(app / "nebula.toml").write_text("""schema_version = 1
+
+[package]
+name = "backend-sdk-jobs-installed-preview"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+jobs = { installed = "nebula-jobs" }
+""", encoding="utf-8")
+(app / "src" / "main.nb").write_text("""module main
+import jobs::contracts
+import jobs::sqlite
+import std::json
+import std::result
+
+fn one_stage_definition(max_attempts: Int) -> JobDefinition {
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("build", "leased_task", "build", 30, max_attempts, empty_json_array()).as_json())
+  return JobDefinition("build-job", "internal_event", "build_requested", array_build(stages), 1, "tester", 100)
+}
+
+fn invalid_dag_definition() -> JobDefinition {
+  let deps = array_build(array_push(array_builder(), string_value("missing")))
+  let stages = array_builder()
+  stages = array_push(stages, JobStageSpec("deploy", "leased_task", "deploy", 30, 1, deps).as_json())
+  return JobDefinition("bad-job", "internal_event", "bad_requested", array_build(stages), 1, "tester", 100)
+}
+
+fn expect_invalid_dag_rejected(path: String) -> Result<Bool, String> {
+  match write_definition(path, invalid_dag_definition()) {
+    Ok(_) => { return Ok(false) }
+    Err(_) => { return Ok(true) }
+  }
+}
+
+fn expect_worker_retry_and_dead_letter(path: String) -> Result<Bool, String> {
+  write_definition(path, one_stage_definition(2))?
+  let run1 = create_run(path, "build-job", "event-1", object1("seq", int_value(1)), "tester", 100)?
+  let run1_again = create_run(path, "build-job", "event-1", object1("seq", int_value(2)), "tester", 101)?
+  if run1_again.run_id != run1.run_id {
+    return Ok(false)
+  }
+  let claim1 = claim_worker(path, WorkerClaimRequest("worker-a", "build", 110))?
+  if claim1.outcome != "claimed" {
+    return Ok(false)
+  }
+  let duplicate_claim = claim_worker(path, WorkerClaimRequest("worker-b", "build", 111))?
+  if duplicate_claim.outcome != "idle" {
+    return Ok(false)
+  }
+  let after_fail1 = complete_worker(path, WorkerCompleteRequest("worker-a", claim1.lease.lease_id, "failed", "retry", null_value(), 120))?
+  if after_fail1.status != "ready" {
+    return Ok(false)
+  }
+  let claim2 = claim_worker(path, WorkerClaimRequest("worker-a", "build", 130))?
+  if claim2.outcome != "claimed" || claim2.lease.lease_id == claim1.lease.lease_id {
+    return Ok(false)
+  }
+  let after_fail2 = complete_worker(path, WorkerCompleteRequest("worker-a", claim2.lease.lease_id, "failed", "dead", null_value(), 140))?
+  return Ok(after_fail2.status == "failed")
+}
+
+fn expect_outbox_claim_complete(path: String) -> Result<Bool, String> {
+  let first = enqueue_outbox(path, "jobs.run.created", "key-1", "dedupe-1", object1("run_id", int_value(1)), 2, 200)?
+  let duplicate = enqueue_outbox(path, "jobs.run.created", "key-1", "dedupe-1", object1("run_id", int_value(99)), 2, 201)?
+  if duplicate.message_id != first.message_id {
+    return Ok(false)
+  }
+  let claim1 = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 200))?
+  if claim1.outcome != "claimed" {
+    return Ok(false)
+  }
+  let failed1 = complete_outbox(path, first.message_id, OutboxCompleteRequest("relay-a", claim1.message.lease_id, "failed", "retry", 230, 210))?
+  if failed1.status != "pending" || failed1.next_attempt_unix_ms != 230 {
+    return Ok(false)
+  }
+  let too_early = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 220))?
+  if too_early.outcome != "empty" {
+    return Ok(false)
+  }
+  let claim2 = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 230))?
+  if claim2.outcome != "claimed" || claim2.message.attempt != 2 {
+    return Ok(false)
+  }
+  let dead = complete_outbox(path, first.message_id, OutboxCompleteRequest("relay-a", claim2.message.lease_id, "failed", "dead", 240, 240))?
+  if dead.status != "dead_letter" {
+    return Ok(false)
+  }
+  let second = enqueue_outbox(path, "jobs.run.created", "key-2", "dedupe-2", object1("run_id", int_value(2)), 2, 300)?
+  let claim3 = claim_outbox(path, OutboxClaimRequest("relay-a", "jobs.run.created", 300))?
+  if claim3.outcome != "claimed" || claim3.message.message_id != second.message_id {
+    return Ok(false)
+  }
+  let published = complete_outbox(path, second.message_id, OutboxCompleteRequest("relay-a", claim3.message.lease_id, "published", "ok", 0, 310))?
+  return Ok(published.status == "published")
+}
+
+fn run_smoke(path: String) -> Result<Bool, String> {
+  initialize(path)?
+  if !expect_invalid_dag_rejected(path)? {
+    return Ok(false)
+  }
+  if !expect_worker_retry_and_dead_letter(path)? {
+    return Ok(false)
+  }
+  return expect_outbox_claim_complete(path)
+}
+
+fn main() -> Int {
+  match run_smoke("work/backend_sdk_jobs_installed_preview/jobs.db") {
+    Ok(ok) => {
+      if ok {
+        print("backend-sdk-jobs-installed-preview-ok")
+        return 0
+      }
+      print("backend-sdk-jobs-installed-preview-bad")
+      return 1
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+""", encoding="utf-8")
+
+sdk_env = {**os.environ, "NEBULA_BACKEND_SDK_ROOT": str(backend_sdk_root)}
+subprocess.run([binary, "fetch", str(app)], check=True, env=sdk_env)
+lock_text = (app / "nebula.lock").read_text(encoding="utf-8")
+blocks = [block for block in lock_text.split("\n[[package]]\n") if block.strip()]
+for package in ("nebula-jobs", "nebula-db-sqlite"):
+    if not any(f'name = "{package}"' in block and 'source_kind = "installed"' in block for block in blocks):
+        raise SystemExit(f"lock missing installed source for {package}")
+if any('name = "nebula-jobs"' in block and 'source_kind = "path"' in block for block in blocks):
+    raise SystemExit("lock recorded nebula-jobs as path instead of installed")
+
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, env=sdk_env)
+if run.returncode != 0 or "backend-sdk-jobs-installed-preview-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("installed-preview jobs app did not run successfully")
+print("backend-sdk-jobs-installed-preview-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["backend-sdk-jobs-installed-preview-ok"]

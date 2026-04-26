@@ -170,9 +170,9 @@ workflow stages only produce leases, while an operator-owned CLI worker validate
 uses argv-based `std::process` with timeouts and capped output. Distributed deploy orchestration now
 has a narrow sidecar-backed alias: `ctl deploy apply` validates an operator target file, submits a
 deploy-marked workflow event, and still relies on the existing `shell_command` lease/result payload
-contract. The reusable jobs/workflow kernel has started moving into `official/nebula-jobs` as a
-repo-local preview package; release-control-plane remains the forcing app and is not yet rewritten
-onto a broad external workflow platform. Postgres has moved from diagnostics-only to a repo-local official preview package:
+contract. The reusable jobs/workflow kernel has moved into `official/nebula-jobs` and is now
+available as an opt-in backend SDK installed-preview package; release-control-plane remains the
+forcing app and this is not a broad external workflow/queue platform. Postgres has moved from diagnostics-only to a repo-local official preview package:
 `official/nebula-db-postgres` dynamically probes `libpq`, exposes narrow execute/query/migration
 helpers, is wired into the release-control-plane startup preflight when `APP_POSTGRES_PREVIEW=1`,
 and can be selected as the active release-control-plane data plane with

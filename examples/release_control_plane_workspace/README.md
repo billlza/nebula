@@ -14,8 +14,8 @@ This first wave keeps the product surface intentionally narrow:
 - append-only audit events for release, approval, and apply activity
 - internal-event workflow definitions/runs keyed by `app/channel`
 - pull-based worker leases for the built-in `apply_release` task
-- `apply_release` worker failures follow the extracted `official/nebula-jobs` max-attempt retry
-  semantics before the run is marked failed
+- `apply_release` worker failures follow the installed-preview `official/nebula-jobs` max-attempt
+  retry semantics before the run is marked failed
 - opt-in deterministic schedule definitions plus explicit `schedule tick --now-unix-ms ...`
 - opt-in durable broker outbox relay surface for workflow lifecycle messages
 - opt-in shell sidecar worker tasks backed by argv-based `std::process`
@@ -24,14 +24,14 @@ This first wave keeps the product surface intentionally narrow:
 - `release apply` / `runner apply-once` as compatibility aliases over the workflow lane
 - optimistic concurrency through `revision_id` plus `ETag` / `If-Match`
 - authenticated operator access with `reader` / `writer` / `admin` / `worker`
-- embedded SQLite persistence through the preview `official/nebula-db-sqlite` package
+- embedded SQLite persistence through the preview installed `nebula-db-sqlite` package
 - repo-local Postgres preview package can be selected as the active data plane, while SQLite
   remains the default
-- app-level env and mounted-secret inputs are resolved through the preview `official/nebula-config`
+- app-level env and mounted-secret inputs are resolved through the preview installed `nebula-config`
   package with redacted diagnostics and explicit mutual-exclusion errors
 - preview DAG workflow dependencies and default-off capability contracts for schedules, brokers, Postgres, shell tasks,
   public webhooks, and distributed deploy orchestration
-- `official/nebula-jobs` as the extracted repo-local preview kernel for reusable jobs/workflow
+- `official/nebula-jobs` as the extracted installed-preview kernel for reusable jobs/workflow
   validation, SQLite run storage, worker leases, and outbox semantics
 
 It does not yet add:
