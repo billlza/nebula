@@ -31,10 +31,11 @@ src_dir = "src"
 source_kind = "path"
 source_hint = "../../official/nebula-thin-host-bridge"
 resolved_rev = ""
-manifest_hash = "d92fb0306b68536a"
-source_fingerprint = "6f143fa152a1ba2"
-integrity_fingerprint = "e1b7e7589bf9ef39"
+manifest_hash = "be49c6a1d6d89b75"
+source_fingerprint = "490b3abf17875c65"
+integrity_fingerprint = "ea31ce415a0525f3"
 is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
 dependencies = []
 
 [[package]]
@@ -48,7 +49,7 @@ source_kind = "path"
 source_hint = "packages/counter_core"
 resolved_rev = ""
 manifest_hash = "a7f7d99e350c6543"
-source_fingerprint = "b274c643d24bf5eb"
-integrity_fingerprint = "17424d57286ce415"
+source_fingerprint = "ef9aa0831f893818"
+integrity_fingerprint = "8a5f54655b0477a3"
 is_root = 0
 dependencies = ["bridge=nebula-thin-host-bridge"]

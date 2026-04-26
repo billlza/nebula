@@ -59,12 +59,23 @@ fn counter_payload(state: CounterState) -> Json {
                  string_value(state.last_command))
 }
 
+fn counter_payload_text(state: CounterState) -> String {
+  return object4_text("counter",
+                      int_value(state.counter),
+                      "can_decrement",
+                      bool_value(state.counter > 0),
+                      "status",
+                      string_value(counter_status(state.counter)),
+                      "last_command",
+                      string_value(state.last_command))
+}
+
 fn query_snapshot_text(state: CounterState) -> String {
-  return encode_snapshot_text_with_revision("counter", counter_payload(state), state.revision)
+  return encode_snapshot_payload_text_unchecked_with_revision("counter", counter_payload_text(state), state.revision)
 }
 
 fn boot_event_text(state: CounterState) -> String {
-  return encode_event_text_with_context("booted", counter_payload(state), false, "boot", state.revision)
+  return encode_event_payload_text_unchecked_with_context("booted", counter_payload_text(state), false, "boot", state.revision)
 }
 
 fn command_rejected_event_text(state: CounterState, correlation_id: String, reason: String) -> String {
@@ -85,11 +96,11 @@ fn command_rejected_event_text(state: CounterState, correlation_id: String, reas
 }
 
 fn CounterStep_event_text(self: CounterStep) -> String {
-  return encode_event_text_with_context(self.event_kind,
-                                        counter_payload(self.state),
-                                        self.should_exit,
-                                        self.correlation_id,
-                                        self.state.revision)
+  return encode_event_payload_text_unchecked_with_context(self.event_kind,
+                                                          counter_payload_text(self.state),
+                                                          self.should_exit,
+                                                          self.correlation_id,
+                                                          self.state.revision)
 }
 
 fn increment_command_text() -> String {

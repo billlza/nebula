@@ -1,6 +1,6 @@
 schema_version = 2
 root_package = "nebula-thin-host-bridge"
-root_manifest_hash = "d92fb0306b68536a"
+root_manifest_hash = "be49c6a1d6d89b75"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
@@ -14,8 +14,9 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "d92fb0306b68536a"
-source_fingerprint = "6f143fa152a1ba2"
-integrity_fingerprint = "5d63f5484e18d9c"
+manifest_hash = "be49c6a1d6d89b75"
+source_fingerprint = "490b3abf17875c65"
+integrity_fingerprint = "5a45b2b9415861e8"
 is_root = 1
+native_cxx_sources = ["native/bridge.cpp"]
 dependencies = []

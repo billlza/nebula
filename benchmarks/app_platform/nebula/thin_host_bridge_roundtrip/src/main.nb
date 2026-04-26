@@ -1,6 +1,5 @@
 module main
 import counter::counter_core
-import std::json
 
 fn expect_text_eq(actual: String, expected: String) -> Void {
   if actual == expected {
@@ -9,94 +8,14 @@ fn expect_text_eq(actual: String, expected: String) -> Void {
   }
 }
 
-fn expect_schema(value: Json, expected: String) -> Void {
-  match get_string(value, "schema") {
-    Ok(schema) => {
-      expect_text_eq(schema, expected)
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
-}
-
-fn expect_payload_counter(payload: Json, expected: Int) -> Void {
-  match get_int(payload, "counter") {
-    Ok(counter) => {
-      expect_eq(counter, expected)
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
-}
-
-fn expect_payload_last_command(payload: Json, expected: String) -> Void {
-  match get_string(payload, "last_command") {
-    Ok(last_command) => {
-      expect_text_eq(last_command, expected)
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
-}
-
-fn expect_field_string(value: Json, field: String, expected: String) -> Void {
-  match get_string(value, field) {
-    Ok(actual) => {
-      expect_text_eq(actual, expected)
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
-}
-
-fn expect_field_int(value: Json, field: String, expected: Int) -> Void {
-  match get_int(value, field) {
-    Ok(actual) => {
-      expect_eq(actual, expected)
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
-}
-
 fn verify_event_text(event_text: String) -> Void {
-  match parse(event_text) {
-    Ok(event_json) => {
-      expect_schema(event_json, "thin-host-bridge.event.v1")
-      expect_field_string(event_json, "kind", "increment_applied")
-      expect_field_string(event_json, "correlation_id", "cmd-increment")
-      expect_field_int(event_json, "state_revision", 1)
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
+  expect_text_eq(event_text,
+                 "{\"schema\":\"thin-host-bridge.event.v1\",\"kind\":\"increment_applied\",\"payload\":{\"counter\":1,\"can_decrement\":true,\"status\":\"active\",\"last_command\":\"increment\"},\"terminal\":false,\"correlation_id\":\"cmd-increment\",\"state_revision\":1}")
 }
 
 fn verify_snapshot_text(snapshot_text: String) -> Void {
-  match parse(snapshot_text) {
-    Ok(snapshot_json) => {
-      expect_schema(snapshot_json, "thin-host-bridge.snapshot.v1")
-      expect_field_int(snapshot_json, "state_revision", 1)
-      match get_value(snapshot_json, "payload") {
-        Ok(payload) => {
-          expect_payload_counter(payload, 1)
-          expect_payload_last_command(payload, "increment")
-        }
-        Err(msg) => {
-          print(msg)
-        }
-      }
-    }
-    Err(msg) => {
-      print(msg)
-    }
-  }
+  expect_text_eq(snapshot_text,
+                 "{\"schema\":\"thin-host-bridge.snapshot.v1\",\"screen\":\"counter\",\"payload\":{\"counter\":1,\"can_decrement\":true,\"status\":\"active\",\"last_command\":\"increment\"},\"state_revision\":1}")
 }
 
 @bench

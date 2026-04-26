@@ -138,6 +138,10 @@ fn verify_valid_roundtrip() -> Void {
   let state = initial_state()
   let command_text = command_text_at_revision("increment", "contract-1", state.revision())
   expect_command_decode(command_text, "increment", "contract-1", 0)
+  expect_command_decode("{\"kind\":\"increment\",\"state_revision\":0,\"correlation_id\":\"fallback-order\",\"schema\":\"thin-host-bridge.command.v1\"}",
+                        "increment",
+                        "fallback-order",
+                        0)
 
   match apply_command_text(state, command_text) {
     Ok(step) => {
@@ -156,6 +160,8 @@ fn verify_command_negative_contracts() -> Void {
   expect_command_decode_error("{", "malformed thin-host command envelope")
   expect_command_decode_error("{\"schema\":\"thin-host-bridge.command.v2\",\"kind\":\"increment\",\"correlation_id\":\"bad-schema\",\"state_revision\":0}",
                               "unsupported thin-host command schema")
+  expect_command_decode_error("{\"schema\":\"thin-host-bridge.command.v1\",\"kind\":\"increment\",\"correlation_id\":\"huge-revision\",\"state_revision\":9223372036854775808}",
+                              "malformed thin-host command envelope")
   expect_command_decode_error("{\"schema\":\"thin-host-bridge.command.v1\",\"correlation_id\":\"missing-kind\",\"state_revision\":0}",
                               "missing thin-host command kind")
   expect_apply_error(state,

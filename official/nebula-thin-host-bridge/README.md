@@ -12,6 +12,10 @@ Current surface:
   host/core parity checks
 - schema validation and negative-path helpers for malformed, missing-field, and version-mismatch
   envelopes
+- native canonical-envelope encoders for the preview bridge hot path, plus a conservative generated
+  command fast path that falls back to full JSON parsing for non-canonical but valid host input
+- payload-text encoder helpers are intentionally named `unchecked`: callers must pass JSON text
+  produced by trusted bridge/app-core encoders, not arbitrary host input
 
 Embedding note:
 
@@ -19,6 +23,8 @@ Embedding note:
 - Nebula owns application state, validation, reducers/transitions, and compact snapshots
 - bridge traffic should stay coarse-grained: durable commands in, meaningful events out, snapshots
   queried for render state
+- performance work must preserve fallback parsing and negative-path diagnostics; canonical fast
+  paths are an implementation detail, not a narrower wire contract
 
 Non-claims:
 

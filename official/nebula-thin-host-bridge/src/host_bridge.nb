@@ -29,6 +29,26 @@ struct ThinHostSnapshot {
   state_revision: Int
 }
 
+extern fn __nebula_thin_host_encode_command_text(kind: String, correlation_id: String, state_revision: Int) -> String
+extern fn __nebula_thin_host_encode_event_text(kind: String,
+                                               payload: Json,
+                                               terminal: Bool,
+                                               correlation_id: String,
+                                               state_revision: Int) -> String
+extern fn __nebula_thin_host_encode_snapshot_text(screen: String, payload: Json, state_revision: Int) -> String
+extern fn __nebula_thin_host_encode_event_payload_text(kind: String,
+                                                       payload_text: String,
+                                                       terminal: Bool,
+                                                       correlation_id: String,
+                                                       state_revision: Int) -> String
+extern fn __nebula_thin_host_encode_snapshot_payload_text(screen: String,
+                                                          payload_text: String,
+                                                          state_revision: Int) -> String
+extern fn __nebula_thin_host_parse_generated_command_text(text: String) -> Result<Json, String>
+extern fn __nebula_thin_host_generated_command_kind(text: String) -> Result<String, String>
+extern fn __nebula_thin_host_generated_command_correlation_id(text: String) -> Result<String, String>
+extern fn __nebula_thin_host_generated_command_state_revision(text: String) -> Result<Int, String>
+
 fn command_schema() -> String {
   return "thin-host-bridge.command.v1"
 }
@@ -90,14 +110,7 @@ fn encode_command_text(kind: String) -> String {
 }
 
 fn encode_command_text_with_context(kind: String, correlation_id: String, state_revision: Int) -> String {
-  return stringify(object4("schema",
-                           string_value(command_schema()),
-                           "kind",
-                           string_value(kind),
-                           "correlation_id",
-                           string_value(correlation_id),
-                           "state_revision",
-                           int_value(state_revision)))
+  return __nebula_thin_host_encode_command_text(kind, correlation_id, state_revision)
 }
 
 fn expect_schema(value: Json, key: String, expected: String, missing_msg: String, unsupported_msg: String) -> Result<Bool, String> {
@@ -159,12 +172,24 @@ fn expect_value_field(value: Json, key: String, missing_msg: String) -> Result<J
 }
 
 fn decode_command_text(text: String) -> Result<ThinHostCommand, String> {
-  match parse(text) {
-    Ok(value) => {
-      return command_from_json(value)
+  match __nebula_thin_host_generated_command_kind(text) {
+    Ok(kind) => {
+      let correlation_id = __nebula_thin_host_generated_command_correlation_id(text)?
+      let state_revision = __nebula_thin_host_generated_command_state_revision(text)?
+      return Ok(ThinHostCommand(kind, correlation_id, state_revision))
     }
     Err(msg) => {
-      return Err("malformed thin-host command envelope")
+      if msg == "thin-host command fast path miss" {
+        match parse(text) {
+          Ok(value) => {
+            return command_from_json(value)
+          }
+          Err(parse_msg) => {
+            return Err("malformed thin-host command envelope")
+          }
+        }
+      }
+      return Err(msg)
     }
   }
 }
@@ -206,18 +231,15 @@ fn encode_event_text_with_context(kind: String,
                                   terminal: Bool,
                                   correlation_id: String,
                                   state_revision: Int) -> String {
-  return stringify(object6("schema",
-                           string_value(event_schema()),
-                           "kind",
-                           string_value(kind),
-                           "payload",
-                           payload,
-                           "terminal",
-                           bool_value(terminal),
-                           "correlation_id",
-                           string_value(correlation_id),
-                           "state_revision",
-                           int_value(state_revision)))
+  return __nebula_thin_host_encode_event_text(kind, payload, terminal, correlation_id, state_revision)
+}
+
+fn encode_event_payload_text_unchecked_with_context(kind: String,
+                                                    payload_text: String,
+                                                    terminal: Bool,
+                                                    correlation_id: String,
+                                                    state_revision: Int) -> String {
+  return __nebula_thin_host_encode_event_payload_text(kind, payload_text, terminal, correlation_id, state_revision)
 }
 
 fn decode_event_text(text: String) -> Result<ThinHostEvent, String> {
@@ -255,14 +277,11 @@ fn encode_snapshot_text(screen: String, payload: Json) -> String {
 }
 
 fn encode_snapshot_text_with_revision(screen: String, payload: Json, state_revision: Int) -> String {
-  return stringify(object4("schema",
-                           string_value(snapshot_schema()),
-                           "screen",
-                           string_value(screen),
-                           "payload",
-                           payload,
-                           "state_revision",
-                           int_value(state_revision)))
+  return __nebula_thin_host_encode_snapshot_text(screen, payload, state_revision)
+}
+
+fn encode_snapshot_payload_text_unchecked_with_revision(screen: String, payload_text: String, state_revision: Int) -> String {
+  return __nebula_thin_host_encode_snapshot_payload_text(screen, payload_text, state_revision)
 }
 
 fn decode_snapshot_text(text: String) -> Result<ThinHostSnapshot, String> {

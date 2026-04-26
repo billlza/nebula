@@ -22,6 +22,14 @@ extern fn __nebula_rt_json_object4(key1: String,
                                    value3: Json,
                                    key4: String,
                                    value4: Json) -> Json
+extern fn __nebula_rt_json_object4_text(key1: String,
+                                        value1: Json,
+                                        key2: String,
+                                        value2: Json,
+                                        key3: String,
+                                        value3: Json,
+                                        key4: String,
+                                        value4: Json) -> String
 extern fn __nebula_rt_json_object5(key1: String,
                                    value1: Json,
                                    key2: String,
@@ -150,6 +158,17 @@ fn object4(key1: String,
            key4: String,
            value4: Json) -> Json {
   return __nebula_rt_json_object4(key1, value1, key2, value2, key3, value3, key4, value4)
+}
+
+fn object4_text(key1: String,
+                value1: Json,
+                key2: String,
+                value2: Json,
+                key3: String,
+                value3: Json,
+                key4: String,
+                value4: Json) -> String {
+  return __nebula_rt_json_object4_text(key1, value1, key2, value2, key3, value3, key4, value4)
 }
 
 fn object5(key1: String,

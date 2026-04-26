@@ -3094,6 +3094,22 @@ inline void append_json_object_field(std::string& out,
   object_fields.push_back(std::move(field));
 }
 
+inline void append_json_object_text_field(std::string& out,
+                                          bool& first,
+                                          std::string_view key,
+                                          JsonValue value) {
+  if (!first) out.push_back(',');
+  first = false;
+  out.push_back('"');
+  json_append_escaped_string(out, key);
+  out += "\":";
+  if (value.structured != nullptr && value.text.empty()) {
+    out += json_materialize_structured(*value.structured);
+  } else {
+    out += value.text;
+  }
+}
+
 inline JsonValue finish_json_object(std::string text, JsonObjectIndex object_fields) {
   JsonValueView parsed;
   parsed.kind = JsonValueKind::Object;
@@ -3261,6 +3277,30 @@ inline JsonValue json_object4(std::string_view key1,
   append_json_object_field(out, object_fields, first, key4, std::move(value4));
   out.push_back('}');
   return finish_json_object(std::move(out), std::move(object_fields));
+}
+
+inline std::string json_object4_text(std::string_view key1,
+                                     JsonValue value1,
+                                     std::string_view key2,
+                                     JsonValue value2,
+                                     std::string_view key3,
+                                     JsonValue value3,
+                                     std::string_view key4,
+                                     JsonValue value4) {
+  std::string out;
+  reserve_json_object_text(out,
+                           key1.size() + value1.text.size() + 4,
+                           key2.size() + value2.text.size() + 4,
+                           key3.size() + value3.text.size() + 4,
+                           key4.size() + value4.text.size() + 4);
+  bool first = true;
+  out.push_back('{');
+  append_json_object_text_field(out, first, key1, std::move(value1));
+  append_json_object_text_field(out, first, key2, std::move(value2));
+  append_json_object_text_field(out, first, key3, std::move(value3));
+  append_json_object_text_field(out, first, key4, std::move(value4));
+  out.push_back('}');
+  return out;
 }
 
 inline JsonValue json_object5(std::string_view key1,
@@ -5972,6 +6012,20 @@ inline nebula::rt::JsonValue __nebula_rt_json_object4(std::string key1,
                                   std::move(key2), std::move(value2),
                                   std::move(key3), std::move(value3),
                                   std::move(key4), std::move(value4));
+}
+
+inline std::string __nebula_rt_json_object4_text(std::string key1,
+                                                 nebula::rt::JsonValue value1,
+                                                 std::string key2,
+                                                 nebula::rt::JsonValue value2,
+                                                 std::string key3,
+                                                 nebula::rt::JsonValue value3,
+                                                 std::string key4,
+                                                 nebula::rt::JsonValue value4) {
+  return nebula::rt::json_object4_text(std::move(key1), std::move(value1),
+                                       std::move(key2), std::move(value2),
+                                       std::move(key3), std::move(value3),
+                                       std::move(key4), std::move(value4));
 }
 
 inline nebula::rt::JsonValue __nebula_rt_json_object5(std::string key1,

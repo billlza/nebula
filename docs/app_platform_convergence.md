@@ -215,6 +215,8 @@ The measurement contract for this lane is:
 
 - comparisons stay split into `Nebula-owned`, `Host-owned`, and `Ops-owned` responsibility
 - host-renderer speed is not treated as a Nebula runtime win/loss
+- C++ reference results are measurement-only baselines until each workload has a matching runnable
+  reference implementation and explicit comparison output
 - public app-platform maturity claims stay blocked until the internal-app standard and thin-host
   contract are both real and repeatable
 
@@ -224,6 +226,8 @@ Use:
 python3 scripts/app_platform_bench.py verify
 python3 scripts/app_platform_bench.py plan --format json
 python3 scripts/app_platform_bench.py run-nebula --binary ./build/nebula --workload cli_cold_start --workload service_json_db_crud --workload thin_host_bridge_roundtrip --workload state_sync_latency --workload resident_memory
+python3 scripts/app_platform_bench.py run-reference --stack cpp --workload thin_host_bridge_roundtrip --workload state_sync_latency --json-out artifacts/app-platform-cpp.json
+python3 scripts/app_platform_bench.py compare --stack cpp --nebula-json artifacts/app-platform-nebula.json --reference-json artifacts/app-platform-cpp.json
 ```
 
 This wave now includes real Nebula workload execution for:
