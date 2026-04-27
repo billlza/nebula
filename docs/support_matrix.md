@@ -87,14 +87,17 @@ Repo-local preview package matrix:
 - `nebula-pqc-protocols`: same host reach as `nebula-crypto`; current preview includes signed
   payload helpers, ciphertext-only KEM envelopes, and `pqc::channel` with pinned signed initiator
   acceptance for server-side mutual-auth experiments
+- `nebula-qkd`: same host reach as `nebula-crypto`; preview QKD KME/KMS key-delivery integration
+  package with ETSI GS QKD 014 v1.1.1-style request/response helpers and a deterministic mock provider
 - `nebula-qcomm-sim`: same host reach as `nebula-crypto`; experimental BB84 simulation-only preview
 - `nebula-thin-host-bridge`: compiler/tooling hosts; preview command/event/snapshot envelope
   contract for thin-host app cores, including `correlation_id`, `state_revision`, deterministic
   replay, and rejection semantics; no renderer, widget, layout, style, accessibility, packaging, or
   native UI platform contract
 - `nebula-ui`: compiler/tooling hosts; preview semantic UI tree package paired with `ui` / `view`
-  syntax, JSON IR, and a headless adapter, without a mature native renderer or app-store
-  distribution contract
+  syntax, `nebula-ui.tree.v1` validation, JSON IR, a headless adapter, guarded native smoke
+  assets, preview lifecycle/accessibility summaries, and thin-host packaging/update fixtures,
+  without a mature native renderer or app-store distribution contract
 
 Repo-local preview example matrix:
 
@@ -110,11 +113,17 @@ Important caveat:
 - fresh-install and installed-binary smoke for the GA surface are centered on the CLI/tooling story, including `nebula new --template cli` and `nebula run ... -- <program-args...>`
 - The default binary archives and install scripts do not install the backend SDK; Linux users must opt in to the backend SDK asset when they want installed backend packages.
 - Remaining preview packages under `official/*` are still consumed from a source checkout via `path` dependencies.
+- `nebula-qkd` is real QKD key-delivery integration code at the SAE/KME software boundary, but it is
+  still preview and does not claim QKD hardware support, trusted-node networking, security
+  certification, or QKD-TLS GA. Its built-in live transport is limited to cleartext local/dev HTTP
+  lab KME tests and a narrow outbound mTLS adapter preview; production KME access still requires
+  deployment-owned certificate lifecycle, vendor adapter policy, and security validation.
 - the first internal-app platform wave remains backend-first: embedded data through
   `nebula-db-sqlite` preview comes before any claim of a mature UI/native app platform
 - Native UI / desktop platform work is still post-1.0 preview scope. `nebula-ui` establishes a
-  semantic UI IR plus guarded AppKit/GTK minimal-window smoke assets, not a complete
-  SwiftUI/Qt/Flutter-class UI platform.
+  semantic UI IR plus headless/native adapter contract smoke. The new lifecycle/accessibility and
+  packaging/update fixtures are preview contracts, not a complete SwiftUI/Qt/Flutter-class UI
+  platform.
 - the intended frontend/native direction is still the thin-host split documented in
   `docs/thin_host_app_shell.md`, not a pure-Nebula UI framework story
 - the lane-by-lane maturity/gap contract for broader APP-platform claims lives in

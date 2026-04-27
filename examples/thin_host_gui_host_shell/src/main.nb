@@ -1,0 +1,146 @@
+module main
+import bridge::host_bridge
+import std::bytes
+import std::json
+import std::result
+import ui::ui
+
+extern fn host_shell_begin() -> Void
+extern fn host_shell_open() -> Bool
+extern fn host_shell_next_command_text() -> String
+extern fn host_shell_publish_event(event: String) -> Void
+extern fn host_shell_publish_snapshot(snapshot: String) -> Void
+extern fn host_shell_render_tree(tree: String) -> Void
+extern fn host_shell_end() -> Void
+
+struct ShellState {
+  filter_text: String,
+  refresh_count: Int,
+  last_action: String,
+  revision: Int
+}
+
+struct ShellStep {
+  state: ShellState,
+  terminal: Bool,
+  event_kind: String,
+  correlation_id: String
+}
+
+fn text_join(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn int_text(value: Int) -> String {
+  return stringify(int_value(value))
+}
+
+fn initial_state() -> ShellState {
+  return ShellState("targets", 0, "boot", 0)
+}
+
+fn state_payload(state: ShellState) -> Json {
+  return object4("filter",
+                 string_value(state.filter_text),
+                 "refresh_count",
+                 int_value(state.refresh_count),
+                 "last_action",
+                 string_value(state.last_action),
+                 "revision",
+                 int_value(state.revision))
+}
+
+ui OpsShell(state: ShellState) {
+  view Window(title = "Local Ops Shell") {
+    view Input(value = state.filter_text, action = "targets.filter", accessibility_label = "Filter targets")
+    view Button(text = "Refresh", action = "targets.refresh")
+  }
+}
+
+fn render_state(state: ShellState) -> Void {
+  let tree = OpsShell(state)
+  host_shell_render_tree(stringify(tree))
+  host_shell_publish_snapshot(encode_snapshot_text_with_revision("local_ops_console", tree, state.revision))
+}
+
+fn applied_event_text(step: ShellStep) -> String {
+  return encode_event_text_with_context(step.event_kind,
+                                        state_payload(step.state),
+                                        step.terminal,
+                                        step.correlation_id,
+                                        step.state.revision)
+}
+
+fn rejected_event_text(state: ShellState, correlation_id: String, reason: String) -> String {
+  return encode_event_text_with_context("ui_command_rejected",
+                                        object5("filter",
+                                                string_value(state.filter_text),
+                                                "refresh_count",
+                                                int_value(state.refresh_count),
+                                                "last_action",
+                                                string_value(state.last_action),
+                                                "revision",
+                                                int_value(state.revision),
+                                                "reason",
+                                                string_value(reason)),
+                                        false,
+                                        correlation_id,
+                                        state.revision)
+}
+
+fn apply_command(state: ShellState, command_text: String) -> Result<ShellStep, String> {
+  let command = decode_command_text(command_text)?
+  if command.state_revision() != state.revision {
+    return Err("stale thin-host GUI command state_revision")
+  }
+  if command.kind() == "targets.refresh" {
+    return Ok(ShellStep(ShellState(state.filter_text, state.refresh_count + 1, command.kind(), state.revision + 1),
+                        false,
+                        "ui_action_applied",
+                        command.correlation_id()))
+  }
+  if command.kind() == "targets.filter" {
+    return Ok(ShellStep(ShellState("prod", state.refresh_count, command.kind(), state.revision + 1),
+                        false,
+                        "ui_action_applied",
+                        command.correlation_id()))
+  }
+  if command.kind() == "quit" {
+    return Ok(ShellStep(ShellState(state.filter_text, state.refresh_count, command.kind(), state.revision + 1),
+                        true,
+                        "ui_shell_quit",
+                        command.correlation_id()))
+  }
+  return Err("unknown thin-host GUI command kind")
+}
+
+fn main() -> Int {
+  let state = initial_state()
+  host_shell_begin()
+  host_shell_publish_event(encode_event_text_with_context("ui_shell_booted",
+                                                          state_payload(state),
+                                                          false,
+                                                          "boot",
+                                                          state.revision))
+  render_state(state)
+  while host_shell_open() {
+    let command_text = host_shell_next_command_text()
+    match apply_command(state, command_text) {
+      Ok(step) => {
+        state = step.state
+        host_shell_publish_event(applied_event_text(step))
+        render_state(state)
+        if step.terminal {
+          host_shell_end()
+          return 0
+        }
+      }
+      Err(msg) => {
+        host_shell_publish_event(rejected_event_text(state, command_correlation_id_or(command_text, "gui-command-rejected"), msg))
+        render_state(state)
+      }
+    }
+  }
+  host_shell_end()
+  return 0
+}

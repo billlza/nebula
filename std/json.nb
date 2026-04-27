@@ -109,6 +109,10 @@ extern fn __nebula_rt_json_as_int(value: Json) -> Result<Int, String>
 extern fn __nebula_rt_json_as_bool(value: Json) -> Result<Bool, String>
 extern fn __nebula_rt_json_array_builder() -> JsonArrayBuilder
 extern fn __nebula_rt_json_array_push(builder: JsonArrayBuilder, value: Json) -> JsonArrayBuilder
+extern fn __nebula_rt_json_array0() -> Json
+extern fn __nebula_rt_json_array1(value1: Json) -> Json
+extern fn __nebula_rt_json_array2(value1: Json, value2: Json) -> Json
+extern fn __nebula_rt_json_array3(value1: Json, value2: Json, value3: Json) -> Json
 extern fn __nebula_rt_json_array_build(builder: JsonArrayBuilder) -> Json
 extern fn __nebula_rt_json_array_len(value: Json) -> Result<Int, String>
 extern fn __nebula_rt_json_array_get(value: Json, index: Int) -> Result<Json, String>
@@ -318,6 +322,22 @@ fn array_builder() -> JsonArrayBuilder {
 
 fn array_push(builder: JsonArrayBuilder, value: Json) -> JsonArrayBuilder {
   return __nebula_rt_json_array_push(builder, value)
+}
+
+fn array0() -> Json {
+  return __nebula_rt_json_array0()
+}
+
+fn array1(value1: Json) -> Json {
+  return __nebula_rt_json_array1(value1)
+}
+
+fn array2(value1: Json, value2: Json) -> Json {
+  return __nebula_rt_json_array2(value1, value2)
+}
+
+fn array3(value1: Json, value2: Json, value3: Json) -> Json {
+  return __nebula_rt_json_array3(value1, value2, value3)
 }
 
 fn array_build(builder: JsonArrayBuilder) -> Json {

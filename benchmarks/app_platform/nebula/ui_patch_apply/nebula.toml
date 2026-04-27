@@ -1,0 +1,10 @@
+schema_version = 1
+
+[package]
+name = "app-platform-ui-patch-apply"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+ui = { path = "../../../../official/nebula-ui" }

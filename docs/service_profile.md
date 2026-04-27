@@ -63,4 +63,6 @@ Current non-goals for the profile:
 - hidden ALPN-driven protocol switching or a broad HTTP/2 edge/platform claim
 - broad Windows service-host parity
 - full framework-style middleware ecosystems
-- experimental quantum-communication simulation packages such as `official/nebula-qcomm-sim`
+- quantum-communication preview packages such as `official/nebula-qkd` and
+  `official/nebula-qcomm-sim`; they are outside the backend service GA profile and do not imply
+  QKD hardware, trusted-node networking, security certification, or QKD-TLS GA

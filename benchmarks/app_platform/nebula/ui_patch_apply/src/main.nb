@@ -1,0 +1,16 @@
+module main
+import ui::headless
+
+@bench
+fn bench_ui_patch_apply() -> Void {
+  let old_tree = FastPreviewTree("Local Ops", "Local Ops", "targets", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
+  let new_tree = FastPreviewTree("Local Ops", "Local Ops", "prod", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
+  let patch_code = fast_patch_code(old_tree, new_tree)
+  if patch_code != 111 {
+    expect_eq(1, 0)
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-ui-patch-apply")
+}

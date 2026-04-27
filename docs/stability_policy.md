@@ -18,6 +18,9 @@ Policy:
 - Experimental preview packages such as `official/nebula-qcomm-sim` sit even outside the normal
   pilot service profile: they are for protocol experimentation and differentiation work, not for
   security guarantees or hardware-support claims.
+- `official/nebula-qkd` is preview real-integration code for QKD key-delivery software boundaries;
+  it is not installed GA and does not claim physical QKD hardware, trusted-node networking, or
+  security certification.
 
 Compatibility expectations:
 

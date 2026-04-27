@@ -1,26 +1,30 @@
 module main
+import std::bytes
 import std::json
+import std::result
 import ui::headless
 import ui::ui
+
+fn join_text(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
 
 struct DashboardState {
   title: String
   ready: Bool
+  filter: String
 }
 
-ui Dashboard(state: DashboardState) {
-  view Window(title = state.title) {
-    view Column(spacing = 12) {
-      view Text(text = state.title)
-      view Button(text = "Refresh", action = "targets.refresh")
-    }
-  }
+fn dashboard_body(state: DashboardState) -> View {
+  return column(12, child2(input(state.filter, "targets.filter", "Filter targets"), button("Refresh", "targets.refresh")))
 }
 
-fn main() -> Void {
-  let state = DashboardState("Local Ops", true)
-  print(stringify(Dashboard(state)))
-  match render(Dashboard(state)) {
+fn Dashboard(state: DashboardState) -> Json {
+  return window(state.title, child1(dashboard_body(state))).as_json()
+}
+
+fn print_result_text(value: Result<String, String>) -> Void {
+  match value {
     Ok(text) => {
       print(text)
     }
@@ -28,12 +32,54 @@ fn main() -> Void {
       print(msg)
     }
   }
-  match dispatch_action(Dashboard(state), "targets.refresh") {
-    Ok(action) => {
-      print(action)
+}
+
+fn print_result_json(value: Result<Json, String>) -> Void {
+  match value {
+    Ok(json_value) => {
+      print(stringify(json_value))
     }
     Err(msg) => {
       print(msg)
     }
   }
+}
+
+fn print_layout_outputs(tree: Json) -> Void {
+  match layout(tree) {
+    Ok(value) => {
+      print(stringify(value))
+      print_result_json(render_list(value))
+      print_result_text(hit_test(value, 30, 30))
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn print_hit_marker(tree: Json) -> Void {
+  match layout(tree) {
+    Ok(value) => {
+      match hit_test(value, 30, 30) {
+        Ok(action) => { print(join_text("nebula-ui-hit-test-action=", action)) }
+        Err(msg) => { print(msg) }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  let state = DashboardState("Local Ops", true, "targets")
+  let tree = Dashboard(state)
+  print(stringify(tree))
+  print_result_text(render(tree))
+  print_result_text(dispatch_action(tree, "targets.refresh"))
+  print_result_text(dispatch_action(tree, "targets.filter"))
+  print_layout_outputs(tree)
+  print_hit_marker(tree)
+  print_result_json(patch(tree, Dashboard(DashboardState("Local Ops", true, "prod"))))
 }

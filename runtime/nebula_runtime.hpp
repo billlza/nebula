@@ -606,6 +606,21 @@ struct HttpRouteParams3 {
   std::string third;
 };
 
+struct HttpRoutePatternSegment {
+  bool parameter = false;
+  std::string text;
+};
+
+struct HttpRoutePattern {
+  std::string pattern;
+  std::vector<HttpRoutePatternSegment> segments;
+  std::size_t param_count = 0;
+};
+
+struct HttpRouteCaptureViews {
+  std::array<std::string_view, 3> values{};
+};
+
 enum class JsonValueKind : std::uint8_t {
   Unknown,
   String,
@@ -3497,22 +3512,73 @@ inline JsonArrayBuilder json_array_push(JsonArrayBuilder builder, JsonValue valu
   return builder;
 }
 
+inline void append_json_array_item(std::string& out,
+                                   JsonArrayIndex& array_items,
+                                   bool& first,
+                                   JsonValue value) {
+  if (!first) out.push_back(',');
+  first = false;
+  const std::size_t value_start = out.size();
+  if (value.structured != nullptr && value.text.empty()) {
+    out += json_materialize_structured(*value.structured);
+  } else {
+    out += value.text;
+  }
+  auto view = value.parsed;
+  view.raw_start = value_start;
+  view.raw_end = out.size();
+  array_items.items.push_back(view);
+}
+
+inline JsonValue json_array0() {
+  JsonArrayIndex array_items;
+  return finish_json_array("[]", std::move(array_items));
+}
+
+inline JsonValue json_array1(JsonValue value1) {
+  std::string out;
+  JsonArrayIndex array_items;
+  array_items.items.reserve(1);
+  out.push_back('[');
+  bool first = true;
+  append_json_array_item(out, array_items, first, std::move(value1));
+  out.push_back(']');
+  return finish_json_array(std::move(out), std::move(array_items));
+}
+
+inline JsonValue json_array2(JsonValue value1, JsonValue value2) {
+  std::string out;
+  JsonArrayIndex array_items;
+  array_items.items.reserve(2);
+  out.push_back('[');
+  bool first = true;
+  append_json_array_item(out, array_items, first, std::move(value1));
+  append_json_array_item(out, array_items, first, std::move(value2));
+  out.push_back(']');
+  return finish_json_array(std::move(out), std::move(array_items));
+}
+
+inline JsonValue json_array3(JsonValue value1, JsonValue value2, JsonValue value3) {
+  std::string out;
+  JsonArrayIndex array_items;
+  array_items.items.reserve(3);
+  out.push_back('[');
+  bool first = true;
+  append_json_array_item(out, array_items, first, std::move(value1));
+  append_json_array_item(out, array_items, first, std::move(value2));
+  append_json_array_item(out, array_items, first, std::move(value3));
+  out.push_back(']');
+  return finish_json_array(std::move(out), std::move(array_items));
+}
+
 inline JsonValue json_array_build(JsonArrayBuilder builder) {
   std::string out;
   JsonArrayIndex array_items;
+  array_items.items.reserve(builder.items.size());
   out.push_back('[');
-  for (std::size_t i = 0; i < builder.items.size(); ++i) {
-    if (i) out.push_back(',');
-    const std::size_t value_start = out.size();
-    if (builder.items[i].structured != nullptr && builder.items[i].text.empty()) {
-      out += json_materialize_structured(*builder.items[i].structured);
-    } else {
-      out += builder.items[i].text;
-    }
-    auto view = builder.items[i].parsed;
-    view.raw_start = value_start;
-    view.raw_end = out.size();
-    array_items.items.push_back(view);
+  bool first = true;
+  for (auto& item : builder.items) {
+    append_json_array_item(out, array_items, first, std::move(item));
   }
   out.push_back(']');
   return finish_json_array(std::move(out), std::move(array_items));
@@ -4512,6 +4578,30 @@ inline Result<std::string, std::string> build_http_extra_response_header_block3(
       std::get<typename Result<std::string, std::string>::Ok>(std::move(third.data)).value);
 }
 
+inline HttpResponse http_text_response(std::int64_t status, std::string body) {
+  return HttpResponse(status, "text/plain; charset=utf-8", bytes_from_string(std::move(body)));
+}
+
+inline HttpResponse http_ok_text(std::string body) {
+  return http_text_response(200, std::move(body));
+}
+
+inline HttpResponse http_bad_request_text(std::string body) {
+  return http_text_response(400, std::move(body));
+}
+
+inline HttpResponse http_method_not_allowed_text(std::string body) {
+  return http_text_response(405, std::move(body));
+}
+
+inline HttpResponse http_not_found_text(std::string body) {
+  return http_text_response(404, std::move(body));
+}
+
+inline HttpResponse http_internal_error_text(std::string body) {
+  return http_text_response(500, std::move(body));
+}
+
 inline bool next_http_path_segment(std::string_view path, std::size_t& cursor, std::string_view& segment) {
   if (cursor >= path.size()) return false;
   if (path[cursor] != '/') return false;
@@ -4520,6 +4610,148 @@ inline bool next_http_path_segment(std::string_view path, std::size_t& cursor, s
   while (cursor < path.size() && path[cursor] != '/') cursor += 1;
   segment = path.substr(start, cursor - start);
   return true;
+}
+
+inline Result<HttpRoutePattern, std::string> http_compile_route_uncached(std::string pattern) {
+  if (pattern.empty() || pattern.front() != '/') {
+    return err_result<HttpRoutePattern>("route pattern must start with '/'");
+  }
+
+  HttpRoutePattern compiled;
+  compiled.pattern = std::move(pattern);
+  std::size_t cursor = 0;
+  std::string_view segment;
+  while (next_http_path_segment(compiled.pattern, cursor, segment)) {
+    HttpRoutePatternSegment out;
+    if (!segment.empty() && segment.front() == ':') {
+      if (segment.size() == 1) {
+        return err_result<HttpRoutePattern>("route pattern contains an empty parameter segment");
+      }
+      out.parameter = true;
+      out.text = std::string(segment.substr(1));
+      compiled.param_count += 1;
+    } else {
+      out.text = std::string(segment);
+    }
+    compiled.segments.push_back(std::move(out));
+  }
+  return ok_result(std::move(compiled));
+}
+
+inline Result<HttpRoutePattern, std::string> http_compile_route(std::string pattern) {
+  return http_compile_route_uncached(std::move(pattern));
+}
+
+struct HttpRoutePatternCacheEntry {
+  std::string pattern;
+  Result<HttpRoutePattern, std::string> compiled;
+};
+
+inline const Result<HttpRoutePattern, std::string>& http_cached_route_pattern(std::string_view pattern) {
+  constexpr std::size_t kMaxHttpRoutePatternCacheEntries = 64;
+  thread_local std::vector<HttpRoutePatternCacheEntry> cache;
+  for (const auto& entry : cache) {
+    if (entry.pattern == pattern) return entry.compiled;
+  }
+  if (cache.size() >= kMaxHttpRoutePatternCacheEntries) {
+    cache.erase(cache.begin());
+  }
+  std::string key(pattern);
+  auto compiled = http_compile_route_uncached(key);
+  cache.push_back(HttpRoutePatternCacheEntry{std::move(key), std::move(compiled)});
+  return cache.back().compiled;
+}
+
+inline bool http_compiled_path_matches(const HttpRoutePattern& route, std::string_view path) {
+  if (path.empty() || path.front() != '/') return false;
+  std::size_t path_cursor = 0;
+  for (const auto& segment : route.segments) {
+    std::string_view path_segment;
+    if (!next_http_path_segment(path, path_cursor, path_segment)) return false;
+    if (segment.parameter) {
+      if (path_segment.empty()) return false;
+      continue;
+    }
+    if (path_segment != segment.text) return false;
+  }
+  std::string_view extra_segment;
+  return !next_http_path_segment(path, path_cursor, extra_segment);
+}
+
+inline Result<HttpRouteCaptureViews, std::string>
+http_compiled_route_capture_views(const HttpRoutePattern& route,
+                                  std::string_view path,
+                                  std::size_t expected_count,
+                                  std::string wrong_arity_message) {
+  if (path.empty() || path.front() != '/') {
+    return err_result<HttpRouteCaptureViews>("request path must start with '/'");
+  }
+
+  HttpRouteCaptureViews captured;
+  std::size_t captured_count = 0;
+  std::size_t path_cursor = 0;
+  for (const auto& segment : route.segments) {
+    std::string_view path_segment;
+    if (!next_http_path_segment(path, path_cursor, path_segment)) {
+      return err_result<HttpRouteCaptureViews>("request path does not match route pattern");
+    }
+    if (segment.parameter) {
+      if (path_segment.empty()) {
+        return err_result<HttpRouteCaptureViews>("request path does not match route pattern");
+      }
+      if (captured_count >= expected_count) {
+        return err_result<HttpRouteCaptureViews>(std::move(wrong_arity_message));
+      }
+      captured.values[captured_count] = path_segment;
+      captured_count += 1;
+      continue;
+    }
+    if (path_segment != segment.text) {
+      return err_result<HttpRouteCaptureViews>("request path does not match route pattern");
+    }
+  }
+
+  std::string_view extra_segment;
+  if (next_http_path_segment(path, path_cursor, extra_segment)) {
+    return err_result<HttpRouteCaptureViews>("request path does not match route pattern");
+  }
+  if (captured_count != expected_count) {
+    return err_result<HttpRouteCaptureViews>(std::move(wrong_arity_message));
+  }
+  return ok_result(captured);
+}
+
+inline Result<std::string, std::string> http_compiled_route_param1(const HttpRoutePattern& route,
+                                                                    std::string_view path) {
+  auto captured = http_compiled_route_capture_views(route,
+                                                    path,
+                                                    1,
+                                                    "route pattern must contain exactly one :param segment");
+  if (result_is_err(captured)) return err_result<std::string>(result_err_ref(captured));
+  return ok_result(std::string(result_ok_ref(captured).values[0]));
+}
+
+inline Result<HttpRouteParams2, std::string> http_compiled_route_params2(const HttpRoutePattern& route,
+                                                                         std::string_view path) {
+  auto captured = http_compiled_route_capture_views(route,
+                                                    path,
+                                                    2,
+                                                    "route pattern does not expose the expected parameter count");
+  if (result_is_err(captured)) return err_result<HttpRouteParams2>(result_err_ref(captured));
+  const auto& values = result_ok_ref(captured).values;
+  return ok_result(HttpRouteParams2{std::string(values[0]), std::string(values[1])});
+}
+
+inline Result<HttpRouteParams3, std::string> http_compiled_route_params3(const HttpRoutePattern& route,
+                                                                         std::string_view path) {
+  auto captured = http_compiled_route_capture_views(route,
+                                                    path,
+                                                    3,
+                                                    "route pattern does not expose the expected parameter count");
+  if (result_is_err(captured)) return err_result<HttpRouteParams3>(result_err_ref(captured));
+  const auto& values = result_ok_ref(captured).values;
+  return ok_result(
+      HttpRouteParams3{std::string(values[0]), std::string(values[1]), std::string(values[2])});
 }
 
 struct HttpSingleParamPattern {
@@ -4561,21 +4793,9 @@ inline bool http_path_matches(std::string_view pattern, std::string_view path) {
   }
   if (pattern.find(':') == std::string_view::npos) return false;
 
-  std::size_t pattern_cursor = 0;
-  std::size_t path_cursor = 0;
-  while (true) {
-    std::string_view pattern_segment;
-    std::string_view path_segment;
-    const bool have_pattern = next_http_path_segment(pattern, pattern_cursor, pattern_segment);
-    const bool have_path = next_http_path_segment(path, path_cursor, path_segment);
-    if (have_pattern != have_path) return false;
-    if (!have_pattern) return true;
-    if (!pattern_segment.empty() && pattern_segment.front() == ':') {
-      if (pattern_segment.size() == 1 || path_segment.empty()) return false;
-      continue;
-    }
-    if (pattern_segment != path_segment) return false;
-  }
+  const auto& compiled = http_cached_route_pattern(pattern);
+  if (result_is_err(compiled)) return false;
+  return http_compiled_path_matches(result_ok_ref(compiled), path);
 }
 
 inline Result<std::string, std::string> http_route_param1_single_param(std::string_view prefix,
@@ -4632,107 +4852,48 @@ inline Result<std::string, std::string> http_route_param1(std::string_view patte
   }
   if (auto fast = http_route_param1_single_param_fast(pattern, path); fast.has_value()) return *fast;
 
-  std::size_t pattern_cursor = 0;
-  std::size_t path_cursor = 0;
-  std::size_t param_count = 0;
-  std::string captured;
-
-  while (true) {
-    std::string_view pattern_segment;
-    std::string_view path_segment;
-    const bool have_pattern = next_http_path_segment(pattern, pattern_cursor, pattern_segment);
-    const bool have_path = next_http_path_segment(path, path_cursor, path_segment);
-    if (have_pattern != have_path) {
-      return err_result<std::string>("request path does not match route pattern");
-    }
-    if (!have_pattern) break;
-    if (!pattern_segment.empty() && pattern_segment.front() == ':') {
-      if (pattern_segment.size() == 1) {
-        return err_result<std::string>("route pattern contains an empty parameter segment");
-      }
-      param_count += 1;
-      if (param_count > 1) {
-        return err_result<std::string>("route pattern must contain exactly one :param segment");
-      }
-      if (path_segment.empty()) {
-        return err_result<std::string>("request path does not match route pattern");
-      }
-      captured = std::string(path_segment);
-      continue;
-    }
-    if (pattern_segment != path_segment) {
-      return err_result<std::string>("request path does not match route pattern");
-    }
-  }
-
-  if (param_count != 1) {
-    return err_result<std::string>("route pattern must contain exactly one :param segment");
-  }
-  return ok_result(captured);
+  const auto& compiled = http_cached_route_pattern(pattern);
+  if (result_is_err(compiled)) return err_result<std::string>(result_err_ref(compiled));
+  return http_compiled_route_param1(result_ok_ref(compiled), path);
 }
 
 inline Result<std::vector<std::string>, std::string> http_route_params(std::string_view pattern,
                                                                        std::string_view path,
                                                                        std::size_t expected_count) {
-  if (pattern.empty() || pattern.front() != '/') {
-    return err_result<std::vector<std::string>>("route pattern must start with '/'");
-  }
-  if (path.empty() || path.front() != '/') {
-    return err_result<std::vector<std::string>>("request path must start with '/'");
-  }
-  std::size_t pattern_cursor = 0;
-  std::size_t path_cursor = 0;
-  std::vector<std::string> captured;
-  captured.reserve(expected_count);
-
-  while (true) {
-    std::string_view pattern_segment;
-    std::string_view path_segment;
-    const bool have_pattern = next_http_path_segment(pattern, pattern_cursor, pattern_segment);
-    const bool have_path = next_http_path_segment(path, path_cursor, path_segment);
-    if (have_pattern != have_path) {
-      return err_result<std::vector<std::string>>("request path does not match route pattern");
-    }
-    if (!have_pattern) break;
-    if (!pattern_segment.empty() && pattern_segment.front() == ':') {
-      if (pattern_segment.size() == 1) {
-        return err_result<std::vector<std::string>>("route pattern contains an empty parameter segment");
-      }
-      if (path_segment.empty()) {
-        return err_result<std::vector<std::string>>("request path does not match route pattern");
-      }
-      captured.emplace_back(path_segment);
-      continue;
-    }
-    if (pattern_segment != path_segment) {
-      return err_result<std::vector<std::string>>("request path does not match route pattern");
-    }
-  }
-
-  if (captured.size() != expected_count) {
+  if (expected_count > 3) {
     return err_result<std::vector<std::string>>("route pattern does not expose the expected parameter count");
   }
-  return ok_result(std::move(captured));
+  const auto& compiled = http_cached_route_pattern(pattern);
+  if (result_is_err(compiled)) {
+    return err_result<std::vector<std::string>>(result_err_ref(compiled));
+  }
+  auto captured = http_compiled_route_capture_views(result_ok_ref(compiled),
+                                                    path,
+                                                    expected_count,
+                                                    "route pattern does not expose the expected parameter count");
+  if (result_is_err(captured)) {
+    return err_result<std::vector<std::string>>(result_err_ref(captured));
+  }
+
+  std::vector<std::string> out;
+  out.reserve(expected_count);
+  const auto& values = result_ok_ref(captured).values;
+  for (std::size_t i = 0; i < expected_count; ++i) {
+    out.emplace_back(values[i]);
+  }
+  return ok_result(std::move(out));
 }
 
 inline Result<HttpRouteParams2, std::string> http_route_params2(std::string_view pattern, std::string_view path) {
-  auto captured = http_route_params(pattern, path, 2);
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(captured.data)) {
-    return err_result<HttpRouteParams2>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(captured.data)).value);
-  }
-  auto values = std::get<typename Result<std::vector<std::string>, std::string>::Ok>(std::move(captured.data)).value;
-  return ok_result(HttpRouteParams2{std::move(values[0]), std::move(values[1])});
+  const auto& compiled = http_cached_route_pattern(pattern);
+  if (result_is_err(compiled)) return err_result<HttpRouteParams2>(result_err_ref(compiled));
+  return http_compiled_route_params2(result_ok_ref(compiled), path);
 }
 
 inline Result<HttpRouteParams3, std::string> http_route_params3(std::string_view pattern, std::string_view path) {
-  auto captured = http_route_params(pattern, path, 3);
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(captured.data)) {
-    return err_result<HttpRouteParams3>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(captured.data)).value);
-  }
-  auto values = std::get<typename Result<std::vector<std::string>, std::string>::Ok>(std::move(captured.data)).value;
-  return ok_result(HttpRouteParams3{std::move(values[0]), std::move(values[1]), std::move(values[2])});
+  const auto& compiled = http_cached_route_pattern(pattern);
+  if (result_is_err(compiled)) return err_result<HttpRouteParams3>(result_err_ref(compiled));
+  return http_compiled_route_params3(result_ok_ref(compiled), path);
 }
 
 struct HttpRequestFraming {
@@ -5937,6 +6098,10 @@ inline std::int64_t __nebula_rt_bytes_len(nebula::rt::Bytes b) {
   return nebula::rt::bytes_len(b);
 }
 
+inline std::int64_t __nebula_rt_string_len(std::string value) {
+  return static_cast<std::int64_t>(value.size());
+}
+
 inline bool __nebula_rt_bytes_is_empty(nebula::rt::Bytes b) {
   return nebula::rt::bytes_is_empty(b);
 }
@@ -6150,6 +6315,25 @@ inline nebula::rt::JsonArrayBuilder __nebula_rt_json_array_builder() {
 inline nebula::rt::JsonArrayBuilder __nebula_rt_json_array_push(nebula::rt::JsonArrayBuilder builder,
                                                                 nebula::rt::JsonValue value) {
   return nebula::rt::json_array_push(std::move(builder), std::move(value));
+}
+
+inline nebula::rt::JsonValue __nebula_rt_json_array0() {
+  return nebula::rt::json_array0();
+}
+
+inline nebula::rt::JsonValue __nebula_rt_json_array1(nebula::rt::JsonValue value1) {
+  return nebula::rt::json_array1(std::move(value1));
+}
+
+inline nebula::rt::JsonValue __nebula_rt_json_array2(nebula::rt::JsonValue value1,
+                                                     nebula::rt::JsonValue value2) {
+  return nebula::rt::json_array2(std::move(value1), std::move(value2));
+}
+
+inline nebula::rt::JsonValue __nebula_rt_json_array3(nebula::rt::JsonValue value1,
+                                                     nebula::rt::JsonValue value2,
+                                                     nebula::rt::JsonValue value3) {
+  return nebula::rt::json_array3(std::move(value1), std::move(value2), std::move(value3));
 }
 
 inline nebula::rt::JsonValue __nebula_rt_json_array_build(nebula::rt::JsonArrayBuilder builder) {
@@ -6398,6 +6582,32 @@ inline nebula::rt::Result<nebula::rt::HttpRouteParams2, std::string> __nebula_rt
 inline nebula::rt::Result<nebula::rt::HttpRouteParams3, std::string> __nebula_rt_http_route_params3(std::string pattern,
                                                                                                       std::string path) {
   return nebula::rt::http_route_params3(std::move(pattern), std::move(path));
+}
+
+inline nebula::rt::Result<nebula::rt::HttpRoutePattern, std::string> __nebula_rt_http_compile_route(std::string pattern) {
+  return nebula::rt::http_compile_route(std::move(pattern));
+}
+
+inline bool __nebula_rt_http_compiled_path_matches(nebula::rt::HttpRoutePattern route, std::string path) {
+  return nebula::rt::http_compiled_path_matches(route, path);
+}
+
+inline nebula::rt::Result<std::string, std::string> __nebula_rt_http_compiled_route_param1(
+    nebula::rt::HttpRoutePattern route,
+    std::string path) {
+  return nebula::rt::http_compiled_route_param1(route, path);
+}
+
+inline nebula::rt::Result<nebula::rt::HttpRouteParams2, std::string> __nebula_rt_http_compiled_route_params2(
+    nebula::rt::HttpRoutePattern route,
+    std::string path) {
+  return nebula::rt::http_compiled_route_params2(route, path);
+}
+
+inline nebula::rt::Result<nebula::rt::HttpRouteParams3, std::string> __nebula_rt_http_compiled_route_params3(
+    nebula::rt::HttpRoutePattern route,
+    std::string path) {
+  return nebula::rt::http_compiled_route_params3(route, path);
 }
 
 inline nebula::rt::Future<nebula::rt::Result<void, std::string>>

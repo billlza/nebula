@@ -1,0 +1,370 @@
+id = "TST-295-official-qkd-provider-contract-smoke"
+suite = "test"
+description = "official nebula-qkd exposes ETSI-style key delivery helpers, parser, and mock provider"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import http.server
+import json
+import os
+import shutil
+import subprocess
+import threading
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/official-qkd-provider")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "official-qkd-provider-app"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+qkd = {{ path = "{repo_root / 'official' / 'nebula-qkd'}" }}
+''', encoding="utf-8")
+
+class KmeHandler(http.server.BaseHTTPRequestHandler):
+    def _send_json(self, status, payload):
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/qkd/api/v1/keys/sae-bob/status":
+            self._send_json(200, {
+                "source_KME_ID": "lab-source-kme",
+                "target_KME_ID": "lab-target-kme",
+                "master_SAE_ID": "sae-alice",
+                "slave_SAE_ID": "sae-bob",
+                "key_size": 256,
+                "stored_key_count": 4,
+                "max_key_count": 16,
+                "max_key_per_request": 4,
+                "max_key_size": 512,
+            })
+            return
+        self._send_json(404, {"error": "unknown path"})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        if self.path == "/qkd/api/v1/keys/sae-bob/enc_keys":
+            parsed = json.loads(body)
+            if parsed.get("number") != 1 or parsed.get("size") != 256:
+                self._send_json(400, {"error": "bad enc request"})
+                return
+            self._send_json(200, {"keys": [{"key_ID": "live-1", "key": "bGl2ZS1rZXk="}]})
+            return
+        if self.path == "/qkd/api/v1/keys/sae-bob/dec_keys":
+            parsed = json.loads(body)
+            ids = parsed.get("key_IDs", [])
+            if not ids or ids[0].get("key_ID") != "live-1":
+                self._send_json(400, {"error": "bad dec request"})
+                return
+            self._send_json(200, {"keys": [{"key_ID": "live-1", "key": "bGl2ZS1kZWM="}]})
+            return
+        self._send_json(404, {"error": "unknown path"})
+
+    def log_message(self, *args):
+        return
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), KmeHandler)
+port = server.server_address[1]
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+
+(app / "src" / "main.nb").write_text(r'''module main
+import qkd::etsi014
+import qkd::provider
+import qkd::types
+import std::bytes
+import std::http
+import std::json
+import std::result
+
+fn test_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn expect_text(actual: String, expected: String, label: String) -> Result<Bool, QkdProviderError> {
+  if actual != expected {
+    return Err(qkd_error("test_failed", test_concat(label, test_concat(" mismatch: ", actual))))
+  }
+  return Ok(true)
+}
+
+fn expect_int(actual: Int, expected: Int, label: String) -> Result<Bool, QkdProviderError> {
+  if actual != expected {
+    return Err(qkd_error("test_failed", label))
+  }
+  return Ok(true)
+}
+
+fn expect_error_code(error: QkdProviderError, code: String, label: String) -> Result<Bool, QkdProviderError> {
+  if error.code != code {
+    return Err(qkd_error("test_failed", test_concat(label, test_concat(" code mismatch: ", error.code))))
+  }
+  return Ok(true)
+}
+
+fn expect_batch_error(result: Result<QkdKeyBatch, QkdProviderError>, code: String, label: String) -> Result<Bool, QkdProviderError> {
+  match result {
+    Ok(_) => { return Err(qkd_error("test_failed", test_concat(label, " unexpectedly succeeded"))) }
+    Err(error) => { return expect_error_code(error, code, label) }
+  }
+}
+
+fn expect_status_error(result: Result<QkdStatus, QkdProviderError>, code: String, label: String) -> Result<Bool, QkdProviderError> {
+  match result {
+    Ok(_) => { return Err(qkd_error("test_failed", test_concat(label, " unexpectedly succeeded"))) }
+    Err(error) => { return expect_error_code(error, code, label) }
+  }
+}
+
+fn parse_fixture(text: String) -> Result<Json, QkdProviderError> {
+  match parse(text) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_error("test_failed", msg)) }
+  }
+}
+
+fn config() -> QkdProviderConfig {
+  return provider_config("https://mock-kme.example/qkd",
+                         "mock-kme.example",
+                         443,
+                         "sae-alice",
+                         "sae-bob",
+                         true,
+                         2,
+                         256)
+}
+
+fn lab_config() -> QkdProviderConfig {
+  return provider_config("http://127.0.0.1:__PORT__/qkd",
+                         "127.0.0.1",
+                         __PORT__,
+                         "sae-alice",
+                         "sae-bob",
+                         false,
+                         1,
+                         256)
+}
+
+fn bad_url_config() -> QkdProviderConfig {
+  return provider_config("ftp://mock-kme.example",
+                         "mock-kme.example",
+                         443,
+                         "sae-alice",
+                         "sae-bob",
+                         true,
+                         1,
+                         256)
+}
+
+fn port_mismatch_config() -> QkdProviderConfig {
+  return provider_config("https://mock-kme.example:9443",
+                         "mock-kme.example",
+                         443,
+                         "sae-alice",
+                         "sae-bob",
+                         true,
+                         1,
+                         256)
+}
+
+fn check_requests(cfg: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  expect_text(status_path(cfg.peer_sae_id), "/api/v1/keys/sae-bob/status", "status path")?
+  expect_text(enc_keys_path(cfg.peer_sae_id), "/api/v1/keys/sae-bob/enc_keys", "enc path")?
+  expect_text(dec_keys_path(cfg.peer_sae_id), "/api/v1/keys/sae-bob/dec_keys", "dec path")?
+  let target = resolve_kme_target(cfg, status_path(cfg.peer_sae_id))?
+  expect_text(target.scheme, "https", "target scheme")?
+  expect_text(target.host, "mock-kme.example", "target host")?
+  expect_int(target.port, 443, "target port")?
+  expect_text(target.authority, "mock-kme.example:443", "target authority")?
+  expect_text(target.full_path, "/qkd/api/v1/keys/sae-bob/status", "target full path")?
+  let status_req = status_client_request(cfg)?
+  expect_text(status_req.authority, "mock-kme.example:443", "status authority")?
+  expect_text(status_req.path, "/qkd/api/v1/keys/sae-bob/status", "status request path")?
+  let enc_req = enc_keys_client_request(cfg)?
+  expect_text(enc_req.path, "/qkd/api/v1/keys/sae-bob/enc_keys", "enc request path")?
+  let enc_body = parse_fixture(to_string(enc_req.body))?
+  expect_int(qkd_get_int(enc_body, "number")?, 2, "enc request number")?
+  expect_int(qkd_get_int(enc_body, "size")?, 256, "enc request size")?
+  return Ok(true)
+}
+
+fn check_target_negative_cases(cfg: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  match status_client_request(bad_url_config()) {
+    Ok(_) => { return Err(qkd_error("test_failed", "bad KME base URL unexpectedly succeeded")) }
+    Err(error) => { expect_error_code(error, "invalid_kme_base_url", "bad KME base URL")? }
+  }
+  match status_client_request(port_mismatch_config()) {
+    Ok(_) => { return Err(qkd_error("test_failed", "port mismatch unexpectedly succeeded")) }
+    Err(error) => { expect_error_code(error, "invalid_provider_config", "port mismatch")? }
+  }
+  match http_lab_transport_allowed(cfg) {
+    Ok(_) => { return Err(qkd_error("test_failed", "TLS KME unexpectedly allowed for lab HTTP")) }
+    Err(error) => { expect_error_code(error, "unsupported_transport", "TLS lab boundary")? }
+  }
+  return Ok(true)
+}
+
+fn check_mock_and_response_parsers(cfg: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  let status = mock_get_status(cfg)?
+  expect_text(status.master_sae_id, "sae-alice", "status master")?
+  expect_text(status.slave_sae_id, "sae-bob", "status slave")?
+  let parsed_status = status_from_response(ClientResponse(200,
+                                                          "application/json",
+                                                          from_string(stringify(status.as_json()))))?
+  expect_text(parsed_status.source_kme_id, "mock-source-kme", "parsed status source")?
+
+  let batch = mock_get_enc_keys(cfg)?
+  expect_int(batch.key_count, 2, "enc key count")?
+  let first = batch.key_at(0)?
+  if first.key_id == "" || first.key == "" {
+    return Err(qkd_error("test_failed", "mock enc key was empty"))
+  }
+  let parsed_batch = key_batch_from_response(cfg.peer_sae_id,
+                                             ClientResponse(200,
+                                                            "application/json",
+                                                            from_string(stringify(batch.as_json()))))?
+  expect_int(parsed_batch.key_count, 2, "parsed batch key count")?
+  let standard_wire = parse_fixture("{\\\"keys\\\":[{\\\"key_ID\\\":\\\"kid-standard\\\",\\\"key\\\":\\\"bWF0ZXJpYWw=\\\"}]}")?
+  let standard_batch = key_batch_from_json(cfg.peer_sae_id, standard_wire)?
+  expect_int(standard_batch.key_count, 1, "standard wire key count")?
+  let standard_key = standard_batch.key_at(0)?
+  expect_text(standard_key.source, "kme", "standard wire source")?
+
+  let ids = qkd_key_id_request1(first.key_id)
+  let decoded_ids = key_id_request_from_json(ids.as_json())?
+  expect_int(decoded_ids.key_count, 1, "decoded id count")?
+  let dec_batch = mock_get_dec_keys(cfg, decoded_ids)?
+  let dec_first = dec_batch.key_at(0)?
+  expect_text(dec_first.key_id, first.key_id, "dec key id")?
+  return Ok(true)
+}
+
+fn check_negative_cases(cfg: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  let missing_key_id = parse_fixture("{\\\"keys\\\":[{\\\"key\\\":\\\"abc\\\",\\\"key_size\\\":256,\\\"source\\\":\\\"fixture\\\"}]}")?
+  expect_batch_error(key_batch_from_json(cfg.peer_sae_id, missing_key_id), "malformed_kme_json", "missing key id")?
+
+  let empty_key = parse_fixture("{\\\"keys\\\":[{\\\"key_ID\\\":\\\"kid-1\\\",\\\"key\\\":\\\"\\\",\\\"key_size\\\":256,\\\"source\\\":\\\"fixture\\\"}]}")?
+  expect_batch_error(key_batch_from_json(cfg.peer_sae_id, empty_key), "malformed_kme_key", "empty key")?
+
+  let bad_ids = parse_fixture("{\\\"key_IDs\\\":[{\\\"key_ID\\\":\\\"\\\"}]}")?
+  match key_id_request_from_json(bad_ids) {
+    Ok(_) => { return Err(qkd_error("test_failed", "empty key id request succeeded")) }
+    Err(error) => { expect_error_code(error, "malformed_key_id_request", "empty key id")? }
+  }
+
+  let missing_status = parse_fixture("{\\\"source_KME_ID\\\":\\\"kme-a\\\"}")?
+  expect_status_error(status_from_json(missing_status), "malformed_kme_json", "malformed status")?
+  expect_batch_error(key_batch_from_response(cfg.peer_sae_id,
+                                             ClientResponse(404,
+                                                            "application/json",
+                                                            from_string("{}"))),
+                     "kme_http_error",
+                     "unknown peer http")?
+  return Ok(true)
+}
+
+async fn check_live_http_lab(cfg: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  let target = resolve_kme_target(cfg, enc_keys_path(cfg.peer_sae_id))?
+  expect_text(target.full_path, "/qkd/api/v1/keys/sae-bob/enc_keys", "lab target full path")?
+  http_lab_transport_allowed(cfg)?
+
+  match await get_status_http_lab(cfg) {
+    Ok(status) => {
+      expect_text(status.source_kme_id, "lab-source-kme", "lab status source")?
+      expect_text(status.master_sae_id, "sae-alice", "lab status master")?
+    }
+    Err(error) => { return Err(error) }
+  }
+  match await get_enc_keys_http_lab(cfg) {
+    Ok(batch) => {
+      expect_int(batch.key_count, 1, "lab enc key count")?
+      let key = batch.key_at(0)?
+      expect_text(key.key_id, "live-1", "lab enc key id")?
+    }
+    Err(error) => { return Err(error) }
+  }
+  match await get_dec_keys_http_lab(cfg, qkd_key_id_request1("live-1")) {
+    Ok(batch) => {
+      expect_int(batch.key_count, 1, "lab dec key count")?
+      let key = batch.key_at(0)?
+      expect_text(key.key_id, "live-1", "lab dec key id")?
+    }
+    Err(error) => { return Err(error) }
+  }
+  return Ok(true)
+}
+
+async fn main() -> Int {
+  let cfg = config()
+  match check_requests(cfg) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg.text())
+      return 1
+    }
+  }
+  match check_target_negative_cases(cfg) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg.text())
+      return 1
+    }
+  }
+  match check_mock_and_response_parsers(cfg) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg.text())
+      return 1
+    }
+  }
+  match await check_live_http_lab(lab_config()) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg.text())
+      return 1
+    }
+  }
+  match check_negative_cases(cfg) {
+    Ok(_) => {
+      print("official-qkd-provider-contract-ok")
+      return 0
+    }
+    Err(msg) => {
+      print(msg.text())
+      return 1
+    }
+  }
+}
+'''.replace("__PORT__", str(port)), encoding="utf-8")
+
+try:
+    subprocess.run([binary, "update", str(app)], check=True)
+    subprocess.run([binary, "check", str(app)], check=True)
+    run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, check=True)
+    print(run.stdout, end="")
+finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["official-qkd-provider-contract-ok"]

@@ -1,0 +1,95 @@
+id = "TST-297-thin-host-gui-host-shell-pilot-smoke"
+suite = "test"
+description = "thin-host GUI host shell pilot wires UI IR dispatch to bridge events and snapshots"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_gui_host_shell"
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"thin-host GUI shell check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, check=True)
+output = run.stdout
+required = [
+    "thin-host-gui-shell-begin",
+    "thin-host-gui-shell-telemetry-session=thin-host-gui-preview-session-0001",
+    "nebula-ui-tree-title=Local Ops Shell",
+    "nebula-ui-tree-button-action=targets.refresh",
+    "nebula-ui-tree-input-action=targets.filter",
+    "nebula-ui-tree-input-accessibility-label=Filter targets",
+    "nebula-ui-action-dispatched=targets.refresh",
+    "nebula-ui-action-dispatched=targets.filter",
+    "thin-host-gui-shell-end renders=4",
+]
+for marker in required:
+    if marker not in output:
+        raise SystemExit(f"missing marker {marker!r}: {output!r}")
+if "thin-host-gui-shell-error" in output:
+    raise SystemExit(output)
+
+events = []
+snapshots = []
+for line in output.splitlines():
+    if line.startswith("event:"):
+        events.append(json.loads(line[len("event:"):]))
+    if line.startswith("snapshot:"):
+        snapshots.append(json.loads(line[len("snapshot:"):]))
+
+if [event["kind"] for event in events] != [
+    "ui_shell_booted",
+    "ui_action_applied",
+    "ui_action_applied",
+    "ui_shell_quit",
+]:
+    raise SystemExit(f"unexpected event sequence: {events!r}")
+if [event["schema"] for event in events] != ["thin-host-bridge.event.v1"] * 4:
+    raise SystemExit(f"unexpected event schemas: {events!r}")
+if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-2", "gui-3"]:
+    raise SystemExit(f"unexpected correlation ids: {events!r}")
+if [event["state_revision"] for event in events] != [0, 1, 2, 3]:
+    raise SystemExit(f"unexpected event revisions: {events!r}")
+if events[-1]["terminal"] is not True:
+    raise SystemExit(f"quit event was not terminal: {events[-1]!r}")
+
+if len(snapshots) != 4:
+    raise SystemExit(f"expected four snapshots, got {len(snapshots)}: {output!r}")
+for expected_revision, snapshot in enumerate(snapshots):
+    if snapshot["schema"] != "thin-host-bridge.snapshot.v1":
+        raise SystemExit(f"bad snapshot schema: {snapshot!r}")
+    if snapshot["screen"] != "local_ops_console":
+        raise SystemExit(f"bad snapshot screen: {snapshot!r}")
+    if snapshot["state_revision"] != expected_revision:
+        raise SystemExit(f"bad snapshot revision: {snapshot!r}")
+    payload = snapshot["payload"]
+    if payload["schema"] != "nebula-ui.tree.v1" or payload["component"] != "Window":
+        raise SystemExit(f"snapshot payload is not UI IR: {snapshot!r}")
+    children = payload["children"]
+    if children[0]["component"] != "Input" or children[0]["props"]["action"] != "targets.filter":
+        raise SystemExit(f"snapshot input action missing: {snapshot!r}")
+    if children[0]["props"]["accessibility_label"] != "Filter targets":
+        raise SystemExit(f"snapshot input accessibility label missing: {snapshot!r}")
+    if children[1]["component"] != "Button" or children[1]["props"]["action"] != "targets.refresh":
+        raise SystemExit(f"snapshot button action missing: {snapshot!r}")
+
+if snapshots[0]["payload"]["children"][0]["props"]["value"] != "targets":
+    raise SystemExit("initial filter value missing")
+if snapshots[2]["payload"]["children"][0]["props"]["value"] != "prod":
+    raise SystemExit("filter command did not update UI IR snapshot")
+
+print("thin-host-gui-host-shell-pilot-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["thin-host-gui-host-shell-pilot-ok"]

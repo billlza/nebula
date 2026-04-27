@@ -5,4 +5,4 @@ suite = "test"
 kind = "shell"
 run = "$NEBULA_BINARY update \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" && $NEBULA_BINARY check \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" && $NEBULA_BINARY run \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" --run-gate none"
 expect_rc = 0
-expect_stdout_contains = ["nebula-ui.tree.v1", "\"component\":\"Window\"", "\"action\":\"targets.refresh\"", "Window title=Local Ops", "Button text=Refresh action=targets.refresh", "nebula-ui-action-dispatched=targets.refresh"]
+expect_stdout_contains = ["nebula-ui.tree.v1", "\"component\":\"Window\"", "\"component\":\"Input\"", "\"action\":\"targets.refresh\"", "\"action\":\"targets.filter\"", "\"accessibility_label\":\"Filter targets\"", "Window title=Local Ops", "Input value=targets action=targets.filter accessibility_label=Filter targets", "Button text=Refresh action=targets.refresh", "nebula-ui-action-dispatched=targets.refresh", "nebula-ui-action-dispatched=targets.filter"]

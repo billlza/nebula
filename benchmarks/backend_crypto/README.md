@@ -8,7 +8,7 @@ hard-win story on specific hot paths that matter to Nebula's current product lan
 ## Fixed Workloads
 
 - `http_route_roundtrip`
-  - HTTP request parse + route + response writeback hot path
+  - HTTP request parse + cached/compiled route match + response writeback hot path
 - `json_payload_roundtrip`
   - JSON parse/stringify service payload path
 - `bytes_frame_hotpath`

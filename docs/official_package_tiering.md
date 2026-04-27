@@ -25,6 +25,7 @@ Repo-local preview packages:
 - `nebula-crypto`
 - `nebula-tls`
 - `nebula-pqc-protocols`
+- `nebula-qkd`
 - `nebula-qcomm-sim`
 - `nebula-thin-host-bridge`
 - `nebula-ui`
@@ -53,13 +54,19 @@ Current package intent:
 - `nebula-observe`: structured logs and counter-shaped metrics events, including request-correlated error logs
 - `nebula-auth`: preview RS256 JWT resource-server verification against caller-provided JWKS text
 - `nebula-config`: preview app-level env, mounted-secret, and redacted preflight helpers
-- `nebula-db-sqlite`: embedded SQLite data-plane slice for backend-first internal apps
+- `nebula-db-sqlite`: embedded SQLite data-plane slice for backend-first internal apps, including
+  preview indexed row accessors and connection-local statement reuse for stable DML/query hot paths
 - `nebula-db-postgres`: network PostgreSQL data-plane slice with dynamic `libpq` probing, migrations, and narrow query/execute helpers
 - `nebula-crypto`: low-level crypto + PQC primitives
 - `nebula-jobs`: installed-preview jobs/workflow kernel with DAG validation, SQLite-first run storage, worker leases, retry/dead-letter, idempotent receipts, and durable outbox helpers; not a GA queue/workflow platform
 - `nebula-tls`: outbound client-side TLS/HTTPS helpers
 - `nebula-pqc-protocols`: application-layer PQC signed helpers + authenticated secure-channel helpers
-- `nebula-qcomm-sim`: simulation-only BB84 quantum-communication lab package
+- `nebula-qkd`: preview QKD KME/KMS key-delivery provider contract with ETSI GS QKD 014 v1.1.1-style
+  request/response helpers and a deterministic local mock; not a hardware, trusted-node, or
+  security-certification contract
+- `nebula-qcomm-sim` is simulation-only BB84 quantum-communication lab work
 - `nebula-thin-host-bridge`: preview command/event/snapshot envelope contract for thin-host app
   cores, including correlation, state revision, replay validation, and explicit non-UI non-goals
-- `nebula-ui`: preview semantic UI tree package for `ui` / `view` source syntax and adapter-facing JSON IR
+- `nebula-ui`: preview semantic UI tree package for `ui` / `view` source syntax,
+  adapter-facing JSON IR, headless validation, lookup-only action dispatch, lifecycle/accessibility
+  summaries, packaging/update fixtures, and guarded native smoke

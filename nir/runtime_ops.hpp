@@ -60,8 +60,27 @@ inline std::optional<std::string> runtime_std_call_name(
       if (qualified->local_name == "get_string") return "nebula::rt::json_get_string";
       if (qualified->local_name == "get_int") return "nebula::rt::json_get_int";
       if (qualified->local_name == "get_bool") return "nebula::rt::json_get_bool";
+      if (qualified->local_name == "get_value") return "nebula::rt::json_get_value";
+      if (qualified->local_name == "as_string") return "nebula::rt::json_as_string";
+      if (qualified->local_name == "as_int") return "nebula::rt::json_as_int";
+      if (qualified->local_name == "as_bool") return "nebula::rt::json_as_bool";
+      if (qualified->local_name == "array0") return "nebula::rt::json_array0";
+      if (qualified->local_name == "array1") return "nebula::rt::json_array1";
+      if (qualified->local_name == "array2") return "nebula::rt::json_array2";
+      if (qualified->local_name == "array3") return "nebula::rt::json_array3";
+      if (qualified->local_name == "array_builder") return "nebula::rt::json_array_builder";
+      if (qualified->local_name == "array_push") return "nebula::rt::json_array_push";
+      if (qualified->local_name == "array_build") return "nebula::rt::json_array_build";
+      if (qualified->local_name == "array_len") return "nebula::rt::json_array_len";
+      if (qualified->local_name == "array_get") return "nebula::rt::json_array_get";
     }
     if (qualified->module_name == "http") {
+      if (qualified->local_name == "text_response") return "nebula::rt::http_text_response";
+      if (qualified->local_name == "ok_text") return "nebula::rt::http_ok_text";
+      if (qualified->local_name == "bad_request_text") return "nebula::rt::http_bad_request_text";
+      if (qualified->local_name == "method_not_allowed_text") return "nebula::rt::http_method_not_allowed_text";
+      if (qualified->local_name == "not_found_text") return "nebula::rt::http_not_found_text";
+      if (qualified->local_name == "internal_error_text") return "nebula::rt::http_internal_error_text";
       if (qualified->local_name == "read_request") return "__nebula_rt_http_read_request";
       if (qualified->local_name == "header_value") return "__nebula_rt_http_header";
       if (qualified->local_name == "header_value_unique") return "__nebula_rt_http_header_unique";

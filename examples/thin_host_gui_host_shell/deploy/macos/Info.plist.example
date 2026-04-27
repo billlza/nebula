@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>dev.nebula.thin-host-gui-host-shell.preview</string>
+  <key>CFBundleName</key>
+  <string>Nebula Thin Host Shell Preview</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0-preview</string>
+  <key>NebulaHostApi</key>
+  <string>thin-host-shell.preview.v1</string>
+</dict>
+</plist>

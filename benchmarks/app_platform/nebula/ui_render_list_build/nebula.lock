@@ -1,0 +1,37 @@
+schema_version = 2
+root_package = "app-platform-ui-render-list-build"
+root_manifest_hash = "bb601a2ea6b5ec4b"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "app-platform-ui-render-list-build"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "bb601a2ea6b5ec4b"
+source_fingerprint = "b269349032598457"
+integrity_fingerprint = "9bde55afb29e9215"
+is_root = 1
+dependencies = ["ui=nebula-ui"]
+
+[[package]]
+name = "nebula-ui"
+version = "0.1.0"
+root = "../../../../official/nebula-ui"
+manifest = "../../../../official/nebula-ui/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../../../official/nebula-ui"
+resolved_rev = ""
+manifest_hash = "7cf5c999299b15a7"
+source_fingerprint = "9b2231188919a2d1"
+integrity_fingerprint = "af0fd3c06ad24e6a"
+is_root = 0
+dependencies = []

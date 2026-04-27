@@ -1,0 +1,40 @@
+{
+  "schema": "nebula.gui.preview.package.v1",
+  "app_id": "dev.nebula.thin-host-gui-host-shell.preview",
+  "version": "0.1.0-preview",
+  "channel": "preview",
+  "host_api": "thin-host-shell.preview.v1",
+  "build_id": "thin-host-gui-host-shell-preview-0001",
+  "entry": {
+    "binary": "thin-host-gui-host-shell",
+    "arguments": []
+  },
+  "assets": [
+    {
+      "platform": "macos",
+      "path": "deploy/macos/Info.plist.example"
+    },
+    {
+      "platform": "linux",
+      "path": "deploy/linux/dev.nebula.thin-host-gui-host-shell.desktop.example"
+    },
+    {
+      "platform": "all",
+      "path": "deploy/update/manifest.preview.json"
+    }
+  ],
+  "update_manifest": {
+    "path": "deploy/update/manifest.preview.json",
+    "sha256": "379d4d5857ad94bc172269cc6dbedd823aaa284375c0d991ebe0f4f3b4ba5a4d"
+  },
+  "telemetry": {
+    "session_id": "thin-host-gui-preview-session-0001",
+    "correlation_id_source": "thin-host-bridge.command.v1.correlation_id",
+    "state_revision_source": "thin-host-bridge.event.v1.state_revision"
+  },
+  "crash": {
+    "crash_report_schema": "nebula.gui.preview.crash.v1",
+    "last_event_correlation_id": "gui-3",
+    "last_state_revision": 3
+  }
+}

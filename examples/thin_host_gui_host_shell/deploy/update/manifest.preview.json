@@ -1,0 +1,14 @@
+{
+  "schema": "nebula.thin-host.update-manifest.preview.v1",
+  "app_id": "dev.nebula.thin-host-gui-host-shell.preview",
+  "version": "0.1.0-preview",
+  "channel": "preview",
+  "min_host_api": "thin-host-shell.preview.v1",
+  "assets": [
+    {
+      "platform": "macos-arm64",
+      "url": "https://example.invalid/nebula-thin-host-gui-host-shell-preview-macos-arm64.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

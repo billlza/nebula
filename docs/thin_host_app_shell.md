@@ -14,7 +14,8 @@ Current sequencing constraint for the backend-first internal-app wave:
 
 Nebula UI now exists as a separate preview lane for semantic UI trees. That lane is inspired by the
 `Swift + SwiftUI` split, but V1 only owns source syntax, stable view-tree IR, a headless adapter,
-and guarded AppKit/GTK minimal-window smoke assets; native renderer parity remains future work.
+guarded AppKit/GTK minimal-window smoke assets, lifecycle/accessibility summaries, and packaging/
+update fixture contracts; native renderer parity remains future work.
 
 Nebula is not trying to become a replacement for:
 
@@ -29,6 +30,7 @@ intent.
 See:
 
 - `examples/thin_host_app_core/README.md`
+- `examples/thin_host_gui_host_shell/README.md`
 - `docs/support_matrix.md`
 - `docs/app_platform_convergence.md`
 
@@ -58,6 +60,16 @@ See:
 - install/update lifecycle
 - crash collection and telemetry plumbing
 - deployment/runtime policy outside the host shell
+
+The `examples/thin_host_gui_host_shell/deploy` files are preview fixtures for the shape of those
+ops-owned contracts. They are intentionally not signing, notarization, store distribution, or a
+real auto-updater.
+
+`examples/thin_host_gui_host_shell/deploy/bundle/manifest.preview.json` is the first app-bundle
+preview contract. It fixes the repo-local shape for app id, version, host API version, entry binary,
+staged asset list, update-manifest checksum, telemetry correlation source, and crash marker schema.
+It is still only a staging contract: the host shell can be built and launched by tests, but Nebula is
+not yet providing store packaging, notarization, auto-update, or crash-upload infrastructure.
 
 That third layer matters for parity discussions: Nebula should not claim a mature APP platform
 until the Nebula-owned, Host-owned, and Ops-owned responsibilities are all explicit enough to ship.

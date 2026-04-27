@@ -1,0 +1,75 @@
+module mock
+import std::json
+import std::result
+import etsi014
+import types
+
+fn mock_key_id(local_sae_id: String, peer_sae_id: String, index: Int) -> String {
+  return qkd_text_concat3("mock-qkd:",
+                          local_sae_id,
+                          qkd_text_concat3(":", peer_sae_id, qkd_text_concat(":", stringify(int_value(index)))))
+}
+
+fn mock_key_material(key_id: String) -> String {
+  return qkd_text_concat("mock-key-material:", key_id)
+}
+
+fn mock_key(local_sae_id: String, peer_sae_id: String, index: Int, key_size_bits: Int) -> QkdKey {
+  let key_id = mock_key_id(local_sae_id, peer_sae_id, index)
+  return QkdKey(key_id, mock_key_material(key_id), key_size_bits, "mock")
+}
+
+fn mock_status(config: QkdProviderConfig) -> Result<QkdStatus, QkdProviderError> {
+  if config.peer_sae_id == "" {
+    return Err(qkd_error("unknown_peer_sae", "peer SAE id must be non-empty"))
+  }
+  return Ok(QkdStatus("mock-source-kme",
+                      "mock-target-kme",
+                      config.local_sae_id,
+                      config.peer_sae_id,
+                      config.key_size_bits,
+                      128,
+                      1024,
+                      16,
+                      config.key_size_bits))
+}
+
+fn mock_enc_keys(config: QkdProviderConfig, request_value: QkdKeyRequest) -> Result<QkdKeyBatch, QkdProviderError> {
+  if request_value.number <= 0 {
+    return Err(qkd_error("invalid_key_request", "number must be positive"))
+  }
+  if request_value.size_bits <= 0 {
+    return Err(qkd_error("invalid_key_request", "size must be positive"))
+  }
+  let builder = array_builder()
+  let index = 0
+  while index < request_value.number {
+    builder = array_push(builder, mock_key(config.local_sae_id, config.peer_sae_id, index, request_value.size_bits).as_json())
+    index += 1
+  }
+  let keys = array_build(builder)
+  return key_batch_from_json(config.peer_sae_id, object1("keys", keys))
+}
+
+fn key_id_at(request_value: QkdKeyIdRequest, index: Int) -> Result<String, QkdProviderError> {
+  let item = qkd_array_get(request_value.key_ids, index)?
+  let key_id = qkd_get_string(item, "key_ID")?
+  if key_id == "" {
+    return Err(qkd_error("malformed_key_id_request", "key_ID must be non-empty"))
+  }
+  return Ok(key_id)
+}
+
+fn mock_dec_keys(config: QkdProviderConfig, request_value: QkdKeyIdRequest) -> Result<QkdKeyBatch, QkdProviderError> {
+  if request_value.key_count <= 0 {
+    return Err(qkd_error("malformed_key_id_request", "key_IDs must not be empty"))
+  }
+  let builder = array_builder()
+  let index = 0
+  while index < request_value.key_count {
+    let key_id = key_id_at(request_value, index)?
+    builder = array_push(builder, QkdKey(key_id, mock_key_material(key_id), config.key_size_bits, "mock").as_json())
+    index += 1
+  }
+  return key_batch_from_json(config.peer_sae_id, object1("keys", array_build(builder)))
+}

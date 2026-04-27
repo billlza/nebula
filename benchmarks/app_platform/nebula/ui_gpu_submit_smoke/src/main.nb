@@ -1,0 +1,15 @@
+module main
+import ui::headless
+
+@bench
+fn bench_ui_gpu_submit_smoke() -> Void {
+  let tree = FastPreviewTree("Local Ops", "Local Ops", "targets", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
+  let count = fast_null_gpu_submit(fast_preview_layout(tree))
+  if count <= 0 {
+    expect_eq(1, 0)
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-ui-gpu-submit-smoke")
+}

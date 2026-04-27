@@ -1,0 +1,55 @@
+schema_version = 2
+root_package = "thin-host-gui-host-shell"
+root_manifest_hash = "51dd78b411b4fdfe"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "thin-host-gui-host-shell"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "51dd78b411b4fdfe"
+source_fingerprint = "967f2b9979d2e2a2"
+integrity_fingerprint = "855df489b08fa2df"
+is_root = 1
+host_cxx = ["host.cpp"]
+dependencies = ["bridge=nebula-thin-host-bridge", "ui=nebula-ui"]
+
+[[package]]
+name = "nebula-thin-host-bridge"
+version = "0.1.0"
+root = "../../official/nebula-thin-host-bridge"
+manifest = "../../official/nebula-thin-host-bridge/nebula.toml"
+entry = "src/host_bridge.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-thin-host-bridge"
+resolved_rev = ""
+manifest_hash = "be49c6a1d6d89b75"
+source_fingerprint = "7594f4be2dbe1c2b"
+integrity_fingerprint = "ec36d87ae2b5173f"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-ui"
+version = "0.1.0"
+root = "../../official/nebula-ui"
+manifest = "../../official/nebula-ui/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-ui"
+resolved_rev = ""
+manifest_hash = "7cf5c999299b15a7"
+source_fingerprint = "9b2231188919a2d1"
+integrity_fingerprint = "af0fd3c06ad24e6a"
+is_root = 0
+dependencies = []

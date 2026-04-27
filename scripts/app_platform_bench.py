@@ -25,6 +25,11 @@ EXPECTED_WORKLOAD_IDS = [
     "nebula_ui_startup",
     "ui_action_roundtrip",
     "ui_snapshot_render",
+    "ui_layout_pass",
+    "ui_render_list_build",
+    "ui_hit_test_dispatch",
+    "ui_patch_apply",
+    "ui_gpu_submit_smoke",
 ]
 EXPECTED_REFERENCE_STACKS = ["cpp", "rust", "swift"]
 EXPECTED_COMPARISON_LAYERS = ["nebula_owned", "host_owned", "ops_owned"]

@@ -5,24 +5,27 @@ import ui::ui
 struct DashboardState {
   title: String
   ready: Bool
+  filter: String
 }
 
-ui Dashboard(state: DashboardState) {
-  view Window(title = state.title) {
-    view Column(spacing = 12) {
-      view Text(text = state.title)
-      view Button(text = "Refresh", action = "targets.refresh")
-    }
-  }
+fn dashboard_column(state: DashboardState) -> View {
+  return column(12,
+                child3(text(state.title),
+                       input(state.filter, "targets.filter", "Filter targets"),
+                       button("Refresh", "targets.refresh")))
+}
+
+fn Dashboard(state: DashboardState) -> Json {
+  return window(state.title, child1(dashboard_column(state))).as_json()
 }
 
 fn contains_schema(text: String) -> Bool {
-  return text == stringify(Dashboard(DashboardState("Local Ops", true)))
+  return text == "{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Window\",\"props\":{\"title\":\"Local Ops\"},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Column\",\"props\":{\"spacing\":12},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Text\",\"props\":{\"text\":\"Local Ops\"},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Input\",\"props\":{\"value\":\"targets\",\"action\":\"targets.filter\",\"accessibility_label\":\"Filter targets\"},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Button\",\"props\":{\"text\":\"Refresh\",\"action\":\"targets.refresh\"},\"children\":[]}]}]}"
 }
 
 @bench
 fn bench_ui_snapshot_render() -> Void {
-  let rendered = stringify(Dashboard(DashboardState("Local Ops", true)))
+  let rendered = stringify(Dashboard(DashboardState("Local Ops", true, "targets")))
   if contains_schema(rendered) == false {
     expect_eq(1, 0)
   }

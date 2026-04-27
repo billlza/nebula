@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nebula Thin Host Shell Preview
+Exec=nebula-thin-host-gui-host-shell
+Icon=dev.nebula.thin-host-gui-host-shell.preview
+Terminal=false
+Categories=Development;
+X-Nebula-Host-Api=thin-host-shell.preview.v1

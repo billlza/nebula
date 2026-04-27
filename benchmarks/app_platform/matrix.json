@@ -170,6 +170,13 @@
         "official/nebula-ui"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/ui_action_roundtrip",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_action_roundtrip"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
       "comparison_layer": "nebula_owned"
     },
     {
@@ -186,6 +193,127 @@
         "official/nebula-ui"
       ],
       "nebula_project": "benchmarks/app_platform/nebula/ui_snapshot_render",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_snapshot_render"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_layout_pass",
+      "category": "ui",
+      "description": "Nebula-owned deterministic UI layout pass",
+      "timed_scope": "build cached typed preview layout bounds without JSON stringify/parse in the hot loop",
+      "correctness_contract": [
+        "layout_width=480",
+        "command_count=5"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_layout_pass",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_layout_pass"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_render_list_build",
+      "category": "ui",
+      "description": "Nebula UI render-list/display-list build path",
+      "timed_scope": "derive cached typed preview render-list command count without JSON stringify/parse in the hot loop",
+      "correctness_contract": [
+        "command_count=5",
+        "actions_cached"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_render_list_build",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_render_list_build"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_hit_test_dispatch",
+      "category": "ui",
+      "description": "Nebula UI layout hit-test and action dispatch path",
+      "timed_scope": "resolve a point through the cached typed action/hit-test index without linear JSON adapter redispatch",
+      "correctness_contract": [
+        "hit_test_action=targets.filter"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_hit_test_dispatch",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_hit_test_dispatch"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_patch_apply",
+      "category": "ui",
+      "description": "Nebula UI preview patch generation for small state changes",
+      "timed_scope": "classify a cached typed preview tree diff for small state changes before JSON patch materialization",
+      "correctness_contract": [
+        "patch_code=111",
+        "input_value_change"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_patch_apply",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_patch_apply"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
+      "comparison_layer": "nebula_owned"
+    },
+    {
+      "id": "ui_gpu_submit_smoke",
+      "category": "ui",
+      "description": "Nebula UI null GPU submit smoke for render-list commands",
+      "timed_scope": "submit cached typed preview render-list command metadata to a null GPU adapter",
+      "correctness_contract": [
+        "submitted_command_count=5",
+        "null_gpu_backend"
+      ],
+      "nebula_paths": [
+        "examples/local_ops_console_ui",
+        "official/nebula-ui"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/ui_gpu_submit_smoke",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/ui_gpu_submit_smoke"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
       "comparison_layer": "nebula_owned"
     }
   ]

@@ -22,28 +22,19 @@ fn UiTree_as_json(self: UiTree) -> Json {
 }
 
 fn empty_children() -> Json {
-  return array_build(array_builder())
+  return array0()
 }
 
 fn child1(first: View) -> Json {
-  let children = array_builder()
-  children = array_push(children, first.as_json())
-  return array_build(children)
+  return array1(first.as_json())
 }
 
 fn child2(first: View, second: View) -> Json {
-  let children = array_builder()
-  children = array_push(children, first.as_json())
-  children = array_push(children, second.as_json())
-  return array_build(children)
+  return array2(first.as_json(), second.as_json())
 }
 
 fn child3(first: View, second: View, third: View) -> Json {
-  let children = array_builder()
-  children = array_push(children, first.as_json())
-  children = array_push(children, second.as_json())
-  children = array_push(children, third.as_json())
-  return array_build(children)
+  return array3(first.as_json(), second.as_json(), third.as_json())
 }
 
 fn view_node(component: String, props: Json, children: Json) -> View {

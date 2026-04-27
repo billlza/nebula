@@ -1,0 +1,121 @@
+id = "TST-302-thin-host-app-bundle-preview-smoke"
+suite = "test"
+description = "thin-host GUI host shell stages a preview app bundle manifest and preserves telemetry/crash correlation"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_gui_host_shell"
+stage = Path("work/thin_host_gui_host_shell_bundle")
+shutil.rmtree(stage, ignore_errors=True)
+(stage / "bin").mkdir(parents=True, exist_ok=True)
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"thin-host GUI shell check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+
+bundle_manifest_src = app / "deploy" / "bundle" / "manifest.preview.json"
+bundle_manifest = json.loads(bundle_manifest_src.read_text(encoding="utf-8"))
+if bundle_manifest.get("schema") != "nebula.gui.preview.package.v1":
+    raise SystemExit(f"bad bundle manifest schema: {bundle_manifest!r}")
+if bundle_manifest.get("host_api") != "thin-host-shell.preview.v1":
+    raise SystemExit(f"bad host API: {bundle_manifest!r}")
+if bundle_manifest.get("entry", {}).get("binary") != "thin-host-gui-host-shell":
+    raise SystemExit(f"bad entry binary: {bundle_manifest!r}")
+if bundle_manifest.get("telemetry", {}).get("correlation_id_source") != "thin-host-bridge.command.v1.correlation_id":
+    raise SystemExit(f"bad telemetry correlation source: {bundle_manifest!r}")
+if bundle_manifest.get("crash", {}).get("crash_report_schema") != "nebula.gui.preview.crash.v1":
+    raise SystemExit(f"bad crash schema: {bundle_manifest!r}")
+
+asset_paths = [asset.get("path") for asset in bundle_manifest.get("assets", [])]
+expected_assets = {
+    "deploy/macos/Info.plist.example",
+    "deploy/linux/dev.nebula.thin-host-gui-host-shell.desktop.example",
+    "deploy/update/manifest.preview.json",
+}
+if set(asset_paths) != expected_assets:
+    raise SystemExit(f"bad bundle asset list: {asset_paths!r}")
+for rel in asset_paths + ["deploy/bundle/manifest.preview.json"]:
+    src = app / rel
+    dst = stage / rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+update_manifest_path = app / bundle_manifest["update_manifest"]["path"]
+update_sha = hashlib.sha256(update_manifest_path.read_bytes()).hexdigest()
+if update_sha != bundle_manifest["update_manifest"]["sha256"]:
+    raise SystemExit(f"stale update manifest checksum: expected {update_sha}, got {bundle_manifest['update_manifest']['sha256']}")
+update_manifest = json.loads(update_manifest_path.read_text(encoding="utf-8"))
+if update_manifest.get("schema") != "nebula.thin-host.update-manifest.preview.v1":
+    raise SystemExit(f"bad update manifest schema: {update_manifest!r}")
+if update_manifest.get("min_host_api") != "thin-host-shell.preview.v1":
+    raise SystemExit(f"bad update host API: {update_manifest!r}")
+if not update_manifest.get("assets") or len(update_manifest["assets"][0].get("sha256", "")) != 64:
+    raise SystemExit(f"bad update asset checksum shape: {update_manifest!r}")
+
+entry = stage / "bin" / bundle_manifest["entry"]["binary"]
+build = subprocess.run([binary, "build", str(app), "--out", str(entry)], capture_output=True, text=True, check=True)
+if "warning:" in build.stdout or "warning:" in build.stderr:
+    raise SystemExit(f"thin-host GUI shell build emitted warnings:\\n{build.stdout}\\n{build.stderr}")
+if not entry.exists():
+    raise SystemExit(f"bundle entry was not built: {entry}")
+artifact_sha = hashlib.sha256(entry.read_bytes()).hexdigest()
+if len(artifact_sha) != 64:
+    raise SystemExit("entry artifact checksum failed")
+
+run = subprocess.run([str(entry)], capture_output=True, text=True, check=True)
+output = run.stdout
+required = [
+    "thin-host-gui-shell-begin",
+    "thin-host-gui-shell-telemetry-session=thin-host-gui-preview-session-0001",
+    "nebula-ui-tree-button-action=targets.refresh",
+    "nebula-ui-tree-input-accessibility-label=Filter targets",
+    "thin-host-gui-shell-crash-report-schema=nebula.gui.preview.crash.v1",
+    "thin-host-gui-shell-crash-correlation-id=gui-3",
+    "thin-host-gui-shell-crash-state-revision=3",
+    "thin-host-gui-shell-end renders=4",
+]
+for marker in required:
+    if marker not in output:
+        raise SystemExit(f"missing launch marker {marker!r}: {output!r}")
+if "thin-host-gui-shell-error" in output:
+    raise SystemExit(output)
+
+events = []
+snapshots = []
+for line in output.splitlines():
+    if line.startswith("event:"):
+        events.append(json.loads(line[len("event:"):]))
+    if line.startswith("snapshot:"):
+        snapshots.append(json.loads(line[len("snapshot:"):]))
+
+if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-2", "gui-3"]:
+    raise SystemExit(f"unexpected event correlation sequence: {events!r}")
+if [event["state_revision"] for event in events] != [0, 1, 2, 3]:
+    raise SystemExit(f"unexpected event revisions: {events!r}")
+if not events[-1].get("terminal"):
+    raise SystemExit(f"final event was not terminal: {events[-1]!r}")
+if [snapshot["state_revision"] for snapshot in snapshots] != [0, 1, 2, 3]:
+    raise SystemExit(f"unexpected snapshot revisions: {snapshots!r}")
+if bundle_manifest["crash"]["last_event_correlation_id"] != events[-1]["correlation_id"]:
+    raise SystemExit("bundle crash correlation id does not match final event")
+if bundle_manifest["crash"]["last_state_revision"] != events[-1]["state_revision"]:
+    raise SystemExit("bundle crash state revision does not match final event")
+
+(stage / "artifact.sha256").write_text(f"{artifact_sha}  bin/{bundle_manifest['entry']['binary']}\\n", encoding="utf-8")
+print("thin-host-app-bundle-preview-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["thin-host-app-bundle-preview-ok"]

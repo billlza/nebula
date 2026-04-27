@@ -1,0 +1,90 @@
+id = "TST-299-app-platform-cpp-ui-reference-smoke"
+suite = "test"
+description = "app-platform UI action/render workloads have runnable C++ reference comparisons"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+script = repo / "scripts" / "app_platform_bench.py"
+work = Path("work/app_platform_cpp_ui_reference")
+work.mkdir(parents=True, exist_ok=True)
+nebula_json = work / "nebula.json"
+cpp_json = work / "cpp.json"
+compare_json = work / "compare.json"
+workloads = [
+    "ui_action_roundtrip",
+    "ui_snapshot_render",
+    "ui_layout_pass",
+    "ui_render_list_build",
+    "ui_hit_test_dispatch",
+    "ui_patch_apply",
+    "ui_gpu_submit_smoke",
+]
+
+cmd = [
+    "python3",
+    str(script),
+    "run-nebula",
+    "--binary",
+    os.environ["NEBULA_BINARY"],
+]
+for workload in workloads:
+    cmd.extend(["--workload", workload])
+cmd.extend(["--json-out", str(nebula_json)])
+nebula = subprocess.run(cmd, capture_output=True, text=True, check=False)
+print(nebula.stdout, end="")
+print(nebula.stderr, end="")
+if nebula.returncode != 0:
+    raise SystemExit(nebula.returncode)
+
+cmd = ["python3", str(script), "run-reference", "--stack", "cpp"]
+for workload in workloads:
+    cmd.extend(["--workload", workload])
+cmd.extend(["--json-out", str(cpp_json)])
+reference = subprocess.run(cmd, capture_output=True, text=True, check=False)
+print(reference.stdout, end="")
+print(reference.stderr, end="")
+if reference.returncode != 0:
+    raise SystemExit(reference.returncode)
+
+compare = subprocess.run([
+    "python3",
+    str(script),
+    "compare",
+    "--stack",
+    "cpp",
+    "--nebula-json",
+    str(nebula_json),
+    "--reference-json",
+    str(cpp_json),
+    "--json-out",
+    str(compare_json),
+], capture_output=True, text=True, check=False)
+print(compare.stdout, end="")
+print(compare.stderr, end="")
+if compare.returncode != 0:
+    raise SystemExit(compare.returncode)
+
+payload = json.loads(compare_json.read_text(encoding="utf-8"))
+if payload.get("claim_policy") != "measurement_only_no_threshold":
+    raise SystemExit(f"comparison claim policy drifted: {payload!r}")
+results = {item["workload"]: item for item in payload.get("results", [])}
+for workload in workloads:
+    item = results.get(workload)
+    if not item or item.get("status") != "ok":
+        raise SystemExit(f"missing successful UI C++ comparison for {workload}: {payload!r}")
+    ratios = item.get("ratios", {})
+    if not isinstance(ratios.get("nebula_to_reference_mean_ms"), float):
+        raise SystemExit(f"missing UI mean ratio for {workload}: {item!r}")
+print("app-platform-cpp-ui-reference-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-platform-cpp-ui-reference-ok"]

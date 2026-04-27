@@ -1,0 +1,15 @@
+module main
+import ui::headless
+
+@bench
+fn bench_ui_render_list_build() -> Void {
+  let tree = FastPreviewTree("Local Ops", "Local Ops", "targets", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
+  let count = fast_render_command_count(fast_preview_layout(tree))
+  if count != 5 {
+    expect_eq(1, 0)
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-ui-render-list-build")
+}

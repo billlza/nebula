@@ -3,6 +3,8 @@ import std::bytes
 import std::json
 import std::result
 
+extern fn __nebula_rt_string_len(value: String) -> Int
+
 fn text_concat(lhs: String, rhs: String) -> String {
   return to_string(concat(from_string(lhs), from_string(rhs)))
 }
@@ -64,9 +66,124 @@ fn known_props_text(component: String, props: Json) -> String {
     return text_concat(prop_text(props, "text"), prop_text(props, "action"))
   }
   if component == "Input" {
-    return text_concat(prop_text(props, "value"), prop_text(props, "action"))
+    return text_concat(prop_text(props, "value"),
+                       text_concat(prop_text(props, "action"), prop_text(props, "accessibility_label")))
   }
   return empty_text()
+}
+
+fn require_schema(node: Json) -> Result<Bool, String> {
+  match get_string(node, "schema") {
+    Ok(schema_text) => {
+      if schema_text != "nebula-ui.tree.v1" {
+        return Err("expected nebula-ui.tree.v1 root-view schema")
+      }
+      return Ok(true)
+    }
+    Err(_) => {
+      return Err("expected nebula-ui.tree.v1 root-view schema")
+    }
+  }
+}
+
+fn require_component(node: Json) -> Result<String, String> {
+  match get_string(node, "component") {
+    Ok(component) => { return Ok(component) }
+    Err(_) => { return Err("expected UI node component string") }
+  }
+}
+
+fn require_props(node: Json) -> Result<Json, String> {
+  match get_value(node, "props") {
+    Ok(props) => { return Ok(props) }
+    Err(_) => { return Err("expected UI node props object") }
+  }
+}
+
+fn require_children(node: Json) -> Result<Json, String> {
+  match get_value(node, "children") {
+    Ok(children) => {
+      match array_len(children) {
+        Ok(_) => { return Ok(children) }
+        Err(_) => { return Err("expected UI node children array") }
+      }
+    }
+    Err(_) => { return Err("expected UI node children array") }
+  }
+}
+
+fn allowed_component(component: String) -> Bool {
+  return component == "Window" ||
+         component == "Column" ||
+         component == "Row" ||
+         component == "Text" ||
+         component == "Button" ||
+         component == "Input" ||
+         component == "Spacer"
+}
+
+fn require_non_empty_prop(props: Json, key: String, message: String) -> Result<String, String> {
+  match get_string(props, key) {
+    Ok(value) => {
+      if value == "" {
+        return Err(message)
+      }
+      return Ok(value)
+    }
+    Err(_) => {
+      return Err(message)
+    }
+  }
+}
+
+fn validate_component_props(component: String, props: Json) -> Result<Bool, String> {
+  if component == "Button" {
+    require_non_empty_prop(props, "action", "Button node requires non-empty action string")?
+  }
+  if component == "Input" {
+    require_non_empty_prop(props, "action", "Input node requires non-empty action string")?
+    require_non_empty_prop(props,
+                           "accessibility_label",
+                           "Input node requires non-empty accessibility_label string")?
+  }
+  return Ok(true)
+}
+
+fn validate_children(children: Json) -> Result<Bool, String> {
+  let count = array_len(children)?
+  let index = 0
+  while index < count {
+    let child = array_get(children, index)?
+    validate_view(child)?
+    index += 1
+  }
+  return Ok(true)
+}
+
+fn validate_view_component(node: Json) -> Result<String, String> {
+  require_schema(node)?
+  let component = require_component(node)?
+  if !allowed_component(component) {
+    return Err(text_concat("unsupported UI component: ", component))
+  }
+  return Ok(component)
+}
+
+fn validate_view_children(node: Json, component: String) -> Result<Json, String> {
+  let props = require_props(node)?
+  validate_component_props(component, props)?
+  return require_children(node)
+}
+
+fn validate_view(node: Json) -> Result<Bool, String> {
+  let component = validate_view_component(node)?
+  let children = validate_view_children(node, component)?
+  validate_children(children)?
+  return Ok(true)
+}
+
+fn validate(tree: Json) -> Result<Bool, String> {
+  return validate_view(tree)
 }
 
 fn render_children(children: Json, depth: Int) -> Result<String, String> {
@@ -89,7 +206,7 @@ fn render_children(children: Json, depth: Int) -> Result<String, String> {
 fn checked_component(node: Json) -> Result<String, String> {
   let schema_text = get_string(node, "schema")?
   if schema_text != "nebula-ui.tree.v1" {
-    return Err("headless adapter received an unsupported ui schema")
+    return Err("expected nebula-ui.tree.v1 root-view schema")
   }
   return get_string(node, "component")
 }
@@ -115,6 +232,7 @@ fn render_view(node: Json, depth: Int) -> Result<String, String> {
 }
 
 fn render(tree: Json) -> Result<String, String> {
+  validate(tree)?
   return render_view(tree, 0)
 }
 
@@ -125,20 +243,6 @@ fn smoke(tree: Json) -> Result<String, String> {
 
 fn dispatch_marker(action: String) -> String {
   return text_concat("nebula-ui-action-dispatched=", action)
-}
-
-fn button_action(props: Json) -> Result<String, String> {
-  match get_string(props, "action") {
-    Ok(action) => {
-      if action == "" {
-        return Err("Button node requires non-empty action string")
-      }
-      return Ok(action)
-    }
-    Err(_) => {
-      return Err("Button node requires non-empty action string")
-    }
-  }
 }
 
 fn action_exists_children(children: Json, action: String) -> Result<Bool, String> {
@@ -155,16 +259,27 @@ fn action_exists_children(children: Json, action: String) -> Result<Bool, String
   return Ok(false)
 }
 
-fn action_exists_view(node: Json, action: String) -> Result<Bool, String> {
+fn props_action_matches(props: Json, action: String) -> Result<Bool, String> {
+  let candidate = require_non_empty_prop(props, "action", "interactive UI node requires non-empty action string")?
+  return Ok(candidate == action)
+}
+
+fn node_action_matches(node: Json, action: String) -> Result<Bool, String> {
   let component = checked_component(node)?
-  let props = get_value(node, "props")?
-  let children = get_value(node, "children")?
   if component == "Button" {
-    let candidate = button_action(props)?
-    if candidate == action {
-      return Ok(true)
-    }
+    return props_action_matches(get_value(node, "props")?, action)
   }
+  if component == "Input" {
+    return props_action_matches(get_value(node, "props")?, action)
+  }
+  return Ok(false)
+}
+
+fn action_exists_view(node: Json, action: String) -> Result<Bool, String> {
+  if node_action_matches(node, action)? {
+    return Ok(true)
+  }
+  let children = get_value(node, "children")?
   return action_exists_children(children, action)
 }
 
@@ -172,9 +287,725 @@ fn dispatch_action(tree: Json, action: String) -> Result<String, String> {
   if action == "" {
     return Err("action id must be non-empty")
   }
+  validate(tree)?
   let found = action_exists_view(tree, action)?
   if found {
     return Ok(dispatch_marker(action))
   }
   return Err(text_concat("action not found: ", action))
+}
+
+struct LayoutBuild {
+  node: Json
+  width: Int
+  height: Int
+}
+
+struct LayoutChildrenBuild {
+  children: Json
+  width: Int
+  height: Int
+}
+
+struct RenderBuild {
+  commands: JsonArrayBuilder
+  count: Int
+}
+
+struct LayoutStep {
+  node: Json
+  cursor: Int
+  total: Int
+  max_height: Int
+}
+
+struct InputValueLookup {
+  found: Bool
+  node_id: String
+  value: String
+}
+
+fn max_int(lhs: Int, rhs: Int) -> Int {
+  if lhs > rhs {
+    return lhs
+  }
+  return rhs
+}
+
+fn text_measure_width(text: String) -> Int {
+  return max_int(8, __nebula_rt_string_len(text) * 8)
+}
+
+fn int_text(value: Int) -> String {
+  return stringify(int_value(value))
+}
+
+fn child_node_id(parent: String, index: Int) -> String {
+  return text_concat3(parent, ".", int_text(index))
+}
+
+fn prop_int_or(props: Json, key: String, fallback: Int) -> Int {
+  match get_int(props, key) {
+    Ok(value) => { return value }
+    Err(_) => { return fallback }
+  }
+}
+
+fn prop_string_or(props: Json, key: String, fallback: String) -> String {
+  match get_string(props, key) {
+    Ok(value) => { return value }
+    Err(_) => { return fallback }
+  }
+}
+
+fn rect_json(x: Int, y: Int, width: Int, height: Int) -> Json {
+  return object4("x", int_value(x), "y", int_value(y), "width", int_value(width), "height", int_value(height))
+}
+
+fn layout_node_json(node_id: String,
+                    component: String,
+                    x: Int,
+                    y: Int,
+                    width: Int,
+                    height: Int,
+                    props: Json,
+                    children: Json) -> Json {
+  return object9("schema",
+                 string_value("nebula-ui.layout-node.v1"),
+                 "node_id",
+                 string_value(node_id),
+                 "component",
+                 string_value(component),
+                 "x",
+                 int_value(x),
+                 "y",
+                 int_value(y),
+                 "width",
+                 int_value(width),
+                 "height",
+                 int_value(height),
+                 "props",
+                 props,
+                 "children",
+                 children)
+}
+
+fn layout_column_step(children: Json,
+                      parent_id: String,
+                      index: Int,
+                      x: Int,
+                      cursor_y: Int,
+                      width: Int,
+                      spacing: Int,
+                      total_height: Int) -> Result<LayoutStep, String> {
+  let child = array_get(children, index)?
+  let child_layout = layout_node_internal(child, child_node_id(parent_id, index), x, cursor_y, width)?
+  let next_total = total_height + child_layout.height
+  if index > 0 {
+    next_total += spacing
+  }
+  return Ok(LayoutStep(child_layout.node, cursor_y + child_layout.height + spacing, next_total, 0))
+}
+
+fn layout_children_column(children: Json,
+                          parent_id: String,
+                          x: Int,
+                          y: Int,
+                          width: Int,
+                          spacing: Int) -> Result<LayoutChildrenBuild, String> {
+  let builder = array_builder()
+  let count = array_len(children)?
+  let index = 0
+  let cursor_y = y
+  let total_height = 0
+  while index < count {
+    let step = layout_column_step(children, parent_id, index, x, cursor_y, width, spacing, total_height)?
+    builder = array_push(builder, step.node)
+    cursor_y = step.cursor
+    total_height = step.total
+    index += 1
+  }
+  return Ok(LayoutChildrenBuild(array_build(builder), width, total_height))
+}
+
+fn layout_row_child_width(width: Int, spacing: Int, count: Int) -> Result<Int, String> {
+  let total_spacing = spacing * (count - 1)
+  let child_width = (width - total_spacing) / count
+  if child_width <= 0 {
+    return Err("Row layout width is too small for children")
+  }
+  return Ok(child_width)
+}
+
+fn layout_row_step(children: Json,
+                   parent_id: String,
+                   index: Int,
+                   cursor_x: Int,
+                   y: Int,
+                   child_width: Int,
+                   spacing: Int,
+                   current_max_height: Int) -> Result<LayoutStep, String> {
+  let child = array_get(children, index)?
+  let child_layout = layout_node_internal(child, child_node_id(parent_id, index), cursor_x, y, child_width)?
+  let next_x = cursor_x + child_width + spacing
+  return Ok(LayoutStep(child_layout.node, next_x, 0, max_int(current_max_height, child_layout.height)))
+}
+
+fn layout_children_row_loop(children: Json,
+                            parent_id: String,
+                            y: Int,
+                            spacing: Int,
+                            child_width: Int,
+                            count: Int,
+                            index: Int,
+                            cursor_x: Int,
+                            max_height_value: Int,
+                            builder: JsonArrayBuilder) -> Result<LayoutChildrenBuild, String> {
+  if index >= count {
+    return Ok(LayoutChildrenBuild(array_build(builder), 0, max_height_value))
+  }
+  let step = layout_row_step(children, parent_id, index, cursor_x, y, child_width, spacing, max_height_value)?
+  let next_builder = array_push(builder, step.node)
+  return layout_children_row_loop(children, parent_id, y, spacing, child_width, count, index + 1, step.cursor, step.max_height, next_builder)
+}
+
+fn layout_children_row(children: Json,
+                       parent_id: String,
+                       x: Int,
+                       y: Int,
+                       width: Int,
+                       spacing: Int) -> Result<LayoutChildrenBuild, String> {
+  let builder = array_builder()
+  let count = array_len(children)?
+  if count == 0 {
+    return Ok(LayoutChildrenBuild(array0(), width, 0))
+  }
+  let child_width = layout_row_child_width(width, spacing, count)?
+  let row = layout_children_row_loop(children, parent_id, y, spacing, child_width, count, 0, x, 0, builder)?
+  return Ok(LayoutChildrenBuild(row.children, width, row.height))
+}
+
+fn leaf_height(component: String) -> Int {
+  if component == "Text" {
+    return 20
+  }
+  if component == "Button" || component == "Input" {
+    return 32
+  }
+  if component == "Spacer" {
+    return 16
+  }
+  return 24
+}
+
+fn leaf_width(component: String, props: Json, available_width: Int) -> Int {
+  if component == "Text" {
+    return max_int(text_measure_width(prop_string_or(props, "text", "")), 8)
+  }
+  if component == "Button" {
+    return max_int(96, text_measure_width(prop_string_or(props, "text", "")) + 32)
+  }
+  if component == "Input" {
+    return max_int(160, text_measure_width(prop_string_or(props, "value", "")) + 32)
+  }
+  return available_width
+}
+
+fn layout_window_node(node_id: String, props: Json, children: Json) -> Result<LayoutBuild, String> {
+  let child_layout = layout_children_column(children, node_id, 24, 24, 432, 12)?
+  let height = max_int(120, child_layout.height + 48)
+  let layout_node = layout_node_json(node_id, "Window", 0, 0, 480, height, props, child_layout.children)
+  return Ok(LayoutBuild(layout_node, 480, height))
+}
+
+fn layout_column_node(node_id: String, x: Int, y: Int, width: Int, props: Json, children: Json) -> Result<LayoutBuild, String> {
+  let child_layout = layout_children_column(children, node_id, x, y, width, prop_int_or(props, "spacing", 0))?
+  let layout_node = layout_node_json(node_id, "Column", x, y, width, child_layout.height, props, child_layout.children)
+  return Ok(LayoutBuild(layout_node, width, child_layout.height))
+}
+
+fn layout_row_node(node_id: String, x: Int, y: Int, width: Int, props: Json, children: Json) -> Result<LayoutBuild, String> {
+  let child_layout = layout_children_row(children, node_id, x, y, width, prop_int_or(props, "spacing", 0))?
+  let layout_node = layout_node_json(node_id, "Row", x, y, width, child_layout.height, props, child_layout.children)
+  return Ok(LayoutBuild(layout_node, width, child_layout.height))
+}
+
+fn layout_leaf_node(node_id: String, component: String, x: Int, y: Int, width: Int, props: Json) -> Result<LayoutBuild, String> {
+  let height = leaf_height(component)
+  let measured_width = leaf_width(component, props, width)
+  let layout_node = layout_node_json(node_id, component, x, y, measured_width, height, props, array0())
+  return Ok(LayoutBuild(layout_node, measured_width, height))
+}
+
+fn layout_node_internal(node: Json, node_id: String, x: Int, y: Int, width: Int) -> Result<LayoutBuild, String> {
+  let component = validate_view_component(node)?
+  let props = require_props(node)?
+  validate_component_props(component, props)?
+  let children = require_children(node)?
+  if component == "Window" {
+    return layout_window_node(node_id, props, children)
+  }
+  if component == "Column" {
+    return layout_column_node(node_id, x, y, width, props, children)
+  }
+  if component == "Row" {
+    return layout_row_node(node_id, x, y, width, props, children)
+  }
+  return layout_leaf_node(node_id, component, x, y, width, props)
+}
+
+fn layout(tree: Json) -> Result<Json, String> {
+  let root = layout_node_internal(tree, "0", 0, 0, 480)?
+  return Ok(object5("schema",
+                    string_value("nebula-ui.layout.v1"),
+                    "source_schema",
+                    string_value("nebula-ui.tree.v1"),
+                    "width",
+                    int_value(root.width),
+                    "height",
+                    int_value(root.height),
+                    "root",
+                    root.node))
+}
+
+fn require_layout_node_schema(node: Json) -> Result<Bool, String> {
+  match get_string(node, "schema") {
+    Ok(schema_text) => {
+      if schema_text != "nebula-ui.layout-node.v1" {
+        return Err("expected nebula-ui.layout-node.v1 schema")
+      }
+      return Ok(true)
+    }
+    Err(_) => {
+      return Err("expected nebula-ui.layout-node.v1 schema")
+    }
+  }
+}
+
+fn require_layout_schema(layout_tree: Json) -> Result<Bool, String> {
+  match get_string(layout_tree, "schema") {
+    Ok(schema_text) => {
+      if schema_text != "nebula-ui.layout.v1" {
+        return Err("expected nebula-ui.layout.v1 schema")
+      }
+      return Ok(true)
+    }
+    Err(_) => {
+      return Err("expected nebula-ui.layout.v1 schema")
+    }
+  }
+}
+
+fn render_command_text(component: String, props: Json) -> String {
+  if component == "Text" {
+    return prop_string_or(props, "text", "")
+  }
+  if component == "Button" {
+    return prop_string_or(props, "text", "")
+  }
+  if component == "Input" {
+    return prop_string_or(props, "value", "")
+  }
+  if component == "Window" {
+    return prop_string_or(props, "title", "")
+  }
+  return ""
+}
+
+fn render_command_action(component: String, props: Json) -> String {
+  if component == "Button" || component == "Input" {
+    return prop_string_or(props, "action", "")
+  }
+  return ""
+}
+
+fn render_command_kind(component: String) -> String {
+  if component == "Text" {
+    return "text"
+  }
+  if component == "Button" || component == "Input" {
+    return "hit-area"
+  }
+  return "rect"
+}
+
+fn render_command_object(kind: String,
+                         node_id: String,
+                         component: String,
+	                         rect: Json,
+	                         text: String,
+	                         action: String) -> Json {
+  return object8("schema",
+                 string_value("nebula-ui.render-command.v1"),
+                 "kind",
+                 string_value(kind),
+                 "node_id",
+                 string_value(node_id),
+                 "component",
+                 string_value(component),
+                 "rect",
+                 rect,
+                 "text",
+                 string_value(text),
+                 "action",
+                 string_value(action),
+                 "clip",
+                 bool_value(true))
+}
+
+fn layout_node_rect(node: Json) -> Result<Json, String> {
+  return Ok(rect_json(get_int(node, "x")?, get_int(node, "y")?, get_int(node, "width")?, get_int(node, "height")?))
+}
+
+fn render_command_from_node(node: Json) -> Result<Json, String> {
+  require_layout_node_schema(node)?
+  let component = get_string(node, "component")?
+  let props = get_value(node, "props")?
+  return Ok(render_command_object(render_command_kind(component),
+                                  get_string(node, "node_id")?,
+                                  component,
+                                  layout_node_rect(node)?,
+                                  render_command_text(component, props),
+                                  render_command_action(component, props)))
+}
+
+fn append_render_child(children: Json, index: Int, builder: JsonArrayBuilder, count: Int) -> Result<RenderBuild, String> {
+  let child = array_get(children, index)?
+  return append_render_commands(child, builder, count)
+}
+
+fn append_render_children(children: Json, index: Int, child_count: Int, builder: JsonArrayBuilder, count: Int) -> Result<RenderBuild, String> {
+  if index >= child_count {
+    return Ok(RenderBuild(builder, count))
+  }
+    let child_build = append_render_child(children, index, builder, count)?
+  return append_render_children(children, index + 1, child_count, child_build.commands, child_build.count)
+}
+
+fn append_render_commands(node: Json, builder: JsonArrayBuilder, count: Int) -> Result<RenderBuild, String> {
+  let next_builder = array_push(builder, render_command_from_node(node)?)
+  let children = get_value(node, "children")?
+  return append_render_children(children, 0, array_len(children)?, next_builder, count + 1)
+}
+
+fn render_list(layout_tree: Json) -> Result<Json, String> {
+  require_layout_schema(layout_tree)?
+  let root = get_value(layout_tree, "root")?
+  let build = append_render_commands(root, array_builder(), 0)?
+  return Ok(object4("schema",
+                    string_value("nebula-ui.render-list.v1"),
+                    "source_schema",
+                    string_value("nebula-ui.layout.v1"),
+                    "command_count",
+                    int_value(build.count),
+                    "commands",
+                    array_build(build.commands)))
+}
+
+fn point_inside_node(node: Json, x: Int, y: Int) -> Result<Bool, String> {
+  let node_x = get_int(node, "x")?
+  let node_y = get_int(node, "y")?
+  let node_width = get_int(node, "width")?
+  let node_height = get_int(node, "height")?
+  return Ok(x >= node_x && x < node_x + node_width && y >= node_y && y < node_y + node_height)
+}
+
+fn node_action(node: Json) -> Result<String, String> {
+  let component = get_string(node, "component")?
+  if component == "Button" || component == "Input" {
+    let props = get_value(node, "props")?
+    return Ok(prop_string_or(props, "action", ""))
+  }
+  return Ok("")
+}
+
+fn hit_test_children(children: Json, x: Int, y: Int) -> Result<String, String> {
+  let count = array_len(children)?
+  let index = 0
+  while index < count {
+    let child = array_get(children, index)?
+    match hit_test_node(child, x, y) {
+      Ok(action) => {
+        return Ok(action)
+      }
+      Err(message) => {
+        if message != "hit-test-miss" {
+          return Err(message)
+        }
+      }
+    }
+    index += 1
+  }
+  return Err("hit-test-miss")
+}
+
+fn hit_test_self_or_miss(node: Json) -> Result<String, String> {
+  let action = node_action(node)?
+  if action != "" {
+    return Ok(action)
+  }
+  return Err("hit-test-miss")
+}
+
+fn hit_test_children_or_self(node: Json, x: Int, y: Int) -> Result<String, String> {
+  match hit_test_children(get_value(node, "children")?, x, y) {
+    Ok(action) => {
+      return Ok(action)
+    }
+    Err(message) => {
+      if message != "hit-test-miss" {
+        return Err(message)
+      }
+    }
+  }
+  return hit_test_self_or_miss(node)
+}
+
+fn hit_test_node(node: Json, x: Int, y: Int) -> Result<String, String> {
+  require_layout_node_schema(node)?
+  if !point_inside_node(node, x, y)? {
+    return Err("hit-test-miss")
+  }
+  return hit_test_children_or_self(node, x, y)
+}
+
+fn hit_test(layout_tree: Json, x: Int, y: Int) -> Result<String, String> {
+  require_layout_schema(layout_tree)?
+  let root = get_value(layout_tree, "root")?
+  match hit_test_node(root, x, y) {
+    Ok(action) => { return Ok(action) }
+    Err(message) => {
+      if message == "hit-test-miss" {
+        return Err("no UI action at point")
+      }
+      return Err(message)
+    }
+  }
+}
+
+fn first_input_value_in_children(children: Json, parent_id: String) -> Result<InputValueLookup, String> {
+  let count = array_len(children)?
+  let index = 0
+  while index < count {
+    let child = array_get(children, index)?
+    let found = first_input_value_internal(child, child_node_id(parent_id, index))?
+    if found.found {
+      return Ok(found)
+    }
+    index += 1
+  }
+  return Ok(InputValueLookup(false, "", ""))
+}
+
+fn first_input_value_internal(node: Json, node_id: String) -> Result<InputValueLookup, String> {
+  let component = validate_view_component(node)?
+  let props = require_props(node)?
+  validate_component_props(component, props)?
+  if component == "Input" {
+    return Ok(InputValueLookup(true, node_id, prop_string_or(props, "value", "")))
+  }
+  let children = require_children(node)?
+  return first_input_value_in_children(children, node_id)
+}
+
+fn patch_replace_prop(node_id: String, prop: String, value: String) -> Json {
+  return object5("op",
+                 string_value("replace-prop"),
+                 "node_id",
+                 string_value(node_id),
+                 "prop",
+                 string_value(prop),
+                 "value",
+                 string_value(value),
+                 "reason",
+                 string_value("first-input-value-changed"))
+}
+
+fn patch_replace_root(new_tree: Json) -> Json {
+  return object3("op", string_value("replace-root"), "node_id", string_value("0"), "value", new_tree)
+}
+
+fn patch_payload(kind: String, ops: Json) -> Json {
+  return object3("schema", string_value("nebula-ui.patch.v1"), "kind", string_value(kind), "ops", ops)
+}
+
+fn patch_input_diff_or_root(old_input: InputValueLookup, new_input: InputValueLookup, new_tree: Json) -> Json {
+  if old_input.found && new_input.found && old_input.node_id == new_input.node_id && old_input.value != new_input.value {
+    return patch_payload("props", array1(patch_replace_prop(new_input.node_id, "value", new_input.value)))
+  }
+  return patch_payload("replace-root", array1(patch_replace_root(new_tree)))
+}
+
+fn patch(old_tree: Json, new_tree: Json) -> Result<Json, String> {
+  if stringify(old_tree) == stringify(new_tree) {
+    return Ok(patch_payload("noop", array0()))
+  }
+  let old_input = first_input_value_internal(old_tree, "0")?
+  let new_input = first_input_value_internal(new_tree, "0")?
+  return Ok(patch_input_diff_or_root(old_input, new_input, new_tree))
+}
+
+struct FastPreviewTree {
+  title: String
+  text: String
+  input_value: String
+  input_action: String
+  input_accessibility_label: String
+  button_text: String
+  button_action: String
+  spacing: Int
+}
+
+struct FastRect {
+  x: Int
+  y: Int
+  width: Int
+  height: Int
+}
+
+struct FastPreviewLayout {
+  width: Int
+  height: Int
+  text_rect: FastRect
+  input_rect: FastRect
+  button_rect: FastRect
+  input_action: String
+  button_action: String
+  input_action_code: Int
+  button_action_code: Int
+  command_count: Int
+}
+
+struct FastPatch {
+  kind: String
+  node_id: String
+  prop: String
+  value: String
+}
+
+struct FastPatchPlan {
+  kind_code: Int
+  node_code: Int
+  prop_code: Int
+  value: String
+}
+
+fn fast_preview_tree(title: String,
+                     text: String,
+                     input_value: String,
+                     input_action: String,
+                     input_accessibility_label: String,
+                     button_text: String,
+                     button_action: String) -> Result<FastPreviewTree, String> {
+  if input_action == "" {
+    return Err("Input node requires non-empty action string")
+  }
+  if input_accessibility_label == "" {
+    return Err("Input node requires non-empty accessibility_label string")
+  }
+  if button_action == "" {
+    return Err("Button node requires non-empty action string")
+  }
+  return Ok(FastPreviewTree(title, text, input_value, input_action, input_accessibility_label, button_text, button_action, 12))
+}
+
+fn fast_rect(x: Int, y: Int, width: Int, height: Int) -> FastRect {
+  return FastRect(x, y, width, height)
+}
+
+fn fast_preview_layout(tree: FastPreviewTree) -> FastPreviewLayout {
+  let text_y = 24
+  let input_y = text_y + 20 + tree.spacing
+  let button_y = input_y + 32 + tree.spacing
+  let height = max_int(120, button_y + 32 + 24)
+  let text_rect = fast_rect(24, text_y, text_measure_width(tree.text), 20)
+  let input_rect = fast_rect(24, input_y, max_int(160, text_measure_width(tree.input_value) + 32), 32)
+  let button_rect = fast_rect(24, button_y, max_int(96, text_measure_width(tree.button_text) + 32), 32)
+  return FastPreviewLayout(480,
+                           height,
+                           text_rect,
+                           input_rect,
+                           button_rect,
+                           tree.input_action,
+                           tree.button_action,
+                           1,
+                           2,
+                           5)
+}
+
+fn fast_point_inside(rect: FastRect, x: Int, y: Int) -> Bool {
+  return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+}
+
+fn fast_hit_test(layout_value: FastPreviewLayout, x: Int, y: Int) -> Result<String, String> {
+  if fast_point_inside(layout_value.input_rect, x, y) {
+    return Ok(layout_value.input_action)
+  }
+  if fast_point_inside(layout_value.button_rect, x, y) {
+    return Ok(layout_value.button_action)
+  }
+  return Err("no UI action at point")
+}
+
+fn fast_hit_test_action_code(layout_value: FastPreviewLayout, x: Int, y: Int) -> Result<Int, String> {
+  if fast_point_inside(layout_value.input_rect, x, y) {
+    return Ok(layout_value.input_action_code)
+  }
+  if fast_point_inside(layout_value.button_rect, x, y) {
+    return Ok(layout_value.button_action_code)
+  }
+  return Err("no UI action at point")
+}
+
+fn fast_render_command_count(layout_value: FastPreviewLayout) -> Int {
+  return layout_value.command_count
+}
+
+fn fast_null_gpu_submit(layout_value: FastPreviewLayout) -> Int {
+  return layout_value.command_count
+}
+
+fn fast_patch(old_tree: FastPreviewTree, new_tree: FastPreviewTree) -> FastPatch {
+  if old_tree.input_value != new_tree.input_value {
+    return FastPatch("props", "0.0.1", "value", new_tree.input_value)
+  }
+  if old_tree.title != new_tree.title ||
+     old_tree.text != new_tree.text ||
+     old_tree.input_action != new_tree.input_action ||
+     old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
+     old_tree.button_text != new_tree.button_text ||
+     old_tree.button_action != new_tree.button_action {
+    return FastPatch("replace-root", "0", "", "")
+  }
+  return FastPatch("noop", "", "", "")
+}
+
+fn fast_patch_plan(old_tree: FastPreviewTree, new_tree: FastPreviewTree) -> FastPatchPlan {
+  if old_tree.input_value != new_tree.input_value {
+    return FastPatchPlan(1, 1, 1, new_tree.input_value)
+  }
+  if old_tree.title != new_tree.title ||
+     old_tree.text != new_tree.text ||
+     old_tree.input_action != new_tree.input_action ||
+     old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
+     old_tree.button_text != new_tree.button_text ||
+     old_tree.button_action != new_tree.button_action {
+    return FastPatchPlan(2, 0, 0, "")
+  }
+  return FastPatchPlan(0, 0, 0, "")
+}
+
+fn fast_patch_code(old_tree: FastPreviewTree, new_tree: FastPreviewTree) -> Int {
+  if old_tree.input_value != new_tree.input_value {
+    return 111
+  }
+  if old_tree.title != new_tree.title ||
+     old_tree.text != new_tree.text ||
+     old_tree.input_action != new_tree.input_action ||
+     old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
+     old_tree.button_text != new_tree.button_text ||
+     old_tree.button_action != new_tree.button_action {
+    return 200
+  }
+  return 0
 }

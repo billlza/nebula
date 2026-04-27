@@ -1,0 +1,404 @@
+module provider
+import std::bytes
+import std::http
+import std::json
+import std::net
+import std::result
+import etsi014
+import mock
+import tls::client
+import tls::http
+import types
+
+extern fn __nebula_qkd_normalize_base_url(url: String) -> Result<String, String>
+extern fn __nebula_qkd_base_url_scheme(url: String) -> Result<String, String>
+extern fn __nebula_qkd_base_url_host(url: String) -> Result<String, String>
+extern fn __nebula_qkd_base_url_port(url: String) -> Result<Int, String>
+extern fn __nebula_qkd_base_url_authority(url: String) -> Result<String, String>
+extern fn __nebula_qkd_base_url_path_prefix(url: String) -> Result<String, String>
+
+fn provider_config(kme_base_url: String,
+                   kme_authority: String,
+                   kme_port: Int,
+                   local_sae_id: String,
+                   peer_sae_id: String,
+                   use_tls: Bool,
+                   request_count: Int,
+                   key_size_bits: Int) -> QkdProviderConfig {
+  return QkdProviderConfig(kme_base_url,
+                           kme_authority,
+                           kme_port,
+                           local_sae_id,
+                           peer_sae_id,
+                           use_tls,
+                           request_count,
+                           key_size_bits)
+}
+
+fn mtls_config(ca_pem: String,
+               client_certificate_pem: String,
+               client_private_key_pem: String) -> QkdMtlsConfig {
+  return QkdMtlsConfig(ca_pem, client_certificate_pem, client_private_key_pem)
+}
+
+fn validate_config(config: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  if config.kme_base_url == "" {
+    return Err(qkd_error("invalid_provider_config", "KME base URL must be non-empty"))
+  }
+  if config.kme_authority == "" {
+    return Err(qkd_error("invalid_provider_config", "KME authority must be non-empty"))
+  }
+  if config.kme_port <= 0 {
+    return Err(qkd_error("invalid_provider_config", "KME port must be positive"))
+  }
+  if config.local_sae_id == "" {
+    return Err(qkd_error("invalid_provider_config", "local SAE id must be non-empty"))
+  }
+  if config.peer_sae_id == "" {
+    return Err(qkd_error("invalid_provider_config", "peer SAE id must be non-empty"))
+  }
+  if config.request_count <= 0 {
+    return Err(qkd_error("invalid_provider_config", "request_count must be positive"))
+  }
+  if config.key_size_bits <= 0 {
+    return Err(qkd_error("invalid_provider_config", "key_size_bits must be positive"))
+  }
+  return Ok(true)
+}
+
+fn validate_mtls_config(config: QkdMtlsConfig) -> Result<Bool, QkdProviderError> {
+  if config.ca_pem == "" {
+    return Err(qkd_error("invalid_mtls_config", "mTLS CA PEM must be non-empty"))
+  }
+  if config.client_certificate_pem == "" {
+    return Err(qkd_error("invalid_mtls_config", "mTLS client certificate PEM must be non-empty"))
+  }
+  if config.client_private_key_pem == "" {
+    return Err(qkd_error("invalid_mtls_config", "mTLS client private key PEM must be non-empty"))
+  }
+  return Ok(true)
+}
+
+fn qkd_base_url_error(msg: String) -> QkdProviderError {
+  return qkd_error("invalid_kme_base_url", msg)
+}
+
+fn qkd_base_url_scheme(url: String) -> Result<String, QkdProviderError> {
+  match __nebula_qkd_base_url_scheme(url) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_base_url_error(msg)) }
+  }
+}
+
+fn qkd_base_url_host(url: String) -> Result<String, QkdProviderError> {
+  match __nebula_qkd_base_url_host(url) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_base_url_error(msg)) }
+  }
+}
+
+fn qkd_base_url_port(url: String) -> Result<Int, QkdProviderError> {
+  match __nebula_qkd_base_url_port(url) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_base_url_error(msg)) }
+  }
+}
+
+fn qkd_base_url_authority(url: String) -> Result<String, QkdProviderError> {
+  match __nebula_qkd_base_url_authority(url) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_base_url_error(msg)) }
+  }
+}
+
+fn qkd_base_url_path_prefix(url: String) -> Result<String, QkdProviderError> {
+  match __nebula_qkd_base_url_path_prefix(url) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_base_url_error(msg)) }
+  }
+}
+
+fn qkd_normalize_base_url(url: String) -> Result<String, QkdProviderError> {
+  match __nebula_qkd_normalize_base_url(url) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_base_url_error(msg)) }
+  }
+}
+
+fn request_path_from_normalized(normalized: String, suffix: String) -> Result<String, QkdProviderError> {
+  let prefix = qkd_base_url_path_prefix(normalized)?
+  if prefix == "" {
+    return Ok(suffix)
+  }
+  return Ok(qkd_text_concat(prefix, suffix))
+}
+
+fn validate_resolved_transport(config: QkdProviderConfig, scheme: String) -> Result<Bool, QkdProviderError> {
+  if config.use_tls && scheme != "https" {
+    return Err(qkd_error("invalid_provider_config", "use_tls=true requires an https KME base URL"))
+  }
+  if !config.use_tls && scheme != "http" {
+    return Err(qkd_error("invalid_provider_config", "use_tls=false requires an http KME base URL"))
+  }
+  return Ok(true)
+}
+
+fn validate_resolved_host(config: QkdProviderConfig, host: String) -> Result<Bool, QkdProviderError> {
+  if config.kme_authority != host {
+    return Err(qkd_error("invalid_provider_config", "KME authority must match KME base URL host"))
+  }
+  return Ok(true)
+}
+
+fn validate_resolved_port(config: QkdProviderConfig, port: Int) -> Result<Bool, QkdProviderError> {
+  if config.kme_port != port {
+    return Err(qkd_error("invalid_provider_config", "KME port must match KME base URL port"))
+  }
+  return Ok(true)
+}
+
+fn normalized_config_base_url(config: QkdProviderConfig) -> Result<String, QkdProviderError> {
+  validate_config(config)?
+  return qkd_normalize_base_url(config.kme_base_url)
+}
+
+fn resolved_config_scheme(config: QkdProviderConfig, normalized: String) -> Result<String, QkdProviderError> {
+  let scheme = qkd_base_url_scheme(normalized)?
+  validate_resolved_transport(config, scheme)?
+  return Ok(scheme)
+}
+
+fn resolved_config_host(config: QkdProviderConfig, normalized: String) -> Result<String, QkdProviderError> {
+  let host = qkd_base_url_host(normalized)?
+  validate_resolved_host(config, host)?
+  return Ok(host)
+}
+
+fn resolved_config_port(config: QkdProviderConfig, normalized: String) -> Result<Int, QkdProviderError> {
+  let port = qkd_base_url_port(normalized)?
+  validate_resolved_port(config, port)?
+  return Ok(port)
+}
+
+fn resolve_kme_target(config: QkdProviderConfig, etsi_path: String) -> Result<QkdKmeTarget, QkdProviderError> {
+  let normalized = normalized_config_base_url(config)?
+  let scheme = resolved_config_scheme(config, normalized)?
+  return Ok(QkdKmeTarget(scheme,
+                         resolved_config_host(config, normalized)?,
+                         resolved_config_port(config, normalized)?,
+                         qkd_base_url_authority(normalized)?,
+                         request_path_from_normalized(normalized, etsi_path)?))
+}
+
+fn default_key_request(config: QkdProviderConfig) -> QkdKeyRequest {
+  return qkd_key_request(config.request_count, config.key_size_bits)
+}
+
+fn status_client_request(config: QkdProviderConfig) -> Result<ClientRequest, QkdProviderError> {
+  let target = resolve_kme_target(config, status_path(config.peer_sae_id))?
+  return Ok(get_request(target.authority, target.full_path))
+}
+
+fn enc_keys_client_request(config: QkdProviderConfig) -> Result<ClientRequest, QkdProviderError> {
+  let target = resolve_kme_target(config, enc_keys_path(config.peer_sae_id))?
+  return Ok(post_request(target.authority,
+                         target.full_path,
+                         "application/json; charset=utf-8",
+                         from_string(stringify(default_key_request(config).as_json()))))
+}
+
+fn dec_keys_client_request(config: QkdProviderConfig, key_ids: QkdKeyIdRequest) -> Result<ClientRequest, QkdProviderError> {
+  let target = resolve_kme_target(config, dec_keys_path(config.peer_sae_id))?
+  return Ok(post_request(target.authority,
+                         target.full_path,
+                         "application/json; charset=utf-8",
+                         from_string(stringify(key_ids.as_json()))))
+}
+
+fn http_lab_transport_allowed(config: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  validate_config(config)?
+  if config.use_tls {
+    return Err(qkd_error("unsupported_transport",
+                         "QKD KME live client requires deployment-provided mTLS; preview HTTP client only supports lab cleartext"))
+  }
+  let target = resolve_kme_target(config, status_path(config.peer_sae_id))?
+  if target.scheme != "http" {
+    return Err(qkd_error("unsupported_transport", "preview HTTP lab client requires an http KME base URL"))
+  }
+  return Ok(true)
+}
+
+fn mtls_transport_allowed(config: QkdProviderConfig) -> Result<Bool, QkdProviderError> {
+  validate_config(config)?
+  if !config.use_tls {
+    return Err(qkd_error("unsupported_transport", "QKD KME mTLS adapter requires use_tls=true"))
+  }
+  let target = resolve_kme_target(config, status_path(config.peer_sae_id))?
+  if target.scheme != "https" {
+    return Err(qkd_error("unsupported_transport", "QKD KME mTLS adapter requires an https KME base URL"))
+  }
+  return Ok(true)
+}
+
+fn qkd_tls_error(code: String, msg: String) -> QkdProviderError {
+  return qkd_error(code, msg)
+}
+
+fn mtls_client_config(config: QkdMtlsConfig) -> Result<ClientConfig, QkdProviderError> {
+  validate_mtls_config(config)?
+  match client_config_from_ca_pem_text(config.ca_pem) {
+    Ok(base) => {
+      match client_identity_from_pem_text(config.client_certificate_pem, config.client_private_key_pem) {
+        Ok(identity) => {
+          let with_identity = with_client_identity(base, identity)
+          let with_versions = with_version_policy(with_identity, tls12_or_13())
+          return Ok(with_alpn_policy(with_versions, alpn_http11_only()))
+        }
+        Err(msg) => {
+          return Err(qkd_tls_error("mtls_config_error", msg))
+        }
+      }
+    }
+    Err(msg) => {
+      return Err(qkd_tls_error("mtls_config_error", msg))
+    }
+  }
+}
+
+async fn send_http_lab_request(config: QkdProviderConfig, request_value: ClientRequest) -> Result<ClientResponse, QkdProviderError> {
+  http_lab_transport_allowed(config)?
+  let target = resolve_kme_target(config, status_path(config.peer_sae_id))?
+  match await connect_host(target.host, target.port) {
+    Ok(stream) => {
+      return await send_http_lab_stream(stream, request_value)
+    }
+    Err(msg) => {
+      return Err(qkd_error("kme_transport_error", msg))
+    }
+  }
+}
+
+async fn send_mtls_request(config: QkdProviderConfig,
+                           mtls: QkdMtlsConfig,
+                           request_value: ClientRequest) -> Result<ClientResponse, QkdProviderError> {
+  mtls_transport_allowed(config)?
+  let target = resolve_kme_target(config, status_path(config.peer_sae_id))?
+  let client_cfg = mtls_client_config(mtls)?
+  match await dial_host(target.host, target.port, client_cfg) {
+    Ok(stream) => {
+      return await send_mtls_stream(stream, request_value)
+    }
+    Err(msg) => {
+      return Err(qkd_tls_error("kme_transport_error", msg))
+    }
+  }
+}
+
+async fn read_http_lab_stream(stream: TcpStream) -> Result<ClientResponse, QkdProviderError> {
+  match await stream.read_response() {
+    Ok(response) => {
+      stream.close()
+      return Ok(response)
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(qkd_error("kme_transport_error", msg))
+    }
+  }
+}
+
+async fn read_mtls_stream(stream: TlsClientStream) -> Result<ClientResponse, QkdProviderError> {
+  match await stream.read_response() {
+    Ok(response) => {
+      let _ = await stream.close()
+      return Ok(response)
+    }
+    Err(msg) => {
+      let _ = await stream.close()
+      return Err(qkd_tls_error("kme_transport_error", msg))
+    }
+  }
+}
+
+async fn send_http_lab_stream(stream: TcpStream, request_value: ClientRequest) -> Result<ClientResponse, QkdProviderError> {
+  match await stream.write_request(request_value) {
+    Ok(_) => {
+      return await read_http_lab_stream(stream)
+    }
+    Err(msg) => {
+      stream.close()
+      return Err(qkd_error("kme_transport_error", msg))
+    }
+  }
+}
+
+async fn send_mtls_stream(stream: TlsClientStream, request_value: ClientRequest) -> Result<ClientResponse, QkdProviderError> {
+  match await stream.write_request(request_value) {
+    Ok(_) => {
+      return await read_mtls_stream(stream)
+    }
+    Err(msg) => {
+      let _ = await stream.close()
+      return Err(qkd_tls_error("kme_transport_error", msg))
+    }
+  }
+}
+
+async fn get_status_http_lab(config: QkdProviderConfig) -> Result<QkdStatus, QkdProviderError> {
+  match await send_http_lab_request(config, status_client_request(config)?) {
+    Ok(response) => { return status_from_response(response) }
+    Err(error) => { return Err(error) }
+  }
+}
+
+async fn get_status_mtls(config: QkdProviderConfig, mtls: QkdMtlsConfig) -> Result<QkdStatus, QkdProviderError> {
+  match await send_mtls_request(config, mtls, status_client_request(config)?) {
+    Ok(response) => { return status_from_response(response) }
+    Err(error) => { return Err(error) }
+  }
+}
+
+async fn get_enc_keys_http_lab(config: QkdProviderConfig) -> Result<QkdKeyBatch, QkdProviderError> {
+  match await send_http_lab_request(config, enc_keys_client_request(config)?) {
+    Ok(response) => { return key_batch_from_response(config.peer_sae_id, response) }
+    Err(error) => { return Err(error) }
+  }
+}
+
+async fn get_enc_keys_mtls(config: QkdProviderConfig, mtls: QkdMtlsConfig) -> Result<QkdKeyBatch, QkdProviderError> {
+  match await send_mtls_request(config, mtls, enc_keys_client_request(config)?) {
+    Ok(response) => { return key_batch_from_response(config.peer_sae_id, response) }
+    Err(error) => { return Err(error) }
+  }
+}
+
+async fn get_dec_keys_http_lab(config: QkdProviderConfig, key_ids: QkdKeyIdRequest) -> Result<QkdKeyBatch, QkdProviderError> {
+  match await send_http_lab_request(config, dec_keys_client_request(config, key_ids)?) {
+    Ok(response) => { return key_batch_from_response(config.peer_sae_id, response) }
+    Err(error) => { return Err(error) }
+  }
+}
+
+async fn get_dec_keys_mtls(config: QkdProviderConfig,
+                           mtls: QkdMtlsConfig,
+                           key_ids: QkdKeyIdRequest) -> Result<QkdKeyBatch, QkdProviderError> {
+  match await send_mtls_request(config, mtls, dec_keys_client_request(config, key_ids)?) {
+    Ok(response) => { return key_batch_from_response(config.peer_sae_id, response) }
+    Err(error) => { return Err(error) }
+  }
+}
+
+fn mock_get_status(config: QkdProviderConfig) -> Result<QkdStatus, QkdProviderError> {
+  validate_config(config)?
+  return mock_status(config)
+}
+
+fn mock_get_enc_keys(config: QkdProviderConfig) -> Result<QkdKeyBatch, QkdProviderError> {
+  validate_config(config)?
+  return mock_enc_keys(config, default_key_request(config))
+}
+
+fn mock_get_dec_keys(config: QkdProviderConfig, key_ids: QkdKeyIdRequest) -> Result<QkdKeyBatch, QkdProviderError> {
+  validate_config(config)?
+  return mock_dec_keys(config, key_ids)
+}

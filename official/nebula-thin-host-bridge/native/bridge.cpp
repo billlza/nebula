@@ -32,10 +32,10 @@ void append_json_string_field(std::string& out, std::string_view key, std::strin
   append_json_string(out, value);
 }
 
-void append_json_int_field(std::string& out, std::string_view key, std::int64_t value) {
+void append_json_int_text_field(std::string& out, std::string_view key, std::string_view value) {
   append_json_string(out, key);
   out.push_back(':');
-  out += std::to_string(value);
+  out += value;
 }
 
 void append_thin_host_schema(std::string& out, std::string_view schema) {
@@ -210,7 +210,7 @@ std::string __nebula_thin_host_encode_command_text(std::string kind,
   out.push_back(',');
   append_json_string_field(out, "correlation_id", correlation_id);
   out.push_back(',');
-  append_json_int_field(out, "state_revision", state_revision);
+  append_json_int_text_field(out, "state_revision", revision);
   out.push_back('}');
   return out;
 }
@@ -246,7 +246,7 @@ std::string __nebula_thin_host_encode_event_payload_text(std::string kind,
   out.push_back(',');
   append_json_string_field(out, "correlation_id", correlation_id);
   out.push_back(',');
-  append_json_int_field(out, "state_revision", state_revision);
+  append_json_int_text_field(out, "state_revision", revision);
   out.push_back('}');
   return out;
 }
@@ -272,7 +272,7 @@ std::string __nebula_thin_host_encode_snapshot_payload_text(std::string screen,
   out += ",\"payload\":";
   out += payload_text;
   out.push_back(',');
-  append_json_int_field(out, "state_revision", state_revision);
+  append_json_int_text_field(out, "state_revision", revision);
   out.push_back('}');
   return out;
 }

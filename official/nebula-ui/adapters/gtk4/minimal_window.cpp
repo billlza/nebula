@@ -60,6 +60,11 @@ void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_sensitive(native_button, false);
     gtk_box_append(GTK_BOX(box), native_button);
   }
+  for (const auto& input : summary->inputs) {
+    std::string text = input.accessibility_label.empty() ? input.action : input.accessibility_label;
+    if (!input.value.empty()) text += ": " + input.value;
+    gtk_box_append(GTK_BOX(box), gtk_label_new(text.c_str()));
+  }
   gtk_window_set_child(GTK_WINDOW(window), box);
   gtk_window_present(GTK_WINDOW(window));
 }
@@ -68,6 +73,12 @@ void activate(GtkApplication* app, gpointer user_data) {
 
 int main(int argc, char** argv) {
   auto summary = summary_from_args(argc, argv);
+  const auto lifecycle = nebula::ui::adapter_preview::host_shell_lifecycle_summary(false);
+  std::string lifecycle_error;
+  if (!nebula::ui::adapter_preview::validate_lifecycle_order(lifecycle, &lifecycle_error)) {
+    std::cerr << "nebula-ui-gtk4-adapter-error: " << lifecycle_error << "\n";
+    return 2;
+  }
   auto dispatch_id = arg_value(argc, argv, "--smoke-dispatch-action");
   auto dispatch_result = nebula::ui::adapter_preview::ActionDispatchResult{};
   if (!dispatch_id.empty()) {
@@ -80,6 +91,7 @@ int main(int argc, char** argv) {
   if (has_arg(argc, argv, "--smoke")) {
     std::cout << "nebula-ui-gtk4-adapter-ok\n";
     nebula::ui::adapter_preview::append_smoke_summary(std::cout, summary);
+    nebula::ui::adapter_preview::append_lifecycle_summary(std::cout, lifecycle);
     if (!dispatch_id.empty()) {
       nebula::ui::adapter_preview::append_dispatch_result(std::cout, dispatch_result);
     }

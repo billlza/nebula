@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -35,6 +37,7 @@ constexpr int kSqliteNull = 5;
 constexpr int kSqliteOpenReadWrite = 0x00000002;
 constexpr int kSqliteOpenCreate = 0x00000004;
 constexpr int kSqliteOpenFullMutex = 0x00010000;
+constexpr std::size_t kMaxCachedStatements = 64;
 
 struct SqliteApi {
   bool loaded = false;
@@ -58,6 +61,7 @@ struct SqliteApi {
   int (*bind_int64)(sqlite3_stmt*, int, std::int64_t) = nullptr;
   int (*bind_null)(sqlite3_stmt*, int) = nullptr;
   int (*bind_blob)(sqlite3_stmt*, int, const void*, int, void (*)(void*)) = nullptr;
+  int (*clear_bindings)(sqlite3_stmt*) = nullptr;
   int (*bind_parameter_count)(sqlite3_stmt*) = nullptr;
   int (*column_count)(sqlite3_stmt*) = nullptr;
   const char* (*column_name)(sqlite3_stmt*, int) = nullptr;
@@ -123,6 +127,7 @@ SqliteApi& sqlite_api() {
         !load(api.step, "sqlite3_step") || !load(api.reset, "sqlite3_reset") ||
         !load(api.bind_text, "sqlite3_bind_text") || !load(api.bind_int64, "sqlite3_bind_int64") ||
         !load(api.bind_null, "sqlite3_bind_null") || !load(api.bind_blob, "sqlite3_bind_blob") ||
+        !load(api.clear_bindings, "sqlite3_clear_bindings") ||
         !load(api.bind_parameter_count, "sqlite3_bind_parameter_count") ||
         !load(api.column_count, "sqlite3_column_count") || !load(api.column_name, "sqlite3_column_name") ||
         !load(api.column_type, "sqlite3_column_type") || !load(api.column_text, "sqlite3_column_text") ||
@@ -201,6 +206,25 @@ public:
 template <typename T>
 nebula::rt::Result<T, std::string> err_closed(std::string_view label) {
   return err_result<T>(std::string(label) + " is closed");
+}
+
+std::string leading_sql_token(std::string_view sql) {
+  std::size_t start = 0;
+  while (start < sql.size() && std::isspace(static_cast<unsigned char>(sql[start])) != 0) {
+    ++start;
+  }
+  std::string token;
+  while (start < sql.size() && std::isalpha(static_cast<unsigned char>(sql[start])) != 0) {
+    token.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(sql[start]))));
+    ++start;
+  }
+  return token;
+}
+
+bool is_cacheable_sql(std::string_view sql) {
+  const std::string token = leading_sql_token(sql);
+  return token == "select" || token == "insert" || token == "update" || token == "delete" ||
+         token == "replace" || token == "with";
 }
 
 nebula::rt::Result<Statement, std::string> prepare_statement(sqlite3* db, std::string_view sql) {
@@ -333,20 +357,30 @@ struct SqliteCell {
   Bytes bytes_value;
 };
 
-struct SqliteColumnValue {
-  std::string name;
-  SqliteCell value;
-};
-
 struct SqliteResultRowData {
-  std::vector<SqliteColumnValue> columns;
+  std::vector<SqliteCell> cells;
 };
 
 struct SqliteConnectionState {
   sqlite3* db = nullptr;
   std::string path;
+  std::unordered_map<std::string, sqlite3_stmt*> statement_cache;
+  std::mutex statement_mutex;
+
+  void clear_statement_cache_locked() {
+    for (auto& entry : statement_cache) {
+      if (entry.second != nullptr) sqlite_api().finalize(entry.second);
+    }
+    statement_cache.clear();
+  }
+
+  void clear_statement_cache() {
+    std::lock_guard<std::mutex> lock(statement_mutex);
+    clear_statement_cache_locked();
+  }
 
   ~SqliteConnectionState() {
+    clear_statement_cache();
     if (db != nullptr) sqlite_api().close_v2(db);
   }
 };
@@ -363,12 +397,46 @@ struct SqliteTransactionState {
 };
 
 struct SqliteResultSetState {
+  std::vector<std::string> column_names;
+  std::unordered_map<std::string, std::size_t> column_index;
   std::vector<SqliteResultRowData> rows;
 };
 
 } // namespace nebula::rt
 
 namespace {
+
+nebula::rt::Result<sqlite3_stmt*, std::string> prepare_cached_statement(
+    const std::shared_ptr<nebula::rt::SqliteConnectionState>& state,
+    std::string_view sql) {
+  if (state == nullptr || state->db == nullptr) return err_result<sqlite3_stmt*>("sqlite connection is closed");
+
+  const std::string key(sql);
+  auto existing = state->statement_cache.find(key);
+  if (existing != state->statement_cache.end() && existing->second != nullptr) {
+    sqlite3_stmt* cached = existing->second;
+    const int reset_rc = sqlite_api().reset(cached);
+    const int clear_rc = sqlite_api().clear_bindings(cached);
+    if (reset_rc == kSqliteOk && clear_rc == kSqliteOk) {
+      return nebula::rt::ok_result(cached);
+    }
+    sqlite_api().finalize(cached);
+    state->statement_cache.erase(existing);
+  }
+
+  sqlite3_stmt* stmt = nullptr;
+  const int rc = sqlite_api().prepare_v2(state->db, key.c_str(), -1, &stmt, nullptr);
+  if (rc != kSqliteOk) {
+    return err_result<sqlite3_stmt*>(sqlite_error_message(state->db, "prepare statement"));
+  }
+  if (state->statement_cache.size() >= kMaxCachedStatements) {
+    auto evicted = state->statement_cache.begin();
+    if (evicted->second != nullptr) sqlite_api().finalize(evicted->second);
+    state->statement_cache.erase(evicted);
+  }
+  auto inserted = state->statement_cache.emplace(key, stmt);
+  return nebula::rt::ok_result(inserted.first->second);
+}
 
 nebula::rt::Result<nebula::rt::SqliteCell, std::string> read_cell(sqlite3_stmt* stmt, int index) {
   using Cell = nebula::rt::SqliteCell;
@@ -400,6 +468,67 @@ nebula::rt::Result<nebula::rt::SqliteCell, std::string> read_cell(sqlite3_stmt* 
   return err_result<nebula::rt::SqliteCell>("unsupported sqlite column type");
 }
 
+nebula::rt::Result<std::int64_t, std::string> execute_cached_statement(
+    const std::shared_ptr<nebula::rt::SqliteConnectionState>& state,
+    std::string_view sql,
+    nebula::rt::JsonValue params) {
+  if (state == nullptr || state->db == nullptr) return err_result<std::int64_t>("sqlite connection is closed");
+  std::lock_guard<std::mutex> lock(state->statement_mutex);
+  if (!is_cacheable_sql(sql)) {
+    state->clear_statement_cache_locked();
+    return execute_statement(state->db, sql, std::move(params));
+  }
+  auto stmt = prepare_cached_statement(state, sql);
+  if (nebula::rt::result_is_err(stmt)) {
+    return err_result<std::int64_t>(nebula::rt::result_err_ref(stmt));
+  }
+  sqlite3_stmt* raw = nebula::rt::result_ok_ref(stmt);
+  auto bound = bind_params(raw, std::move(params));
+  if (nebula::rt::result_is_err(bound)) {
+    return err_result<std::int64_t>(nebula::rt::result_err_ref(bound));
+  }
+  const int rc = sqlite_api().step(raw);
+  if (rc == kSqliteRow) {
+    return err_result<std::int64_t>("sqlite execute returned rows; use query(...)");
+  }
+  if (rc != kSqliteDone) {
+    return err_result<std::int64_t>(sqlite_error_message(state->db, "step statement"));
+  }
+  return nebula::rt::ok_result<std::int64_t>(sqlite_api().changes64(state->db));
+}
+
+nebula::rt::Result<nebula::rt::SqliteResultSet, std::string> collect_query_rows(sqlite3* db,
+                                                                                 sqlite3_stmt* stmt) {
+  auto state = std::make_shared<nebula::rt::SqliteResultSetState>();
+  const int column_count = sqlite_api().column_count(stmt);
+  state->column_names.reserve(static_cast<std::size_t>(column_count));
+  state->column_index.reserve(static_cast<std::size_t>(column_count));
+  for (int i = 0; i < column_count; ++i) {
+    const char* name = sqlite_api().column_name(stmt, i);
+    std::string column_name = name == nullptr ? "" : std::string(name);
+    state->column_index.emplace(column_name, state->column_names.size());
+    state->column_names.push_back(std::move(column_name));
+  }
+  while (true) {
+    const int rc = sqlite_api().step(stmt);
+    if (rc == kSqliteDone) break;
+    if (rc != kSqliteRow) {
+      return err_result<nebula::rt::SqliteResultSet>(sqlite_error_message(db, "step query"));
+    }
+    nebula::rt::SqliteResultRowData row;
+    row.cells.reserve(static_cast<std::size_t>(column_count));
+    for (int i = 0; i < column_count; ++i) {
+      auto cell = read_cell(stmt, i);
+      if (nebula::rt::result_is_err(cell)) {
+        return err_result<nebula::rt::SqliteResultSet>(nebula::rt::result_err_ref(cell));
+      }
+      row.cells.push_back(std::move(nebula::rt::result_ok_ref(cell)));
+    }
+    state->rows.push_back(std::move(row));
+  }
+  return nebula::rt::ok_result(nebula::rt::SqliteResultSet{std::move(state)});
+}
+
 nebula::rt::Result<nebula::rt::SqliteResultSet, std::string> query_statement(sqlite3* db,
                                                                               std::string_view sql,
                                                                               nebula::rt::JsonValue params) {
@@ -411,31 +540,31 @@ nebula::rt::Result<nebula::rt::SqliteResultSet, std::string> query_statement(sql
   if (nebula::rt::result_is_err(bound)) {
     return err_result<nebula::rt::SqliteResultSet>(nebula::rt::result_err_ref(bound));
   }
+  return collect_query_rows(db, nebula::rt::result_ok_ref(stmt).get());
+}
 
-  auto state = std::make_shared<nebula::rt::SqliteResultSetState>();
-  while (true) {
-    const int rc = sqlite_api().step(nebula::rt::result_ok_ref(stmt).get());
-    if (rc == kSqliteDone) break;
-    if (rc != kSqliteRow) {
-      return err_result<nebula::rt::SqliteResultSet>(sqlite_error_message(db, "step query"));
-    }
-    nebula::rt::SqliteResultRowData row;
-    const int column_count = sqlite_api().column_count(nebula::rt::result_ok_ref(stmt).get());
-    row.columns.reserve(static_cast<std::size_t>(column_count));
-    for (int i = 0; i < column_count; ++i) {
-      auto cell = read_cell(nebula::rt::result_ok_ref(stmt).get(), i);
-      if (nebula::rt::result_is_err(cell)) {
-        return err_result<nebula::rt::SqliteResultSet>(nebula::rt::result_err_ref(cell));
-      }
-      nebula::rt::SqliteColumnValue column;
-      const char* name = sqlite_api().column_name(nebula::rt::result_ok_ref(stmt).get(), i);
-      column.name = name == nullptr ? "" : std::string(name);
-      column.value = std::move(nebula::rt::result_ok_ref(cell));
-      row.columns.push_back(std::move(column));
-    }
-    state->rows.push_back(std::move(row));
+nebula::rt::Result<nebula::rt::SqliteResultSet, std::string> query_cached_statement(
+    const std::shared_ptr<nebula::rt::SqliteConnectionState>& state,
+    std::string_view sql,
+    nebula::rt::JsonValue params) {
+  if (state == nullptr || state->db == nullptr) {
+    return err_result<nebula::rt::SqliteResultSet>("sqlite connection is closed");
   }
-  return nebula::rt::ok_result(nebula::rt::SqliteResultSet{std::move(state)});
+  std::lock_guard<std::mutex> lock(state->statement_mutex);
+  if (!is_cacheable_sql(sql)) {
+    state->clear_statement_cache_locked();
+    return query_statement(state->db, sql, std::move(params));
+  }
+  auto stmt = prepare_cached_statement(state, sql);
+  if (nebula::rt::result_is_err(stmt)) {
+    return err_result<nebula::rt::SqliteResultSet>(nebula::rt::result_err_ref(stmt));
+  }
+  sqlite3_stmt* raw = nebula::rt::result_ok_ref(stmt);
+  auto bound = bind_params(raw, std::move(params));
+  if (nebula::rt::result_is_err(bound)) {
+    return err_result<nebula::rt::SqliteResultSet>(nebula::rt::result_err_ref(bound));
+  }
+  return collect_query_rows(state->db, raw);
 }
 
 const nebula::rt::SqliteResultRowData* require_row(const nebula::rt::SqliteRow& row, std::string& error) {
@@ -451,15 +580,28 @@ const nebula::rt::SqliteResultRowData* require_row(const nebula::rt::SqliteRow& 
 }
 
 const nebula::rt::SqliteCell* find_cell(const nebula::rt::SqliteRow& row,
-                                        std::string_view column,
+                                        const std::string& column,
                                         std::string& error) {
   const auto* row_data = require_row(row, error);
   if (row_data == nullptr) return nullptr;
-  for (const auto& value : row_data->columns) {
-    if (value.name == column) return &value.value;
+  auto index = row.state->column_index.find(column);
+  if (index != row.state->column_index.end() && index->second < row_data->cells.size()) {
+    return &row_data->cells[index->second];
   }
-  error = "sqlite column not found: " + std::string(column);
+  error = "sqlite column not found: " + column;
   return nullptr;
+}
+
+const nebula::rt::SqliteCell* cell_at(const nebula::rt::SqliteRow& row,
+                                      std::int64_t index,
+                                      std::string& error) {
+  const auto* row_data = require_row(row, error);
+  if (row_data == nullptr) return nullptr;
+  if (index < 0 || static_cast<std::size_t>(index) >= row_data->cells.size()) {
+    error = "sqlite column index is out of range";
+    return nullptr;
+  }
+  return &row_data->cells[static_cast<std::size_t>(index)];
 }
 
 nebula::rt::Result<std::int64_t, std::string> current_schema_version(sqlite3* db) {
@@ -644,7 +786,23 @@ sqlite3* require_connection_db(const nebula::rt::SqliteConnection& self, std::st
   return self.state->db;
 }
 
-sqlite3* require_transaction_db(const nebula::rt::SqliteTransaction& self, std::string& error) {
+std::shared_ptr<nebula::rt::SqliteConnectionState> require_connection_state(
+    const nebula::rt::SqliteConnection& self,
+    std::string& error) {
+  if (self.state == nullptr) {
+    error = "sqlite connection is uninitialized";
+    return nullptr;
+  }
+  if (self.state->db == nullptr) {
+    error = "sqlite connection is closed";
+    return nullptr;
+  }
+  return self.state;
+}
+
+std::shared_ptr<nebula::rt::SqliteConnectionState> require_transaction_connection_state(
+    const nebula::rt::SqliteTransaction& self,
+    std::string& error) {
   if (self.state == nullptr || self.state->connection == nullptr) {
     error = "sqlite transaction is uninitialized";
     return nullptr;
@@ -657,7 +815,7 @@ sqlite3* require_transaction_db(const nebula::rt::SqliteTransaction& self, std::
     error = "sqlite transaction is inactive";
     return nullptr;
   }
-  return self.state->connection->db;
+  return self.state->connection;
 }
 
 } // namespace
@@ -673,6 +831,8 @@ nebula::rt::Result<nebula::rt::SqliteConnection, std::string> __nebula_sqlite_op
 nebula::rt::Result<void, std::string> __nebula_sqlite_connection_close(nebula::rt::SqliteConnection self) {
   if (self.state == nullptr) return err_void_result("sqlite connection is uninitialized");
   if (self.state->db != nullptr) {
+    std::lock_guard<std::mutex> lock(self.state->statement_mutex);
+    self.state->clear_statement_cache_locked();
     sqlite_api().close_v2(self.state->db);
     self.state->db = nullptr;
   }
@@ -700,9 +860,9 @@ __nebula_sqlite_connection_execute(nebula::rt::SqliteConnection self,
                                    std::string sql,
                                    nebula::rt::JsonValue params) {
   std::string error;
-  auto* db = require_connection_db(self, error);
-  if (db == nullptr) return err_result<std::int64_t>(std::move(error));
-  return execute_statement(db, sql, std::move(params));
+  auto state = require_connection_state(self, error);
+  if (state == nullptr) return err_result<std::int64_t>(std::move(error));
+  return execute_cached_statement(state, sql, std::move(params));
 }
 
 nebula::rt::Result<nebula::rt::SqliteResultSet, std::string>
@@ -710,9 +870,9 @@ __nebula_sqlite_connection_query(nebula::rt::SqliteConnection self,
                                  std::string sql,
                                  nebula::rt::JsonValue params) {
   std::string error;
-  auto* db = require_connection_db(self, error);
-  if (db == nullptr) return err_result<nebula::rt::SqliteResultSet>(std::move(error));
-  return query_statement(db, sql, std::move(params));
+  auto state = require_connection_state(self, error);
+  if (state == nullptr) return err_result<nebula::rt::SqliteResultSet>(std::move(error));
+  return query_cached_statement(state, sql, std::move(params));
 }
 
 nebula::rt::Result<std::int64_t, std::string>
@@ -773,9 +933,9 @@ __nebula_sqlite_transaction_execute(nebula::rt::SqliteTransaction self,
                                     std::string sql,
                                     nebula::rt::JsonValue params) {
   std::string error;
-  auto* db = require_transaction_db(self, error);
-  if (db == nullptr) return err_result<std::int64_t>(std::move(error));
-  return execute_statement(db, sql, std::move(params));
+  auto state = require_transaction_connection_state(self, error);
+  if (state == nullptr) return err_result<std::int64_t>(std::move(error));
+  return execute_cached_statement(state, sql, std::move(params));
 }
 
 nebula::rt::Result<nebula::rt::SqliteResultSet, std::string>
@@ -783,16 +943,17 @@ __nebula_sqlite_transaction_query(nebula::rt::SqliteTransaction self,
                                   std::string sql,
                                   nebula::rt::JsonValue params) {
   std::string error;
-  auto* db = require_transaction_db(self, error);
-  if (db == nullptr) return err_result<nebula::rt::SqliteResultSet>(std::move(error));
-  return query_statement(db, sql, std::move(params));
+  auto state = require_transaction_connection_state(self, error);
+  if (state == nullptr) return err_result<nebula::rt::SqliteResultSet>(std::move(error));
+  return query_cached_statement(state, sql, std::move(params));
 }
 
 nebula::rt::Result<void, std::string> __nebula_sqlite_transaction_commit(nebula::rt::SqliteTransaction self) {
   std::string error;
-  auto* db = require_transaction_db(self, error);
-  if (db == nullptr) return err_void_result(std::move(error));
-  auto committed = exec_sql(db, "COMMIT;");
+  auto state = require_transaction_connection_state(self, error);
+  if (state == nullptr) return err_void_result(std::move(error));
+  std::lock_guard<std::mutex> lock(state->statement_mutex);
+  auto committed = exec_sql(state->db, "COMMIT;");
   if (nebula::rt::result_is_err(committed)) {
     return committed;
   }
@@ -802,9 +963,10 @@ nebula::rt::Result<void, std::string> __nebula_sqlite_transaction_commit(nebula:
 
 nebula::rt::Result<void, std::string> __nebula_sqlite_transaction_rollback(nebula::rt::SqliteTransaction self) {
   std::string error;
-  auto* db = require_transaction_db(self, error);
-  if (db == nullptr) return err_void_result(std::move(error));
-  auto rolled_back = exec_sql(db, "ROLLBACK;");
+  auto state = require_transaction_connection_state(self, error);
+  if (state == nullptr) return err_void_result(std::move(error));
+  std::lock_guard<std::mutex> lock(state->statement_mutex);
+  auto rolled_back = exec_sql(state->db, "ROLLBACK;");
   if (nebula::rt::result_is_err(rolled_back)) {
     return rolled_back;
   }
@@ -885,6 +1047,73 @@ nebula::rt::Result<nebula::rt::Bytes, std::string> __nebula_sqlite_row_get_bytes
                                                                                    std::string column) {
   std::string error;
   const auto* cell = find_cell(self, column, error);
+  if (cell == nullptr) return err_result<nebula::rt::Bytes>(std::move(error));
+  if (cell->kind != nebula::rt::SqliteCell::Kind::Blob) {
+    return err_result<nebula::rt::Bytes>("sqlite column is not a blob value");
+  }
+  return nebula::rt::ok_result(cell->bytes_value);
+}
+
+nebula::rt::Result<std::string, std::string> __nebula_sqlite_row_get_string_at(nebula::rt::SqliteRow self,
+                                                                                std::int64_t index) {
+  std::string error;
+  const auto* cell = cell_at(self, index, error);
+  if (cell == nullptr) return err_result<std::string>(std::move(error));
+  if (cell->kind != nebula::rt::SqliteCell::Kind::Text) {
+    return err_result<std::string>("sqlite column is not a string/text value");
+  }
+  return nebula::rt::ok_result(cell->text_value);
+}
+
+nebula::rt::Result<std::int64_t, std::string> __nebula_sqlite_row_get_int_at(nebula::rt::SqliteRow self,
+                                                                              std::int64_t index) {
+  std::string error;
+  const auto* cell = cell_at(self, index, error);
+  if (cell == nullptr) return err_result<std::int64_t>(std::move(error));
+  if (cell->kind != nebula::rt::SqliteCell::Kind::Int) {
+    return err_result<std::int64_t>("sqlite column is not an int value");
+  }
+  return nebula::rt::ok_result<std::int64_t>(cell->int_value);
+}
+
+nebula::rt::Result<bool, std::string> __nebula_sqlite_row_get_bool_at(nebula::rt::SqliteRow self,
+                                                                       std::int64_t index) {
+  std::string error;
+  const auto* cell = cell_at(self, index, error);
+  if (cell == nullptr) return err_result<bool>(std::move(error));
+  if (cell->kind == nebula::rt::SqliteCell::Kind::Int) {
+    if (cell->int_value == 0) return nebula::rt::ok_result(false);
+    if (cell->int_value == 1) return nebula::rt::ok_result(true);
+  }
+  if (cell->kind == nebula::rt::SqliteCell::Kind::Text) {
+    if (cell->text_value == "false") return nebula::rt::ok_result(false);
+    if (cell->text_value == "true") return nebula::rt::ok_result(true);
+  }
+  return err_result<bool>("sqlite column is not a bool-compatible value");
+}
+
+nebula::rt::Result<nebula::rt::JsonValue, std::string> __nebula_sqlite_row_get_json_at(
+    nebula::rt::SqliteRow self,
+    std::int64_t index) {
+  std::string error;
+  const auto* cell = cell_at(self, index, error);
+  if (cell == nullptr) return err_result<nebula::rt::JsonValue>(std::move(error));
+  if (cell->kind == nebula::rt::SqliteCell::Kind::Text) {
+    return nebula::rt::json_parse(cell->text_value);
+  }
+  if (cell->kind == nebula::rt::SqliteCell::Kind::Int) {
+    return nebula::rt::ok_result(nebula::rt::json_int_value(cell->int_value));
+  }
+  if (cell->kind == nebula::rt::SqliteCell::Kind::Null) {
+    return nebula::rt::ok_result(nebula::rt::json_null_value());
+  }
+  return err_result<nebula::rt::JsonValue>("sqlite column is not a json-compatible value");
+}
+
+nebula::rt::Result<nebula::rt::Bytes, std::string> __nebula_sqlite_row_get_bytes_at(nebula::rt::SqliteRow self,
+                                                                                     std::int64_t index) {
+  std::string error;
+  const auto* cell = cell_at(self, index, error);
   if (cell == nullptr) return err_result<nebula::rt::Bytes>(std::move(error));
   if (cell->kind != nebula::rt::SqliteCell::Kind::Blob) {
     return err_result<nebula::rt::Bytes>("sqlite column is not a blob value");

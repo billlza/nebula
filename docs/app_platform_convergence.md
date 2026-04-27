@@ -90,6 +90,11 @@ Current convergence work should anchor to one real sample per important lane:
     claiming renderer or GUI ownership
 - `examples/local_ops_console_ui`
   - first Nebula UI preview slice: `ui` / `view` syntax lowered to semantic JSON IR
+- `examples/thin_host_gui_host_shell`
+  - first thin-host GUI host-shell pilot: a deterministic C++ host decodes Nebula UI IR, dispatches
+    stable action ids into `thin-host-bridge.command.v1`, and receives versioned events/snapshots
+    with preview lifecycle/accessibility, app-bundle manifest staging, update-checksum, and
+    crash/telemetry correlation coverage, without claiming native renderer ownership
 - `official/nebula-db-sqlite`
   - the first official embedded-data package for backend-first internal apps
 - `official/nebula-auth`
@@ -104,8 +109,11 @@ Current convergence work should anchor to one real sample per important lane:
   - the first official jobs/workflow kernel package; currently limited to DAG validation,
     SQLite-first runs, worker leases, idempotent receipts, and durable outbox preview helpers
 - `official/nebula-ui`
-  - preview semantic UI package; includes a headless adapter plus guarded AppKit/GTK minimal-window
-    smoke sources, but not mature native adapter parity
+  - preview semantic UI package; includes `nebula-ui.tree.v1` validation, a headless adapter,
+    lookup-only action dispatch, lifecycle/accessibility preview summaries, and guarded AppKit/GTK
+    minimal-window smoke sources. The GPU-renderer preview adds deterministic layout,
+    `nebula-ui.render-list.v1` display commands, hit-test/action indexing, `ui.patch.v1` smoke
+    diffs, and a guarded macOS Metal submit smoke, but not mature native adapter parity
 - `benchmarks/backend_crypto`
   - the current narrow competitive hot-path matrix
 - `docs/universeos_convergence.md`
@@ -143,9 +151,11 @@ The UI/native direction now has two explicitly separated lanes:
 - Nebula owns app state, transitions, validation, and compact view-model snapshots
 - the host owns rendering, navigation, accessibility, design system, and platform integration
 
-Nebula UI V1 owns source syntax, semantic view-tree IR, a headless adapter, and minimal guarded
-AppKit/GTK smoke sources. It does not yet own a mature renderer, animation system, native
-accessibility stack, AppKit/GTK adapter parity, or distribution pipeline.
+Nebula UI V1 owns source syntax, semantic view-tree IR validation, a headless adapter, lookup-only
+action dispatch, required `Input.accessibility_label`, preview lifecycle/accessibility summaries,
+minimal guarded AppKit/GTK smoke sources, and thin-host packaging/update fixtures. It does not yet
+own a mature renderer, animation system, native accessibility stack, AppKit/GTK adapter parity, or
+distribution pipeline.
 
 This wave should stabilize:
 

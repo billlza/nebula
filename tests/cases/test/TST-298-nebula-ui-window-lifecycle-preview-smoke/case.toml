@@ -1,0 +1,106 @@
+id = "TST-298-nebula-ui-window-lifecycle-preview-smoke"
+suite = "test"
+description = "thin-host GUI preview exposes lifecycle, accessibility, packaging, and update contract markers"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_gui_host_shell"
+work = Path("work/nebula_ui_window_lifecycle")
+shutil.rmtree(work, ignore_errors=True)
+work.mkdir(parents=True, exist_ok=True)
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"thin-host GUI shell check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, check=True)
+for marker in (
+    "nebula-ui-window-lifecycle=boot",
+    "nebula-ui-window-lifecycle=window-created",
+    "nebula-ui-window-lifecycle=window-shown",
+    "nebula-ui-window-lifecycle=window-focused",
+    "nebula-ui-window-lifecycle=rendered",
+    "nebula-ui-window-lifecycle=close-requested",
+    "nebula-ui-window-lifecycle=closed",
+    "nebula-ui-accessibility-node=role:window;name:Local Ops Shell",
+    "nebula-ui-accessibility-node=role:textbox;name:Filter targets;action:targets.filter",
+    "nebula-ui-accessibility-node=role:button;name:Refresh;action:targets.refresh",
+):
+    if marker not in run.stdout:
+        raise SystemExit(f"missing lifecycle/accessibility marker {marker!r}: {run.stdout!r}")
+
+probe = work / "lifecycle_probe.cpp"
+probe.write_text(r'''
+#include "ui_tree_preview.hpp"
+
+#include <iostream>
+
+int main() {
+  auto closed = nebula::ui::adapter_preview::host_shell_lifecycle_summary(true);
+  std::string error;
+  if (!nebula::ui::adapter_preview::validate_lifecycle_order(closed, &error)) {
+    std::cerr << error << "\\n";
+    return 2;
+  }
+  nebula::ui::adapter_preview::WindowLifecycleSummary bad;
+  bad.events = {"boot", "closed", "resize"};
+  if (nebula::ui::adapter_preview::validate_lifecycle_order(bad, &error)) {
+    std::cerr << "bad lifecycle unexpectedly accepted\\n";
+    return 3;
+  }
+  nebula::ui::adapter_preview::append_lifecycle_summary(std::cout, closed);
+  return 0;
+}
+''', encoding="utf-8")
+compiler = os.environ.get("CXX") or shutil.which("c++") or shutil.which("clang++") or "c++"
+out = work / "lifecycle_probe"
+subprocess.run([
+    compiler,
+    "-std=c++20",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-I", str(repo / "official" / "nebula-ui" / "adapters" / "common"),
+    "-iquote", str(repo),
+    str(probe),
+    "-o", str(out),
+], check=True)
+probe_run = subprocess.run([str(out)], capture_output=True, text=True, check=True)
+if "nebula-ui-window-lifecycle=closed" not in probe_run.stdout:
+    raise SystemExit(f"lifecycle probe did not emit closed marker: {probe_run.stdout!r}")
+
+plist = (app / "deploy" / "macos" / "Info.plist.example").read_text(encoding="utf-8")
+desktop = (app / "deploy" / "linux" / "dev.nebula.thin-host-gui-host-shell.desktop.example").read_text(encoding="utf-8")
+manifest = json.loads((app / "deploy" / "update" / "manifest.preview.json").read_text(encoding="utf-8"))
+for fragment in (
+    "dev.nebula.thin-host-gui-host-shell.preview",
+    "thin-host-shell.preview.v1",
+):
+    if fragment not in plist:
+        raise SystemExit(f"macOS preview plist missing {fragment!r}")
+    if fragment not in desktop:
+        raise SystemExit(f"Linux desktop preview file missing {fragment!r}")
+if manifest.get("schema") != "nebula.thin-host.update-manifest.preview.v1":
+    raise SystemExit(f"bad update manifest schema: {manifest!r}")
+if manifest.get("channel") != "preview" or manifest.get("min_host_api") != "thin-host-shell.preview.v1":
+    raise SystemExit(f"bad update manifest preview fields: {manifest!r}")
+assets = manifest.get("assets")
+if not isinstance(assets, list) or not assets or len(assets[0].get("sha256", "")) != 64:
+    raise SystemExit(f"bad update manifest assets: {manifest!r}")
+
+print("nebula-ui-window-lifecycle-preview-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["nebula-ui-window-lifecycle-preview-ok"]

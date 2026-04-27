@@ -50,8 +50,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-pqc-protocols"
 resolved_rev = ""
 manifest_hash = "863e088e1a08c455"
-source_fingerprint = "55e72b27bfab4d7c"
-integrity_fingerprint = "a1f5d21a114d6096"
+source_fingerprint = "f5e7a71c78d4ec2"
+integrity_fingerprint = "5e2308357be3b10e"
 is_root = 0
 dependencies = ["crypto=nebula-crypto"]
 

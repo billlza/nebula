@@ -220,7 +220,8 @@ inline SqliteDb open_catalog() {
   cleanup_db_files();
   sqlite3* raw = nullptr;
   const std::string path = db_path().string();
-  const int rc = sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
+  const int rc =
+      sqlite3_open_v2(path.c_str(), &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
   if (rc != SQLITE_OK) {
     const std::string message = raw != nullptr ? sqlite3_errmsg(raw) : "unknown sqlite open failure";
     if (raw != nullptr) {

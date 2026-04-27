@@ -1,0 +1,232 @@
+module etsi014
+import std::bytes
+import std::http
+import std::http_json
+import std::json
+import std::result
+import types
+
+struct StatusIds {
+  source_kme_id: String
+  target_kme_id: String
+  master_sae_id: String
+  slave_sae_id: String
+}
+
+struct StatusLimits {
+  key_size_bits: Int
+  stored_key_count: Int
+  max_key_count: Int
+  max_key_per_request: Int
+  max_key_size_bits: Int
+}
+
+fn etsi_path(peer_sae_id: String, suffix: String) -> String {
+  return qkd_text_concat3("/api/v1/keys/", peer_sae_id, suffix)
+}
+
+fn status_path(peer_sae_id: String) -> String {
+  return etsi_path(peer_sae_id, "/status")
+}
+
+fn enc_keys_path(peer_sae_id: String) -> String {
+  return etsi_path(peer_sae_id, "/enc_keys")
+}
+
+fn dec_keys_path(peer_sae_id: String) -> String {
+  return etsi_path(peer_sae_id, "/dec_keys")
+}
+
+fn status_request(authority: String, peer_sae_id: String) -> ClientRequest {
+  return get_request(authority, status_path(peer_sae_id))
+}
+
+fn enc_keys_request(authority: String, peer_sae_id: String, request_value: QkdKeyRequest) -> ClientRequest {
+  return post_request(authority,
+                      enc_keys_path(peer_sae_id),
+                      "application/json; charset=utf-8",
+                      from_string(stringify(request_value.as_json())))
+}
+
+fn dec_keys_request(authority: String, peer_sae_id: String, request_value: QkdKeyIdRequest) -> ClientRequest {
+  return post_request(authority,
+                      dec_keys_path(peer_sae_id),
+                      "application/json; charset=utf-8",
+                      from_string(stringify(request_value.as_json())))
+}
+
+fn response_http_error(response: ClientResponse) -> QkdProviderError {
+  return qkd_http_error("kme_http_error",
+                        response.status,
+                        qkd_text_concat("QKD KME returned non-200 response", ""))
+}
+
+fn qkd_get_string(value: Json, key: String) -> Result<String, QkdProviderError> {
+  match get_string(value, key) {
+    Ok(text) => { return Ok(text) }
+    Err(msg) => { return Err(qkd_error("malformed_kme_json", msg)) }
+  }
+}
+
+fn qkd_get_int(value: Json, key: String) -> Result<Int, QkdProviderError> {
+  match get_int(value, key) {
+    Ok(number) => { return Ok(number) }
+    Err(msg) => { return Err(qkd_error("malformed_kme_json", msg)) }
+  }
+}
+
+fn qkd_get_value(value: Json, key: String) -> Result<Json, QkdProviderError> {
+  match get_value(value, key) {
+    Ok(child) => { return Ok(child) }
+    Err(msg) => { return Err(qkd_error("malformed_kme_json", msg)) }
+  }
+}
+
+fn qkd_array_len(value: Json, label: String) -> Result<Int, QkdProviderError> {
+  match array_len(value) {
+    Ok(count) => { return Ok(count) }
+    Err(_) => { return Err(qkd_error("malformed_kme_json", qkd_text_concat(label, " must be an array"))) }
+  }
+}
+
+fn qkd_array_get(value: Json, index: Int) -> Result<Json, QkdProviderError> {
+  match array_get(value, index) {
+    Ok(child) => { return Ok(child) }
+    Err(msg) => { return Err(qkd_error("malformed_kme_json", msg)) }
+  }
+}
+
+fn parse_body_json(body: Bytes) -> Result<Json, QkdProviderError> {
+  match parse_json_body(body) {
+    Ok(value) => { return Ok(value) }
+    Err(msg) => { return Err(qkd_error("malformed_kme_json", msg)) }
+  }
+}
+
+fn status_key_size(value: Json) -> Result<Int, QkdProviderError> {
+  let key_size = qkd_get_int(value, "key_size")?
+  if key_size <= 0 {
+    return Err(qkd_error("malformed_kme_status", "key_size must be positive"))
+  }
+  return Ok(key_size)
+}
+
+fn status_ids_from_json(value: Json) -> Result<StatusIds, QkdProviderError> {
+  return Ok(StatusIds(qkd_get_string(value, "source_KME_ID")?,
+                      qkd_get_string(value, "target_KME_ID")?,
+                      qkd_get_string(value, "master_SAE_ID")?,
+                      qkd_get_string(value, "slave_SAE_ID")?))
+}
+
+fn status_limits_from_json(value: Json) -> Result<StatusLimits, QkdProviderError> {
+  return Ok(StatusLimits(status_key_size(value)?,
+                         qkd_get_int(value, "stored_key_count")?,
+                         qkd_get_int(value, "max_key_count")?,
+                         qkd_get_int(value, "max_key_per_request")?,
+                         qkd_get_int(value, "max_key_size")?))
+}
+
+fn status_from_json(value: Json) -> Result<QkdStatus, QkdProviderError> {
+  let ids = status_ids_from_json(value)?
+  let limits = status_limits_from_json(value)?
+  return Ok(QkdStatus(ids.source_kme_id,
+                      ids.target_kme_id,
+                      ids.master_sae_id,
+                      ids.slave_sae_id,
+                      limits.key_size_bits,
+                      limits.stored_key_count,
+                      limits.max_key_count,
+                      limits.max_key_per_request,
+                      limits.max_key_size_bits))
+}
+
+fn status_from_response(response: ClientResponse) -> Result<QkdStatus, QkdProviderError> {
+  if response.status != 200 {
+    return Err(response_http_error(response))
+  }
+  return status_from_json(parse_body_json(response.body)?)
+}
+
+fn key_from_json(value: Json) -> Result<QkdKey, QkdProviderError> {
+  let key_id = qkd_get_string(value, "key_ID")?
+  if key_id == "" {
+    return Err(qkd_error("malformed_kme_key", "key_ID must be non-empty"))
+  }
+  let key_material = qkd_get_string(value, "key")?
+  if key_material == "" {
+    return Err(qkd_error("malformed_kme_key", "key material must be non-empty"))
+  }
+  return Ok(QkdKey(key_id, key_material, key_size_from_json(value), source_from_json(value)))
+}
+
+fn key_size_from_json(value: Json) -> Int {
+  match get_int(value, "key_size") {
+    Ok(size) => { return size }
+    Err(_) => { return 0 }
+  }
+}
+
+fn source_from_json(value: Json) -> String {
+  match get_string(value, "source") {
+    Ok(source) => { return source }
+    Err(_) => { return "kme" }
+  }
+}
+
+fn validate_key_array(keys: Json) -> Result<Int, QkdProviderError> {
+  let count = qkd_array_len(keys, "keys")?
+  if count <= 0 {
+    return Err(qkd_error("malformed_kme_key_container", "keys must not be empty"))
+  }
+  let index = 0
+  while index < count {
+    key_from_json(qkd_array_get(keys, index)?)?
+    index += 1
+  }
+  return Ok(count)
+}
+
+fn key_batch_from_json(peer_sae_id: String, value: Json) -> Result<QkdKeyBatch, QkdProviderError> {
+  let keys = qkd_get_value(value, "keys")?
+  let count = validate_key_array(keys)?
+  return Ok(QkdKeyBatch(peer_sae_id, count, keys))
+}
+
+fn key_batch_from_response(peer_sae_id: String, response: ClientResponse) -> Result<QkdKeyBatch, QkdProviderError> {
+  if response.status != 200 {
+    return Err(response_http_error(response))
+  }
+  return key_batch_from_json(peer_sae_id, parse_body_json(response.body)?)
+}
+
+fn QkdKeyBatch_key_at(self: QkdKeyBatch, index: Int) -> Result<QkdKey, QkdProviderError> {
+  return key_from_json(qkd_array_get(self.keys, index)?)
+}
+
+fn key_id_text_at(key_ids: Json, index: Int) -> Result<String, QkdProviderError> {
+  let item = qkd_array_get(key_ids, index)?
+  let key_id = qkd_get_string(item, "key_ID")?
+  if key_id == "" {
+    return Err(qkd_error("malformed_key_id_request", "key_ID must be non-empty"))
+  }
+  return Ok(key_id)
+}
+
+fn validate_key_id_array(key_ids: Json) -> Result<Int, QkdProviderError> {
+  let count = qkd_array_len(key_ids, "key_IDs")?
+  if count <= 0 {
+    return Err(qkd_error("malformed_key_id_request", "key_IDs must not be empty"))
+  }
+  let index = 0
+  while index < count {
+    key_id_text_at(key_ids, index)?
+    index += 1
+  }
+  return Ok(count)
+}
+
+fn key_id_request_from_json(value: Json) -> Result<QkdKeyIdRequest, QkdProviderError> {
+  let key_ids = qkd_get_value(value, "key_IDs")?
+  let count = validate_key_id_array(key_ids)?
+  return Ok(QkdKeyIdRequest(count, key_ids))
+}

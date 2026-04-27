@@ -1,0 +1,150 @@
+module types
+import std::bytes
+import std::json
+
+struct QkdProviderConfig {
+  kme_base_url: String
+  kme_authority: String
+  kme_port: Int
+  local_sae_id: String
+  peer_sae_id: String
+  use_tls: Bool
+  request_count: Int
+  key_size_bits: Int
+}
+
+struct QkdKmeTarget {
+  scheme: String
+  host: String
+  port: Int
+  authority: String
+  full_path: String
+}
+
+struct QkdMtlsConfig {
+  ca_pem: String
+  client_certificate_pem: String
+  client_private_key_pem: String
+}
+
+struct QkdStatus {
+  source_kme_id: String
+  target_kme_id: String
+  master_sae_id: String
+  slave_sae_id: String
+  key_size_bits: Int
+  stored_key_count: Int
+  max_key_count: Int
+  max_key_per_request: Int
+  max_key_size_bits: Int
+}
+
+struct QkdKey {
+  key_id: String
+  key: String
+  key_size_bits: Int
+  source: String
+}
+
+struct QkdKeyBatch {
+  peer_sae_id: String
+  key_count: Int
+  keys: Json
+}
+
+struct QkdKeyRequest {
+  number: Int
+  size_bits: Int
+}
+
+struct QkdKeyIdRequest {
+  key_count: Int
+  key_ids: Json
+}
+
+struct QkdProviderError {
+  code: String
+  message: String
+  http_status: Int
+}
+
+fn qkd_text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn qkd_text_concat3(first: String, second: String, third: String) -> String {
+  return qkd_text_concat(first, qkd_text_concat(second, third))
+}
+
+fn qkd_error(code: String, message: String) -> QkdProviderError {
+  return QkdProviderError(code, message, 0)
+}
+
+fn qkd_http_error(code: String, status: Int, message: String) -> QkdProviderError {
+  return QkdProviderError(code, message, status)
+}
+
+fn QkdProviderError_as_json(self: QkdProviderError) -> Json {
+  return object3("code",
+                 string_value(self.code),
+                 "message",
+                 string_value(self.message),
+                 "http_status",
+                 int_value(self.http_status))
+}
+
+fn QkdProviderError_text(self: QkdProviderError) -> String {
+  if self.http_status == 0 {
+    return qkd_text_concat3(self.code, ": ", self.message)
+  }
+  return qkd_text_concat3(self.code,
+                          ": ",
+                          qkd_text_concat3(self.message, " http_status=", stringify(int_value(self.http_status))))
+}
+
+fn qkd_key_request(number: Int, size_bits: Int) -> QkdKeyRequest {
+  return QkdKeyRequest(number, size_bits)
+}
+
+fn QkdKeyRequest_as_json(self: QkdKeyRequest) -> Json {
+  return object2("number", int_value(self.number), "size", int_value(self.size_bits))
+}
+
+fn qkd_key_id_request1(key_id: String) -> QkdKeyIdRequest {
+  let builder = array_builder()
+  let ids = array_build(array_push(builder, object1("key_ID", string_value(key_id))))
+  return QkdKeyIdRequest(1, ids)
+}
+
+fn QkdKeyIdRequest_as_json(self: QkdKeyIdRequest) -> Json {
+  return object1("key_IDs", self.key_ids)
+}
+
+fn QkdStatus_as_json(self: QkdStatus) -> Json {
+  return object9("source_KME_ID",
+                 string_value(self.source_kme_id),
+                 "target_KME_ID",
+                 string_value(self.target_kme_id),
+                 "master_SAE_ID",
+                 string_value(self.master_sae_id),
+                 "slave_SAE_ID",
+                 string_value(self.slave_sae_id),
+                 "key_size",
+                 int_value(self.key_size_bits),
+                 "stored_key_count",
+                 int_value(self.stored_key_count),
+                 "max_key_count",
+                 int_value(self.max_key_count),
+                 "max_key_per_request",
+                 int_value(self.max_key_per_request),
+                 "max_key_size",
+                 int_value(self.max_key_size_bits))
+}
+
+fn QkdKey_as_json(self: QkdKey) -> Json {
+  return object2("key_ID", string_value(self.key_id), "key", string_value(self.key))
+}
+
+fn QkdKeyBatch_as_json(self: QkdKeyBatch) -> Json {
+  return object1("keys", self.keys)
+}

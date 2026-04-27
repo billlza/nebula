@@ -21,6 +21,7 @@ using nebula::nir::Block;
 using nebula::nir::Expr;
 using nebula::nir::Function;
 using nebula::nir::Item;
+using nebula::nir::Param;
 using nebula::nir::PrefixKind;
 using nebula::nir::Program;
 using nebula::nir::Stmt;
@@ -311,6 +312,9 @@ static std::string cpp_type(const Ty& t) {
     if (matches_std_type(t, "http", "RouteParams3")) {
       return "nebula::rt::HttpRouteParams3";
     }
+    if (matches_std_type(t, "http", "RoutePattern")) {
+      return "nebula::rt::HttpRoutePattern";
+    }
     if (matches_std_type(t, "json", "Json")) {
       return "nebula::rt::JsonValue";
     }
@@ -377,6 +381,35 @@ static std::string cpp_decl(const Ty& t, const std::string& name, bool is_ref = 
   }
   os << ")";
   return os.str();
+}
+
+static bool block_reassigns_var(const Block& b, VarId target);
+
+static bool should_pass_param_by_const_ref(const Ty& t) {
+  switch (t.kind) {
+  case Ty::Kind::String:
+  case Ty::Kind::Struct:
+  case Ty::Kind::Enum: return true;
+  default: return false;
+  }
+}
+
+static std::string cpp_param_decl(const Function& fn, const Param& p) {
+  if (p.is_ref) return cpp_decl(p.ty, p.name, true);
+  if (fn.body.has_value() && block_reassigns_var(*fn.body, p.var)) {
+    return cpp_decl(p.ty, p.name, false);
+  }
+  if (!fn.is_async && should_pass_param_by_const_ref(p.ty)) {
+    return "const " + cpp_type(p.ty) + "& " + p.name;
+  }
+  return cpp_decl(p.ty, p.name, false);
+}
+
+static std::string ctor_field_init_expr(const Ty& t, const std::string& name) {
+  if (should_pass_param_by_const_ref(t)) {
+    return "std::move(" + name + ")";
+  }
+  return name;
 }
 
 static bool has_annotation(const std::vector<std::string>& ann, const std::string& x) {
@@ -564,7 +597,7 @@ static bool is_std_http_json_call(const Expr::Call& call, std::string_view local
 static bool is_std_http_call(const Expr::Call& call, std::string_view local_name) {
   const std::string target = nebula::nir::call_target_identity(call);
   return is_direct_std_call(call, "http", local_name) ||
-         target == ("std::http::" + std::string(local_name));
+         target == ("std::http::" + std::string(local_name)) || target == local_name;
 }
 
 static bool is_std_bytes_call(const Expr::Call& call, std::string_view local_name) {
@@ -617,6 +650,13 @@ static std::string emit_http_route_param1_fast(const EmitCtx& ctx,
          escape_string(route.suffix) + "\", (" + emit_expr(ctx, request_expr) + ").path)";
 }
 
+static std::string emit_http_route_param1_fast_path(const EmitCtx& ctx,
+                                                    const HttpSingleParamLiteralRoute& route,
+                                                    const Expr& path_expr) {
+  return "nebula::rt::http_route_param1_single_param(\"" + escape_string(route.prefix) + "\", \"" +
+         escape_string(route.suffix) + "\", " + emit_expr(ctx, path_expr) + ")";
+}
+
 static std::string emit_http_path_matches_fast(const EmitCtx& ctx,
                                                const HttpSingleParamLiteralRoute& route,
                                                const Expr& request_expr) {
@@ -624,10 +664,23 @@ static std::string emit_http_path_matches_fast(const EmitCtx& ctx,
          escape_string(route.suffix) + "\", (" + emit_expr(ctx, request_expr) + ").path)";
 }
 
+static std::string emit_http_path_matches_fast_path(const EmitCtx& ctx,
+                                                    const HttpSingleParamLiteralRoute& route,
+                                                    const Expr& path_expr) {
+  return "nebula::rt::http_path_matches_single_param(\"" + escape_string(route.prefix) + "\", \"" +
+         escape_string(route.suffix) + "\", " + emit_expr(ctx, path_expr) + ")";
+}
+
 static std::string emit_http_path_matches_exact(const EmitCtx& ctx,
                                                 const std::string& path,
                                                 const Expr& request_expr) {
   return "((" + emit_expr(ctx, request_expr) + ").path == \"" + escape_string(path) + "\")";
+}
+
+static std::string emit_http_path_matches_exact_path(const EmitCtx& ctx,
+                                                     const std::string& path,
+                                                     const Expr& path_expr) {
+  return "(" + emit_expr(ctx, path_expr) + " == \"" + escape_string(path) + "\")";
 }
 
 static std::string match_variant_cpp_type(const Ty& subject_ty, const std::string& variant_name) {
@@ -1095,6 +1148,21 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
               n.args.size() == 1) {
             return "nebula::rt::http_request_close_connection(" + emit_expr(ctx, *n.args[0]) + ")";
           }
+          if ((target == "__nebula_rt_http_route_param1" || n.callee == "__nebula_rt_http_route_param1") &&
+              n.args.size() == 2) {
+            if (auto route = single_param_route_literal(*n.args[0]); route.has_value()) {
+              return emit_http_route_param1_fast_path(ctx, *route, *n.args[1]);
+            }
+          }
+          if ((target == "__nebula_rt_http_path_matches" || n.callee == "__nebula_rt_http_path_matches") &&
+              n.args.size() == 2) {
+            if (auto path = exact_route_literal(*n.args[0]); path.has_value()) {
+              return emit_http_path_matches_exact_path(ctx, *path, *n.args[1]);
+            }
+            if (auto route = single_param_route_literal(*n.args[0]); route.has_value()) {
+              return emit_http_path_matches_fast_path(ctx, *route, *n.args[1]);
+            }
+          }
           if (is_std_http_call(n, "route_param1") && n.args.size() == 2) {
             if (auto route = single_param_route_literal(*n.args[0]); route.has_value()) {
               return emit_http_route_param1_fast(ctx, *route, *n.args[1]);
@@ -1294,6 +1362,8 @@ static bool stmt_reassigns_var(const Stmt& s, VarId target) {
         using S = std::decay_t<decltype(st)>;
         if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
           return st.var == target;
+        } else if constexpr (std::is_same_v<S, Stmt::AssignField>) {
+          return st.base_var == target;
         } else if constexpr (std::is_same_v<S, Stmt::If>) {
           return block_reassigns_var(st.then_body, target) ||
                  (st.else_body.has_value() && block_reassigns_var(*st.else_body, target));
@@ -1637,7 +1707,8 @@ static void emit_struct_def(Cpp& out, const StructDef& s) {
        s.qualified_name.local_name == "ClientRequest" ||
        s.qualified_name.local_name == "ClientResponse" ||
        s.qualified_name.local_name == "RouteParams2" ||
-       s.qualified_name.local_name == "RouteParams3")) {
+       s.qualified_name.local_name == "RouteParams3" ||
+       s.qualified_name.local_name == "RoutePattern")) {
     return;
   }
   if (s.qualified_name.package_name == "std" && s.qualified_name.module_name == "json" &&
@@ -1674,7 +1745,7 @@ static void emit_struct_def(Cpp& out, const StructDef& s) {
     sig << ") : ";
     for (std::size_t i = 0; i < s.fields.size(); ++i) {
       if (i) sig << ", ";
-      sig << s.fields[i].name << "(" << s.fields[i].name << "_)";
+      sig << s.fields[i].name << "(" << ctor_field_init_expr(s.fields[i].ty, s.fields[i].name + "_") << ")";
       }
       sig << " {}";
     out.line(sig.str());
@@ -1910,7 +1981,7 @@ static void emit_function(Cpp& out,
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
     const auto& p = fn.params[i];
-    sig << cpp_decl(p.ty, p.name, p.is_ref);
+    sig << cpp_param_decl(fn, p);
   }
   sig << ") -> " << ret_cpp << " {";
   out.line(sig.str());
@@ -1964,7 +2035,7 @@ static void emit_function_forward_decl(Cpp& out,
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
     const auto& p = fn.params[i];
-    sig << cpp_decl(p.ty, p.name, p.is_ref);
+    sig << cpp_param_decl(fn, p);
   }
   sig << ") -> " << ret_cpp << ";";
   out.line(sig.str());
@@ -2052,6 +2123,7 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
   out.line("#include <iostream>");
   out.line("#include <memory>");
   out.line("#include <string>");
+  out.line("#include <utility>");
   out.line("#include <variant>");
   out.line("#include <vector>");
   out.blank();

@@ -58,6 +58,12 @@ void attach_preview_content(NSWindow* window, const nebula::ui::adapter_preview:
     [native_button setEnabled:NO];
     [stack addArrangedSubview:native_button];
   }
+  for (const auto& input : summary.inputs) {
+    std::string label = input.accessibility_label.empty() ? input.action : input.accessibility_label;
+    if (!input.value.empty()) label += ": " + input.value;
+    NSTextField* text = [NSTextField labelWithString:[NSString stringWithUTF8String:label.c_str()]];
+    [stack addArrangedSubview:text];
+  }
 
   NSView* content = [window contentView];
   [content addSubview:stack];
@@ -72,6 +78,12 @@ void attach_preview_content(NSWindow* window, const nebula::ui::adapter_preview:
 
 int main(int argc, char** argv) {
   auto summary = summary_from_args(argc, argv);
+  const auto lifecycle = nebula::ui::adapter_preview::host_shell_lifecycle_summary(false);
+  std::string lifecycle_error;
+  if (!nebula::ui::adapter_preview::validate_lifecycle_order(lifecycle, &lifecycle_error)) {
+    std::cerr << "nebula-ui-appkit-adapter-error: " << lifecycle_error << "\n";
+    return 2;
+  }
   auto dispatch_id = arg_value(argc, argv, "--smoke-dispatch-action");
   auto dispatch_result = nebula::ui::adapter_preview::ActionDispatchResult{};
   if (!dispatch_id.empty()) {
@@ -84,6 +96,7 @@ int main(int argc, char** argv) {
   if (has_arg(argc, argv, "--smoke")) {
     std::cout << "nebula-ui-appkit-adapter-ok\n";
     nebula::ui::adapter_preview::append_smoke_summary(std::cout, summary);
+    nebula::ui::adapter_preview::append_lifecycle_summary(std::cout, lifecycle);
     if (!dispatch_id.empty()) {
       nebula::ui::adapter_preview::append_dispatch_result(std::cout, dispatch_result);
     }

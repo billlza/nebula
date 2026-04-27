@@ -30,6 +30,11 @@ Current surface in this repo wave:
 - `Row_get_bool(self, column) -> Result<Bool, String>`
 - `Row_get_json(self, column) -> Result<Json, String>`
 - `Row_get_bytes(self, column) -> Result<Bytes, String>`
+- `Row_get_string_at(self, index) -> Result<String, String>`
+- `Row_get_int_at(self, index) -> Result<Int, String>`
+- `Row_get_bool_at(self, index) -> Result<Bool, String>`
+- `Row_get_json_at(self, index) -> Result<Json, String>`
+- `Row_get_bytes_at(self, index) -> Result<Bytes, String>`
 - `migration(version, name, sql) -> Json`
 - `no_params() -> Json`
 
@@ -62,6 +67,10 @@ Current guarantees for this package revision:
 - migration runner with version ordering, duplicate-version rejection, split migration slice support,
   and applied-history name checks
 - query result sets through explicit row getters instead of app-local JSON/sqlite seams
+- stable-column-order hot paths can use indexed row getters; name-based getters remain the clearer
+  default for general app code
+- connection-local prepared statement reuse for stable DML/query statements, while DDL and
+  migration paths clear cached statements before continuing
 - automatic database setup defaults aligned with the current internal-app path:
   - WAL journal mode
   - `synchronous=NORMAL`

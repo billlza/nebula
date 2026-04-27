@@ -49,6 +49,8 @@ struct RouteParams3 {
   third: String
 }
 
+struct RoutePattern {}
+
 extern fn __nebula_rt_http_read_request(self: TcpStream, max_header_bytes: Int, max_body_bytes: Int) -> Future<Result<Request, String>>
 extern fn __nebula_rt_http_header(request: Request, name: String) -> Result<String, String>
 extern fn __nebula_rt_http_header_unique(request: Request, name: String) -> Result<String, String>
@@ -58,6 +60,11 @@ extern fn __nebula_rt_http_path_matches(pattern: String, path: String) -> Bool
 extern fn __nebula_rt_http_route_param1(pattern: String, path: String) -> Result<String, String>
 extern fn __nebula_rt_http_route_params2(pattern: String, path: String) -> Result<RouteParams2, String>
 extern fn __nebula_rt_http_route_params3(pattern: String, path: String) -> Result<RouteParams3, String>
+extern fn __nebula_rt_http_compile_route(pattern: String) -> Result<RoutePattern, String>
+extern fn __nebula_rt_http_compiled_path_matches(route: RoutePattern, path: String) -> Bool
+extern fn __nebula_rt_http_compiled_route_param1(route: RoutePattern, path: String) -> Result<String, String>
+extern fn __nebula_rt_http_compiled_route_params2(route: RoutePattern, path: String) -> Result<RouteParams2, String>
+extern fn __nebula_rt_http_compiled_route_params3(route: RoutePattern, path: String) -> Result<RouteParams3, String>
 extern fn __nebula_rt_http_write_response(self: TcpStream, response: Response) -> Future<Result<Void, String>>
 extern fn __nebula_rt_http_write_response_with_connection(self: TcpStream,
                                                           response: Response,
@@ -366,6 +373,26 @@ fn route_params2(pattern: String, request: Request) -> Result<RouteParams2, Stri
 
 fn route_params3(pattern: String, request: Request) -> Result<RouteParams3, String> {
   return __nebula_rt_http_route_params3(pattern, request.path)
+}
+
+fn compile_route(pattern: String) -> Result<RoutePattern, String> {
+  return __nebula_rt_http_compile_route(pattern)
+}
+
+fn compiled_path_matches(route: RoutePattern, request: Request) -> Bool {
+  return __nebula_rt_http_compiled_path_matches(route, request.path)
+}
+
+fn compiled_route_param1(route: RoutePattern, request: Request) -> Result<String, String> {
+  return __nebula_rt_http_compiled_route_param1(route, request.path)
+}
+
+fn compiled_route_params2(route: RoutePattern, request: Request) -> Result<RouteParams2, String> {
+  return __nebula_rt_http_compiled_route_params2(route, request.path)
+}
+
+fn compiled_route_params3(route: RoutePattern, request: Request) -> Result<RouteParams3, String> {
+  return __nebula_rt_http_compiled_route_params3(route, request.path)
 }
 
 fn header_value(request: Request, name: String) -> Result<String, String> {

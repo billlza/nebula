@@ -1,0 +1,54 @@
+id = "TST-294-qkd-provider-contract-docs"
+suite = "test"
+description = "QKD provider docs keep real-integration and hardware/security boundaries explicit"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+
+repo = Path(__import__("os").environ["NEBULA_REPO_ROOT"])
+docs = {
+    "quantum": repo / "docs" / "quantum_communication_convergence.md",
+    "support": repo / "docs" / "support_matrix.md",
+    "tiering": repo / "docs" / "official_package_tiering.md",
+    "stability": repo / "docs" / "stability_policy.md",
+    "service_profile": repo / "docs" / "service_profile.md",
+    "workstreams": repo / "docs" / "post_1_0_workstreams.md",
+    "readme": repo / "official" / "nebula-qkd" / "README.md",
+}
+texts = {name: path.read_text(encoding="utf-8") for name, path in docs.items()}
+combined = "\\n".join(texts.values())
+
+required = [
+    "official/nebula-qkd",
+    "ETSI GS QKD 014 v1.1.1",
+    "ITU-T Y.3803",
+    "NIST FIPS 203/204/205",
+    "KME/KMS key delivery",
+    "deterministic mock",
+    "outbound mTLS adapter preview",
+    "keys[].key_ID",
+    "keys[].key",
+    "not implement optical hardware",
+    "not a QKD-TLS GA contract",
+    "not claim physical QKD hardware",
+    "not a security or hardware-support contract",
+]
+for marker in required:
+    if marker not in combined:
+        raise SystemExit(f"missing QKD docs marker: {marker}")
+
+if "nebula-qkd` is real QKD key-delivery integration code" not in texts["support"]:
+    raise SystemExit("support matrix must call nebula-qkd real integration code")
+if "nebula-qcomm-sim` is simulation-only" not in texts["tiering"]:
+    raise SystemExit("package tiering must keep qcomm-sim simulation-only")
+if "there is no current circuit / gate / backend / provider abstraction for quantum computing" not in texts["workstreams"]:
+    raise SystemExit("workstreams must keep quantum-computing out of current scope")
+
+print("qkd-provider-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["qkd-provider-docs-ok"]

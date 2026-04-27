@@ -28,6 +28,11 @@ extern fn __nebula_sqlite_row_get_int(self: Row, column: String) -> Result<Int, 
 extern fn __nebula_sqlite_row_get_bool(self: Row, column: String) -> Result<Bool, String>
 extern fn __nebula_sqlite_row_get_json(self: Row, column: String) -> Result<Json, String>
 extern fn __nebula_sqlite_row_get_bytes(self: Row, column: String) -> Result<Bytes, String>
+extern fn __nebula_sqlite_row_get_string_at(self: Row, index: Int) -> Result<String, String>
+extern fn __nebula_sqlite_row_get_int_at(self: Row, index: Int) -> Result<Int, String>
+extern fn __nebula_sqlite_row_get_bool_at(self: Row, index: Int) -> Result<Bool, String>
+extern fn __nebula_sqlite_row_get_json_at(self: Row, index: Int) -> Result<Json, String>
+extern fn __nebula_sqlite_row_get_bytes_at(self: Row, index: Int) -> Result<Bytes, String>
 
 fn no_params() -> Json {
   return array_build(array_builder())
@@ -126,4 +131,24 @@ fn Row_get_json(self: Row, column: String) -> Result<Json, String> {
 
 fn Row_get_bytes(self: Row, column: String) -> Result<Bytes, String> {
   return __nebula_sqlite_row_get_bytes(self, column)
+}
+
+fn Row_get_string_at(self: Row, index: Int) -> Result<String, String> {
+  return __nebula_sqlite_row_get_string_at(self, index)
+}
+
+fn Row_get_int_at(self: Row, index: Int) -> Result<Int, String> {
+  return __nebula_sqlite_row_get_int_at(self, index)
+}
+
+fn Row_get_bool_at(self: Row, index: Int) -> Result<Bool, String> {
+  return __nebula_sqlite_row_get_bool_at(self, index)
+}
+
+fn Row_get_json_at(self: Row, index: Int) -> Result<Json, String> {
+  return __nebula_sqlite_row_get_json_at(self, index)
+}
+
+fn Row_get_bytes_at(self: Row, index: Int) -> Result<Bytes, String> {
+  return __nebula_sqlite_row_get_bytes_at(self, index)
 }

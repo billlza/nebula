@@ -241,30 +241,29 @@ Current status:
 
 Goal:
 
-- decide whether Nebula's quantum differentiation continues as communication/security simulation
-  work, or whether a separate quantum-computing platform track is opened
+- make Nebula credible for quantum-communication software: QKD key-delivery integration, mockable
+  provider contracts, and simulation labs, while keeping quantum-computing and physical hardware
+  claims out of scope
 
 Current baseline:
 
+- `nebula-qkd` is the real-integration preview package for ETSI GS QKD 014 v1.1.1-style KME/KMS key
+  delivery and deterministic local provider tests
 - `nebula-qcomm-sim` is simulation-only BB84 lab work
 - there is no current circuit / gate / backend / provider abstraction for quantum computing
 
-Required decision:
-
-- Option A: continue `qcomm` / QKD simulation as the differentiation line
-- Option B: open a separate quantum-computing wave with a new architecture and product contract
-
 Current decision for this wave:
 
-- choose Option A and continue `qcomm` / QKD simulation as Nebula's active quantum-differentiation
+- choose QKD control-plane and key-delivery integration as Nebula's active quantum-differentiation
   line
 - do not open a quantum-computing platform wave inside the current preview packages
+- keep `nebula-qkd` separate from `nebula-qcomm-sim` so real KME/KMS integration and BB84
+  simulation do not blur their guarantees
 - reuse the preview PQC authenticated-body envelope work where helpful so `qcomm` and the broader
   PQC line share concrete application-layer contracts instead of drifting into separate experiments
 
-This remains a product and architecture decision, not a refactor hidden inside the current preview
-packages. A future quantum-computing wave would require a separate circuit/gate/backend/provider
-architecture and an explicit product contract.
+This remains a product and architecture decision. A future quantum-computing wave would require a
+separate circuit/gate/backend/provider architecture and an explicit product contract.
 
 ## Track 6: App Platform Convergence
 
@@ -314,6 +313,8 @@ Goal:
 Current baseline:
 
 - `official/nebula-ui` defines the first preview JSON view-tree IR
+- `headless::validate` and the common native preview decoder reject malformed
+  `nebula-ui.tree.v1` nodes before render or dispatch
 - `ui` / `view` source syntax parses, formats, typechecks, and lowers to a callable JSON tree
 - `examples/local_ops_console_ui` is the first UI forcing slice and deliberately avoids Tauri
 - `headless` provides deterministic CI/debug rendering for the same JSON tree
@@ -323,8 +324,9 @@ Current baseline:
 Exit criteria:
 
 - AppKit and GTK adapters can consume the same `nebula-ui.tree.v1` tree
-- action dispatch, accessibility labels, and lifecycle events are tested through headless/native
+- action dispatch and required `Input.accessibility_label` are tested through headless/native
   adapter smoke paths
+- lifecycle events remain a future preview milestone before any renderer/windowing claim
 - docs continue to distinguish Nebula UI preview from SwiftUI/Qt/Flutter maturity claims
 
 ## Execution Order

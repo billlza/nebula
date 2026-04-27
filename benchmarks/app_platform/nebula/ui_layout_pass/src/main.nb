@@ -1,0 +1,15 @@
+module main
+import ui::headless
+
+@bench
+fn bench_ui_layout_pass() -> Void {
+  let tree = FastPreviewTree("Local Ops", "Local Ops", "targets", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
+  let value = fast_preview_layout(tree)
+  if value.width != 480 || value.height <= 0 || value.command_count != 5 {
+    expect_eq(1, 0)
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-ui-layout-pass")
+}

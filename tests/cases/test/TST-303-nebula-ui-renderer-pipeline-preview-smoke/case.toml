@@ -1,0 +1,81 @@
+id = "TST-303-nebula-ui-renderer-pipeline-preview-smoke"
+suite = "test"
+description = "nebula-ui exposes layout, render-list, hit-test, patch, and guarded Metal submit preview contracts"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import platform
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "local_ops_console_ui"
+work = Path("work/nebula_ui_renderer_pipeline")
+shutil.rmtree(work, ignore_errors=True)
+work.mkdir(parents=True, exist_ok=True)
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"local ops UI check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], check=True, capture_output=True, text=True)
+for marker in (
+    '"schema":"nebula-ui.tree.v1"',
+    '"schema":"nebula-ui.layout.v1"',
+    '"schema":"nebula-ui.render-list.v1"',
+    '"command_count":4',
+    'nebula-ui-hit-test-action=targets.filter',
+    '"schema":"nebula-ui.patch.v1"',
+    '"kind":"props"',
+    '"op":"replace-prop"',
+):
+    if marker not in run.stdout:
+        raise SystemExit(f"renderer pipeline marker missing {marker!r}: {run.stdout!r}")
+
+tree_json = next(line for line in run.stdout.splitlines() if line.startswith('{"schema":"nebula-ui.tree.v1"'))
+tree_path = work / "tree.json"
+tree_path.write_text(tree_json, encoding="utf-8")
+
+if platform.system().lower() == "darwin":
+    source = repo / "official" / "nebula-ui" / "adapters" / "metal" / "submit_smoke.mm"
+    out = work / "nebula-ui-metal-submit-smoke"
+    cxx = os.environ.get("CXX") or shutil.which("clang++") or "clang++"
+    subprocess.run([
+        cxx,
+        "-std=c++20",
+        "-fobjc-arc",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-I", str(repo / "official" / "nebula-ui" / "adapters" / "common"),
+        "-iquote", str(repo),
+        str(source),
+        "-framework", "Foundation",
+        "-framework", "Metal",
+        "-o", str(out),
+    ], check=True)
+    metal = subprocess.run([str(out), "--tree-json", str(tree_path)], check=True, capture_output=True, text=True)
+    print(metal.stdout, end="")
+    if "nebula-ui-metal-submit-skip-no-device" not in metal.stdout:
+        for marker in (
+            "nebula-ui-metal-submit-smoke-ok",
+            "nebula-ui-metal-render-list-schema=nebula-ui.render-list.v1",
+            "nebula-ui-metal-command-count=3",
+            "nebula-ui-tree-input-action=targets.filter",
+        ):
+            if marker not in metal.stdout:
+                raise SystemExit(f"metal smoke marker missing {marker!r}: {metal.stdout!r}")
+else:
+    print("nebula-ui-metal-submit-skip-unsupported-host")
+
+print("nebula-ui-renderer-pipeline-preview-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["nebula-ui-renderer-pipeline-preview-ok"]

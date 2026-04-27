@@ -10,6 +10,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -20,10 +21,25 @@ struct ButtonSummary {
   std::string action;
 };
 
+struct InputSummary {
+  std::string value;
+  std::string action;
+  std::string accessibility_label;
+};
+
+struct AccessibilitySummary {
+  std::string role;
+  std::string name;
+  std::string action;
+};
+
 struct TreeSummary {
   std::string title = "Nebula UI";
   std::vector<std::string> text_labels;
   std::vector<ButtonSummary> buttons;
+  std::vector<InputSummary> inputs;
+  std::vector<AccessibilitySummary> accessibility;
+  bool has_window = false;
 };
 
 struct LoadResult {
@@ -35,6 +51,10 @@ struct LoadResult {
 struct ActionDispatchResult {
   bool ok = false;
   std::string message;
+};
+
+struct WindowLifecycleSummary {
+  std::vector<std::string> events;
 };
 
 inline std::optional<std::string> string_prop(const nebula::rt::JsonValue& node,
@@ -55,6 +75,39 @@ inline bool validate_node_schema(const nebula::rt::JsonValue& node, std::string*
   return true;
 }
 
+inline bool validate_component_name(const std::string& component_text, std::string* error) {
+  if (component_text == "Window" || component_text == "Column" || component_text == "Row" ||
+      component_text == "Text" || component_text == "Button" || component_text == "Input" ||
+      component_text == "Spacer") {
+    return true;
+  }
+  if (error != nullptr) *error = "unsupported UI component: " + component_text;
+  return false;
+}
+
+inline bool require_node_props(const nebula::rt::JsonValue& node, std::string* error) {
+  auto props = nebula::rt::json_get_value(node, "props");
+  if (nebula::rt::result_is_err(props)) {
+    if (error != nullptr) *error = "expected UI node props object";
+    return false;
+  }
+  return true;
+}
+
+inline bool require_non_empty_prop(const nebula::rt::JsonValue& node,
+                                   std::string_view name,
+                                   const std::string& message,
+                                   std::string* out,
+                                   std::string* error) {
+  auto value = string_prop(node, name);
+  if (!value.has_value() || value->empty()) {
+    if (error != nullptr) *error = message;
+    return false;
+  }
+  if (out != nullptr) *out = *value;
+  return true;
+}
+
 inline bool summarize_node(const nebula::rt::JsonValue& node,
                            TreeSummary& summary,
                            std::string* error) {
@@ -67,8 +120,13 @@ inline bool summarize_node(const nebula::rt::JsonValue& node,
   }
 
   const auto& component_text = nebula::rt::result_ok_ref(component);
+  if (!validate_component_name(component_text, error)) return false;
+  if (!require_node_props(node, error)) return false;
+
   if (component_text == "Window") {
     if (auto title = string_prop(node, "title")) summary.title = *title;
+    summary.has_window = true;
+    summary.accessibility.push_back(AccessibilitySummary{"window", summary.title, ""});
   } else if (component_text == "Text") {
     if (auto text = string_prop(node, "text")) summary.text_labels.push_back(*text);
   } else if (component_text == "Button") {
@@ -80,7 +138,28 @@ inline bool summarize_node(const nebula::rt::JsonValue& node,
       return false;
     }
     button.action = *action;
+    summary.accessibility.push_back(
+        AccessibilitySummary{"button", button.text.empty() ? button.action : button.text, button.action});
     summary.buttons.push_back(std::move(button));
+  } else if (component_text == "Input") {
+    InputSummary input;
+    if (auto value = string_prop(node, "value")) input.value = *value;
+    if (!require_non_empty_prop(node,
+                                "action",
+                                "Input node requires non-empty action string",
+                                &input.action,
+                                error)) {
+      return false;
+    }
+    if (!require_non_empty_prop(node,
+                                "accessibility_label",
+                                "Input node requires non-empty accessibility_label string",
+                                &input.accessibility_label,
+                                error)) {
+      return false;
+    }
+    summary.accessibility.push_back(AccessibilitySummary{"textbox", input.accessibility_label, input.action});
+    summary.inputs.push_back(std::move(input));
   }
 
   auto children = nebula::rt::json_get_value(node, "children");
@@ -124,6 +203,51 @@ inline LoadResult load_tree_json_file(const std::string& path) {
   return LoadResult{true, std::move(summary), ""};
 }
 
+inline WindowLifecycleSummary host_shell_lifecycle_summary(bool closed) {
+  WindowLifecycleSummary summary;
+  summary.events = {"boot", "window-created", "window-shown", "window-focused", "rendered"};
+  if (closed) {
+    summary.events.push_back("close-requested");
+    summary.events.push_back("closed");
+  }
+  return summary;
+}
+
+inline bool validate_lifecycle_order(const WindowLifecycleSummary& lifecycle, std::string* error) {
+  const std::vector<std::string> expected_prefix = {
+      "boot", "window-created", "window-shown", "window-focused", "rendered"};
+  if (lifecycle.events.size() < expected_prefix.size()) {
+    if (error != nullptr) *error = "window lifecycle is missing required startup events";
+    return false;
+  }
+  for (std::size_t i = 0; i < expected_prefix.size(); ++i) {
+    if (lifecycle.events[i] != expected_prefix[i]) {
+      if (error != nullptr) *error = "window lifecycle startup order mismatch";
+      return false;
+    }
+  }
+  for (std::size_t i = expected_prefix.size(); i < lifecycle.events.size(); ++i) {
+    const auto& event = lifecycle.events[i];
+    if (event != "close-requested" && event != "closed" && event != "resize" && event != "focus") {
+      if (error != nullptr) *error = "unsupported window lifecycle event: " + event;
+      return false;
+    }
+  }
+  for (std::size_t i = 0; i + 1 < lifecycle.events.size(); ++i) {
+    if (lifecycle.events[i] == "closed" && lifecycle.events[i + 1] != "closed") {
+      if (error != nullptr) *error = "window lifecycle event after closed";
+      return false;
+    }
+  }
+  return true;
+}
+
+inline void append_lifecycle_summary(std::ostream& out, const WindowLifecycleSummary& lifecycle) {
+  for (const auto& event : lifecycle.events) {
+    out << "nebula-ui-window-lifecycle=" << event << "\n";
+  }
+}
+
 inline void append_smoke_summary(std::ostream& out, const TreeSummary& summary) {
   out << "nebula-ui-tree-title=" << summary.title << "\n";
   if (!summary.text_labels.empty()) {
@@ -133,12 +257,28 @@ inline void append_smoke_summary(std::ostream& out, const TreeSummary& summary) 
     out << "nebula-ui-tree-button=" << summary.buttons.front().text << "\n";
     out << "nebula-ui-tree-button-action=" << summary.buttons.front().action << "\n";
   }
+  if (!summary.inputs.empty()) {
+    out << "nebula-ui-tree-input-value=" << summary.inputs.front().value << "\n";
+    out << "nebula-ui-tree-input-action=" << summary.inputs.front().action << "\n";
+    out << "nebula-ui-tree-input-accessibility-label=" << summary.inputs.front().accessibility_label
+        << "\n";
+  }
+  for (const auto& node : summary.accessibility) {
+    out << "nebula-ui-accessibility-node=role:" << node.role << ";name:" << node.name;
+    if (!node.action.empty()) out << ";action:" << node.action;
+    out << "\n";
+  }
 }
 
 inline ActionDispatchResult dispatch_action(const TreeSummary& summary, const std::string& action) {
   if (action.empty()) return ActionDispatchResult{false, "action id must be non-empty"};
   for (const auto& button : summary.buttons) {
     if (button.action == action) {
+      return ActionDispatchResult{true, "nebula-ui-action-dispatched=" + action};
+    }
+  }
+  for (const auto& input : summary.inputs) {
+    if (input.action == action) {
       return ActionDispatchResult{true, "nebula-ui-action-dispatched=" + action};
     }
   }

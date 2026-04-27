@@ -40,6 +40,11 @@ expected = [
     'nebula_ui_startup',
     'ui_action_roundtrip',
     'ui_snapshot_render',
+    'ui_layout_pass',
+    'ui_render_list_build',
+    'ui_hit_test_dispatch',
+    'ui_patch_apply',
+    'ui_gpu_submit_smoke',
 ]
 if ids != expected:
     raise SystemExit(f'unexpected workload ids: {ids!r}')
@@ -80,6 +85,21 @@ if workloads['ui_action_roundtrip'].get('nebula_project') != 'benchmarks/app_pla
     raise SystemExit(f'missing runnable ui_action_roundtrip project: {workloads!r}')
 if workloads['ui_snapshot_render'].get('nebula_project') != 'benchmarks/app_platform/nebula/ui_snapshot_render':
     raise SystemExit(f'missing runnable ui_snapshot_render project: {workloads!r}')
+for workload_id in (
+    'ui_action_roundtrip',
+    'ui_snapshot_render',
+    'ui_layout_pass',
+    'ui_render_list_build',
+    'ui_hit_test_dispatch',
+    'ui_patch_apply',
+    'ui_gpu_submit_smoke',
+):
+    workload = workloads[workload_id]
+    if workload.get('reference_stacks') != ['cpp']:
+        raise SystemExit(f'missing cpp {workload_id} reference stack: {workloads!r}')
+    expected_project = f'benchmarks/app_platform/reference/cpp/{workload_id}'
+    if workload.get('reference_projects', {}).get('cpp') != expected_project:
+        raise SystemExit(f'missing cpp {workload_id} reference project: {workloads!r}')
 print('app-platform-benchmark-plan-ok')
 PY
 """

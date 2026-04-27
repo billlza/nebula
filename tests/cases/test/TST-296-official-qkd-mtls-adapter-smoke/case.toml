@@ -1,0 +1,300 @@
+id = "TST-296-official-qkd-mtls-adapter-smoke"
+suite = "test"
+description = "official nebula-qkd can call an ETSI-shaped KME over outbound mTLS preview transport"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import http.server
+import json
+import os
+import platform
+import queue
+import shutil
+import ssl
+import subprocess
+import threading
+from pathlib import Path
+
+system = platform.system().lower()
+if system.startswith(("windows", "msys", "mingw", "cygwin")):
+    print("qkd-mtls-skip-unsupported-host")
+    raise SystemExit(0)
+if shutil.which("openssl") is None:
+    raise SystemExit("openssl is required for QKD mTLS adapter smoke")
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/official-qkd-mtls-adapter")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(root / "openssl_ca.cnf").write_text('''[req]
+distinguished_name = dn
+x509_extensions = v3_ca
+prompt = no
+
+[dn]
+CN = Nebula QKD KME CA
+
+[v3_ca]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, keyCertSign, cRLSign
+''', encoding="utf-8")
+(root / "openssl_server.cnf").write_text('''[req]
+distinguished_name = dn
+req_extensions = v3_req
+prompt = no
+
+[dn]
+CN = localhost
+
+[v3_req]
+subjectAltName = @alt_names
+basicConstraints = CA:false
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+''', encoding="utf-8")
+(root / "openssl_client.cnf").write_text('''[req]
+distinguished_name = dn
+req_extensions = v3_req
+prompt = no
+
+[dn]
+CN = nebula-qkd-sae
+
+[v3_req]
+basicConstraints = CA:false
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+''', encoding="utf-8")
+subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(root / "ca.key"), "-out", str(root / "ca.pem"), "-days", "2", "-config", str(root / "openssl_ca.cnf")], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", str(root / "server.key"), "-out", str(root / "server.csr"), "-config", str(root / "openssl_server.cnf")], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(["openssl", "x509", "-req", "-in", str(root / "server.csr"), "-CA", str(root / "ca.pem"), "-CAkey", str(root / "ca.key"), "-CAcreateserial", "-out", str(root / "server.pem"), "-days", "2", "-sha256", "-extfile", str(root / "openssl_server.cnf"), "-extensions", "v3_req"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", str(root / "client.key"), "-out", str(root / "client.csr"), "-config", str(root / "openssl_client.cnf")], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(["openssl", "x509", "-req", "-in", str(root / "client.csr"), "-CA", str(root / "ca.pem"), "-CAkey", str(root / "ca.key"), "-CAcreateserial", "-out", str(root / "client.pem"), "-days", "2", "-sha256", "-extfile", str(root / "openssl_client.cnf"), "-extensions", "v3_req"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+class KmeHandler(http.server.BaseHTTPRequestHandler):
+    def _send_json(self, status, payload):
+        if not self.connection.getpeercert():
+            status = 403
+            payload = {"error": "client certificate required"}
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/qkd/api/v1/keys/sae-bob/status":
+            self._send_json(200, {
+                "source_KME_ID": "mtls-source-kme",
+                "target_KME_ID": "mtls-target-kme",
+                "master_SAE_ID": "sae-alice",
+                "slave_SAE_ID": "sae-bob",
+                "key_size": 256,
+                "stored_key_count": 8,
+                "max_key_count": 32,
+                "max_key_per_request": 4,
+                "max_key_size": 512,
+            })
+            return
+        self._send_json(404, {"error": "unknown path"})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        if self.path == "/qkd/api/v1/keys/sae-bob/enc_keys":
+            parsed = json.loads(body)
+            if parsed.get("number") != 1 or parsed.get("size") != 256:
+                self._send_json(400, {"error": "bad enc request"})
+                return
+            self._send_json(200, {"keys": [{"key_ID": "mtls-live-1", "key": "bXRscy1rZXk="}]})
+            return
+        if self.path == "/qkd/api/v1/keys/sae-bob/dec_keys":
+            parsed = json.loads(body)
+            ids = parsed.get("key_IDs", [])
+            if not ids or ids[0].get("key_ID") != "mtls-live-1":
+                self._send_json(400, {"error": "bad dec request"})
+                return
+            self._send_json(200, {"keys": [{"key_ID": "mtls-live-1", "key": "bXRscy1kZWM="}]})
+            return
+        self._send_json(404, {"error": "unknown path"})
+
+    def log_message(self, *args):
+        return
+
+httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), KmeHandler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(str(root / "server.pem"), str(root / "server.key"))
+context.load_verify_locations(cafile=str(root / "ca.pem"))
+context.verify_mode = ssl.CERT_REQUIRED
+httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+port = httpd.server_address[1]
+thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+thread.start()
+
+def lit(text: str) -> str:
+    return text.replace("\\\\", "\\\\\\\\").replace("\\n", "\\\\n").replace('"', '\\\\"')
+
+ca_pem = lit((root / "ca.pem").read_text(encoding="utf-8"))
+client_cert = lit((root / "client.pem").read_text(encoding="utf-8"))
+client_key = lit((root / "client.key").read_text(encoding="utf-8"))
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "official-qkd-mtls-adapter-app"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+qkd = {{ path = "{repo_root / 'official' / 'nebula-qkd'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(f'''module main
+import qkd::etsi014
+import qkd::provider
+import qkd::types
+import std::bytes
+import std::result
+
+fn text_join(lhs: String, rhs: String) -> String {{
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}}
+
+fn expect_text(actual: String, expected: String, label: String) -> Result<Bool, QkdProviderError> {{
+  if actual != expected {{
+    return Err(qkd_error("test_failed", text_join(label, text_join(" mismatch: ", actual))))
+  }}
+  return Ok(true)
+}}
+
+fn expect_int(actual: Int, expected: Int, label: String) -> Result<Bool, QkdProviderError> {{
+  if actual != expected {{
+    return Err(qkd_error("test_failed", label))
+  }}
+  return Ok(true)
+}}
+
+fn expect_error_code(error: QkdProviderError, code: String, label: String) -> Result<Bool, QkdProviderError> {{
+  if error.code != code {{
+    return Err(qkd_error("test_failed", text_join(label, text_join(" code mismatch: ", error.code))))
+  }}
+  return Ok(true)
+}}
+
+fn provider() -> QkdProviderConfig {{
+  return provider_config("https://localhost:{port}/qkd",
+                         "localhost",
+                         {port},
+                         "sae-alice",
+                         "sae-bob",
+                         true,
+                         1,
+                         256)
+}}
+
+fn cleartext_provider() -> QkdProviderConfig {{
+  return provider_config("http://localhost:{port}/qkd",
+                         "localhost",
+                         {port},
+                         "sae-alice",
+                         "sae-bob",
+                         false,
+                         1,
+                         256)
+}}
+
+fn mtls() -> QkdMtlsConfig {{
+  return mtls_config("{ca_pem}", "{client_cert}", "{client_key}")
+}}
+
+fn check_negative_contracts() -> Result<Bool, QkdProviderError> {{
+  match mtls_transport_allowed(cleartext_provider()) {{
+    Ok(_) => {{ return Err(qkd_error("test_failed", "cleartext KME unexpectedly allowed for mTLS")) }}
+    Err(error) => {{ expect_error_code(error, "unsupported_transport", "cleartext mTLS boundary")? }}
+  }}
+  match mtls_client_config(mtls_config("", "cert", "key")) {{
+    Ok(_) => {{ return Err(qkd_error("test_failed", "empty mTLS CA unexpectedly succeeded")) }}
+    Err(error) => {{ expect_error_code(error, "invalid_mtls_config", "empty mTLS CA")? }}
+  }}
+  return Ok(true)
+}}
+
+async fn check_mtls_flow(cfg: QkdProviderConfig, client_cfg: QkdMtlsConfig) -> Result<Bool, QkdProviderError> {{
+  mtls_transport_allowed(cfg)?
+  let target = resolve_kme_target(cfg, status_path(cfg.peer_sae_id))?
+  expect_text(target.scheme, "https", "mTLS target scheme")?
+  expect_text(target.authority, "localhost:{port}", "mTLS target authority")?
+
+  match await get_status_mtls(cfg, client_cfg) {{
+    Ok(status) => {{
+      expect_text(status.source_kme_id, "mtls-source-kme", "mTLS status source")?
+      expect_int(status.stored_key_count, 8, "mTLS stored keys")?
+    }}
+    Err(error) => {{ return Err(error) }}
+  }}
+  match await get_enc_keys_mtls(cfg, client_cfg) {{
+    Ok(batch) => {{
+      expect_int(batch.key_count, 1, "mTLS enc key count")?
+      let key = batch.key_at(0)?
+      expect_text(key.key_id, "mtls-live-1", "mTLS enc key id")?
+    }}
+    Err(error) => {{ return Err(error) }}
+  }}
+  match await get_dec_keys_mtls(cfg, client_cfg, qkd_key_id_request1("mtls-live-1")) {{
+    Ok(batch) => {{
+      expect_int(batch.key_count, 1, "mTLS dec key count")?
+      let key = batch.key_at(0)?
+      expect_text(key.key_id, "mtls-live-1", "mTLS dec key id")?
+    }}
+    Err(error) => {{ return Err(error) }}
+  }}
+  return Ok(true)
+}}
+
+async fn main() -> Int {{
+  match check_negative_contracts() {{
+    Ok(_) => {{}}
+    Err(error) => {{
+      print(error.text())
+      return 1
+    }}
+  }}
+  match await check_mtls_flow(provider(), mtls()) {{
+    Ok(_) => {{
+      print("official-qkd-mtls-adapter-ok")
+      return 0
+    }}
+    Err(error) => {{
+      print(error.text())
+      return 1
+    }}
+  }}
+}}
+''', encoding="utf-8")
+
+try:
+    subprocess.run([binary, "update", str(app)], check=True)
+    subprocess.run([binary, "check", str(app)], check=True)
+    run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, check=True)
+    print(run.stdout, end="")
+finally:
+    httpd.shutdown()
+    httpd.server_close()
+    thread.join(timeout=5)
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["official-qkd-mtls-adapter-ok"]

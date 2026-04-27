@@ -1366,7 +1366,8 @@ private:
       if (name.module_name == "json" && name.local_name == "Json") return true;
       if (name.module_name == "json" && name.local_name == "JsonArrayBuilder") return true;
       if (name.module_name == "http" &&
-          (name.local_name == "RouteParams2" || name.local_name == "RouteParams3")) {
+          (name.local_name == "RouteParams2" || name.local_name == "RouteParams3" ||
+           name.local_name == "RoutePattern")) {
         return true;
       }
       if (name.module_name == "net" &&
