@@ -652,11 +652,24 @@ inline constexpr std::size_t kJsonInlineObjectFieldLimit = 8;
 struct JsonObjectIndex {
   std::array<JsonObjectField, kJsonInlineObjectFieldLimit> fields{};
   std::uint8_t count = 0;
+  bool complete = true;
 
-  void reset() { count = 0; }
+  void reset() {
+    count = 0;
+    complete = true;
+  }
+
+  void mark_incomplete() {
+    count = 0;
+    complete = false;
+  }
 
   bool push_back(JsonObjectField field) {
-    if (count >= fields.size()) return false;
+    if (!complete) return false;
+    if (count >= fields.size()) {
+      mark_incomplete();
+      return false;
+    }
     fields[count] = std::move(field);
     count = static_cast<std::uint8_t>(count + 1);
     return true;
@@ -702,8 +715,9 @@ struct JsonValue {
   JsonValue(std::string text_value, JsonValueView parsed_value, JsonObjectIndex object_fields_value)
       : text(std::move(text_value)),
         parsed(std::move(parsed_value)),
-        object_fields(std::move(object_fields_value)),
-        has_object_fields(true) {}
+        object_fields(std::move(object_fields_value)) {
+    has_object_fields = object_fields.complete;
+  }
   JsonValue(std::string text_value, JsonValueView parsed_value, JsonArrayIndex array_items_value)
       : text(std::move(text_value)),
         parsed(std::move(parsed_value)),
@@ -2787,7 +2801,6 @@ inline bool parse_json_object(JsonCursor& cursor,
       field.key_needs_decode = key_needs_decode;
       field.value = value_view;
       if (!object_fields->push_back(std::move(field))) {
-        object_fields->reset();
         object_fields = nullptr;
       }
     }

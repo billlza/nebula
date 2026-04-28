@@ -10,44 +10,42 @@ struct DashboardState {
   filter: String
 }
 
-fn dashboard_column(state: DashboardState) -> View {
-  return column(12,
-                child3(text(state.title),
-                       input(state.filter, "targets.filter", "Filter targets"),
-                       button("Refresh", "targets.refresh")))
+fn dashboard_column(state: DashboardState) -> Json {
+  return column_json(12,
+                     array3(text_json(state.title),
+                            input_json(state.filter, "targets.filter", "Filter targets"),
+                            button_json("Refresh", "targets.refresh")))
 }
 
 fn Dashboard(state: DashboardState) -> Json {
-  return window(state.title, child1(dashboard_column(state))).as_json()
-}
-
-fn button_action(tree: Json) -> Result<String, String> {
-  let window_children = get_value(tree, "children")?
-  let column = array_get(window_children, 0)?
-  let column_children = get_value(column, "children")?
-  let button = array_get(column_children, 2)?
-  let props = get_value(button, "props")?
-  return get_string(props, "action")
+  return window_json(state.title, array1(dashboard_column(state)))
 }
 
 @bench
 fn bench_ui_action_roundtrip() -> Void {
   let state = DashboardState("Local Ops", true, "targets")
   let tree = Dashboard(state)
-  match button_action(tree) {
-    Ok(action) => {
-      if action != "targets.refresh" {
-        expect_eq(1, 0)
+  match action_summary(tree) {
+    Ok(summary) => {
+      match get_string(summary, "first_button_action") {
+        Ok(action) => {
+          if action != "targets.refresh" {
+            expect_eq(1, 0)
+          }
+        }
+        Err(_) => {
+          expect_eq(1, 0)
+        }
       }
-    }
-    Err(_) => {
-      expect_eq(1, 0)
-    }
-  }
-  match dispatch_action(tree, "targets.filter") {
-    Ok(action) => {
-      if action != "nebula-ui-action-dispatched=targets.filter" {
-        expect_eq(1, 0)
+      match dispatch_action_summary(summary, "targets.filter") {
+        Ok(action) => {
+          if action != "nebula-ui-action-dispatched=targets.filter" {
+            expect_eq(1, 0)
+          }
+        }
+        Err(_) => {
+          expect_eq(1, 0)
+        }
       }
     }
     Err(_) => {

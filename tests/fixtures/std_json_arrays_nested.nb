@@ -1,5 +1,42 @@
 module main
 import std::json
+import std::result
+
+fn check_child_array(payload: Json) -> Result<Bool, String> {
+  let children = get_value(payload, "children")?
+  let count = array_len(children)?
+  if count != 1 {
+    return Ok(false)
+  }
+  let child = array_get(children, 0)?
+  let child_text = as_string(child)?
+  return Ok(child_text == "kid")
+}
+
+fn check_object9_overflow_lookup() -> Result<Bool, String> {
+  let payload = object9("a",
+                        int_value(1),
+                        "b",
+                        int_value(2),
+                        "c",
+                        int_value(3),
+                        "d",
+                        int_value(4),
+                        "e",
+                        int_value(5),
+                        "f",
+                        int_value(6),
+                        "g",
+                        int_value(7),
+                        "h",
+                        int_value(8),
+                        "children",
+                        array1(string_value("kid")))
+  let direct_ok = check_child_array(payload)?
+  let parsed = parse(stringify(payload))?
+  let parsed_ok = check_child_array(parsed)?
+  return Ok(direct_ok && parsed_ok)
+}
 
 fn main() -> Void {
   let nested = object2("value", int_value(7), "flag", bool_value(true))
@@ -41,9 +78,18 @@ fn main() -> Void {
                                           Ok(parsed_entries) => {
                                             match array_len(parsed_entries) {
                                               Ok(parsed_count) => {
+                                                let overflow_ok = false
+                                                match check_object9_overflow_lookup() {
+                                                  Ok(ok) => {
+                                                    overflow_ok = ok
+                                                  }
+                                                  Err(msg) => {
+                                                    print(msg)
+                                                  }
+                                                }
                                                 if value == 7 && flag == true &&
                                                    first_value == 7 && second_value == "tail" &&
-                                                   parsed_count == 2 {
+                                                   parsed_count == 2 && overflow_ok == true {
                                                   print("json-array-ok")
                                                 } else {
                                                   print("json-array-bad")

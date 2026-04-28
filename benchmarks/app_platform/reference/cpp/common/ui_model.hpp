@@ -95,6 +95,26 @@ struct FastPatchPlan {
   std::string value;
 };
 
+struct ActionSummary {
+  std::vector<std::string> actions;
+  std::string first_button_action;
+  std::string first_input_action;
+  int button_count = 0;
+  int input_count = 0;
+
+  void add_button(std::string action) {
+    ++button_count;
+    if (first_button_action.empty()) first_button_action = action;
+    actions.push_back(std::move(action));
+  }
+
+  void add_input(std::string action) {
+    ++input_count;
+    if (first_input_action.empty()) first_input_action = action;
+    actions.push_back(std::move(action));
+  }
+};
+
 inline Node make_node(std::string component, std::vector<Prop> props, std::vector<Node> children) {
   return Node{std::move(component), std::move(props), std::move(children)};
 }
@@ -164,6 +184,38 @@ inline void validate_dispatch_action(const Node& root, const std::string& action
   bool found = false;
   validate_action_node(root, action, found);
   if (!found) fail("action not found: " + action);
+}
+
+inline void collect_actions(const Node& node, ActionSummary& summary) {
+  if (!is_allowed_component(node.component)) fail("unsupported UI component: " + node.component);
+  if (node.component == "Button") {
+    const auto& candidate = prop_value(node, "action");
+    if (candidate.empty()) fail("Button node requires non-empty action string");
+    summary.add_button(candidate);
+  } else if (node.component == "Input") {
+    const auto& candidate = prop_value(node, "action");
+    if (candidate.empty()) fail("Input node requires non-empty action string");
+    const auto& label = prop_value(node, "accessibility_label");
+    if (label.empty()) fail("Input node requires non-empty accessibility_label string");
+    summary.add_input(candidate);
+  }
+  for (const auto& child : node.children) {
+    collect_actions(child, summary);
+  }
+}
+
+inline ActionSummary action_summary(const Node& root) {
+  ActionSummary summary;
+  collect_actions(root, summary);
+  return summary;
+}
+
+inline void dispatch_action_summary(const ActionSummary& summary, const std::string& action) {
+  if (action.empty()) fail("action id must be non-empty");
+  for (const auto& candidate : summary.actions) {
+    if (candidate == action) return;
+  }
+  fail("action not found: " + action);
 }
 
 inline std::string prop_or(const std::vector<Prop>& props, const std::string& name, std::string fallback = "") {
@@ -478,12 +530,11 @@ inline std::string patch_kind(const Node& old_tree, const Node& new_tree) {
 
 inline std::uint64_t run_action_roundtrip() {
   const Node root = dashboard_tree();
-  const std::string& action = dashboard_button_action(root);
-  expect_eq(action, "targets.refresh", "ui action");
-  const std::string& input_action = dashboard_input_action(root);
-  expect_eq(input_action, "targets.filter", "ui input action");
-  validate_dispatch_action(root, input_action);
-  return checksum_text(action + input_action);
+  const ActionSummary summary = action_summary(root);
+  expect_eq(summary.first_button_action, "targets.refresh", "ui action");
+  expect_eq(summary.first_input_action, "targets.filter", "ui input action");
+  dispatch_action_summary(summary, summary.first_input_action);
+  return checksum_text(summary.first_button_action + summary.first_input_action);
 }
 
 inline std::uint64_t run_snapshot_render() {

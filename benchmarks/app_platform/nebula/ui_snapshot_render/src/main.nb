@@ -8,15 +8,15 @@ struct DashboardState {
   filter: String
 }
 
-fn dashboard_column(state: DashboardState) -> View {
-  return column(12,
-                child3(text(state.title),
-                       input(state.filter, "targets.filter", "Filter targets"),
-                       button("Refresh", "targets.refresh")))
+fn dashboard_column(state: DashboardState) -> Json {
+  return column_json(12,
+                     array3(text_json(state.title),
+                            input_json(state.filter, "targets.filter", "Filter targets"),
+                            button_json("Refresh", "targets.refresh")))
 }
 
 fn Dashboard(state: DashboardState) -> Json {
-  return window(state.title, child1(dashboard_column(state))).as_json()
+  return window_json(state.title, array1(dashboard_column(state)))
 }
 
 fn contains_schema(text: String) -> Bool {

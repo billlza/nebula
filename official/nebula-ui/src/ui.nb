@@ -37,15 +37,19 @@ fn child3(first: View, second: View, third: View) -> Json {
   return array3(first.as_json(), second.as_json(), third.as_json())
 }
 
+fn view_node_json(component: String, props: Json, children: Json) -> Json {
+  return object4("schema",
+                 string_value(schema()),
+                 "component",
+                 string_value(component),
+                 "props",
+                 props,
+                 "children",
+                 children)
+}
+
 fn view_node(component: String, props: Json, children: Json) -> View {
-  return View(object4("schema",
-                      string_value(schema()),
-                      "component",
-                      string_value(component),
-                      "props",
-                      props,
-                      "children",
-                      children))
+  return View(view_node_json(component, props, children))
 }
 
 fn tree(root: View) -> UiTree {
@@ -56,22 +60,44 @@ fn window(title: String, children: Json) -> View {
   return view_node("Window", object1("title", string_value(title)), children)
 }
 
+fn window_json(title: String, children: Json) -> Json {
+  return view_node_json("Window", object1("title", string_value(title)), children)
+}
+
 fn column(spacing: Int, children: Json) -> View {
   return view_node("Column", object1("spacing", int_value(spacing)), children)
+}
+
+fn column_json(spacing: Int, children: Json) -> Json {
+  return view_node_json("Column", object1("spacing", int_value(spacing)), children)
 }
 
 fn row(spacing: Int, children: Json) -> View {
   return view_node("Row", object1("spacing", int_value(spacing)), children)
 }
 
+fn row_json(spacing: Int, children: Json) -> Json {
+  return view_node_json("Row", object1("spacing", int_value(spacing)), children)
+}
+
 fn text(value: String) -> View {
   return view_node("Text", object1("text", string_value(value)), empty_children())
+}
+
+fn text_json(value: String) -> Json {
+  return view_node_json("Text", object1("text", string_value(value)), empty_children())
 }
 
 fn button(value: String, action: String) -> View {
   return view_node("Button",
                    object2("text", string_value(value), "action", string_value(action)),
                    empty_children())
+}
+
+fn button_json(value: String, action: String) -> Json {
+  return view_node_json("Button",
+                        object2("text", string_value(value), "action", string_value(action)),
+                        empty_children())
 }
 
 fn input(value: String, action: String, label: String) -> View {
@@ -85,6 +111,21 @@ fn input(value: String, action: String, label: String) -> View {
                    empty_children())
 }
 
+fn input_json(value: String, action: String, label: String) -> Json {
+  return view_node_json("Input",
+                        object3("value",
+                                string_value(value),
+                                "action",
+                                string_value(action),
+                                "accessibility_label",
+                                string_value(label)),
+                        empty_children())
+}
+
 fn spacer() -> View {
   return view_node("Spacer", object1("kind", string_value("flex")), empty_children())
+}
+
+fn spacer_json() -> Json {
+  return view_node_json("Spacer", object1("kind", string_value("flex")), empty_children())
 }

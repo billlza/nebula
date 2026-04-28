@@ -161,10 +161,11 @@
       "id": "ui_action_roundtrip",
       "category": "ui",
       "description": "Nebula UI action identifier extraction and validation path",
-      "timed_scope": "build UI tree, extract the first button action from JSON IR, and validate action id",
+      "timed_scope": "build UI tree, derive a cached action summary from JSON IR, and dispatch through the summary index",
       "correctness_contract": [
+        "action_summary_schema=nebula-ui.action-summary.v1",
         "action=targets.refresh",
-        "validation_first_dispatch=targets.filter"
+        "summary_index_dispatch=targets.filter"
       ],
       "nebula_paths": [
         "examples/local_ops_console_ui",

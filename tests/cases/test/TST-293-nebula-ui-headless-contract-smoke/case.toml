@@ -90,6 +90,18 @@ fn emit_patch(tree: Json) -> Void {
   }
 }
 
+fn emit_action_summary(tree: Json) -> Void {
+  match action_summary(tree) {
+    Ok(summary) => {
+      print(stringify(summary))
+      emit_string(dispatch_action_summary(summary, "targets.filter"))
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
 fn main() -> Int {
   match parse(__JSON_LITERAL__) {
     Ok(tree) => {
@@ -98,6 +110,7 @@ fn main() -> Int {
       emit_string(smoke(tree))
       emit_string(dispatch_action(tree, "targets.refresh"))
       emit_string(dispatch_action(tree, "targets.filter"))
+      emit_action_summary(tree)
       emit_layout_pipeline(tree)
       emit_patch(tree)
       return 0
@@ -131,6 +144,8 @@ for marker in (
     "nebula-ui-headless-ok",
     "nebula-ui-action-dispatched=targets.refresh",
     "nebula-ui-action-dispatched=targets.filter",
+    '"schema":"nebula-ui.action-summary.v1"',
+    '"first_button_action":"targets.refresh"',
     '"schema":"nebula-ui.layout.v1"',
     '"schema":"nebula-ui.render-list.v1"',
     '"command_count":5',
@@ -157,8 +172,8 @@ bad_cases = [
 ]
 for name, json_text, expected in bad_cases:
     out = run_tree(name, json_text)
-    if out.count(expected) != 7:
-        raise SystemExit(f"{name} expected seven validation-first errors {expected!r}, got: {out!r}")
+    if out.count(expected) != 8:
+        raise SystemExit(f"{name} expected eight validation-first errors {expected!r}, got: {out!r}")
 
 print("nebula-ui-headless-contract-ok")
 PY

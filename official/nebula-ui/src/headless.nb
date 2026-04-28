@@ -4,7 +4,9 @@ import std::json
 import std::result
 
 extern fn __nebula_rt_string_len(value: String) -> Int
+extern fn __nebula_ui_headless_action_summary_wire(tree: Json) -> Result<Json, String>
 extern fn __nebula_ui_headless_dispatch_action_wire(tree: Json, action: String) -> Result<String, String>
+extern fn __nebula_ui_headless_dispatch_action_summary_wire(summary: Json, action: String) -> Result<String, String>
 
 fn text_concat(lhs: String, rhs: String) -> String {
   return to_string(concat(from_string(lhs), from_string(rhs)))
@@ -312,6 +314,14 @@ fn validate_action_view(node: Json, action: String) -> Result<Bool, String> {
 
 fn dispatch_action(tree: Json, action: String) -> Result<String, String> {
   return __nebula_ui_headless_dispatch_action_wire(tree, action)
+}
+
+fn action_summary(tree: Json) -> Result<Json, String> {
+  return __nebula_ui_headless_action_summary_wire(tree)
+}
+
+fn dispatch_action_summary(summary: Json, action: String) -> Result<String, String> {
+  return __nebula_ui_headless_dispatch_action_summary_wire(summary, action)
 }
 
 struct LayoutBuild {
