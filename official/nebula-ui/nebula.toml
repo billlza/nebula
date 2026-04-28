@@ -5,3 +5,6 @@ name = "nebula-ui"
 version = "0.1.0"
 entry = "src/lib.nb"
 src_dir = "src"
+
+[native]
+cxx_sources = ["native/headless_bridge.cpp"]

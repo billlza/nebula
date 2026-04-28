@@ -66,6 +66,13 @@ inline std::optional<std::string> string_prop(const nebula::rt::JsonValue& node,
   return nebula::rt::result_ok_ref(value);
 }
 
+inline std::optional<std::string> string_prop_from_props(const nebula::rt::JsonValue& props,
+                                                         std::string_view name) {
+  auto value = nebula::rt::json_get_string(props, name);
+  if (nebula::rt::result_is_err(value)) return std::nullopt;
+  return nebula::rt::result_ok_ref(value);
+}
+
 inline bool validate_node_schema(const nebula::rt::JsonValue& node, std::string* error) {
   auto schema = nebula::rt::json_get_string(node, "schema");
   if (nebula::rt::result_is_err(schema) || nebula::rt::result_ok_ref(schema) != "nebula-ui.tree.v1") {
@@ -108,6 +115,20 @@ inline bool require_non_empty_prop(const nebula::rt::JsonValue& node,
   return true;
 }
 
+inline bool require_non_empty_prop_from_props(const nebula::rt::JsonValue& props,
+                                              std::string_view name,
+                                              const std::string& message,
+                                              std::string* out,
+                                              std::string* error) {
+  auto value = string_prop_from_props(props, name);
+  if (!value.has_value() || value->empty()) {
+    if (error != nullptr) *error = message;
+    return false;
+  }
+  if (out != nullptr) *out = *value;
+  return true;
+}
+
 inline bool summarize_node(const nebula::rt::JsonValue& node,
                            TreeSummary& summary,
                            std::string* error) {
@@ -121,18 +142,23 @@ inline bool summarize_node(const nebula::rt::JsonValue& node,
 
   const auto& component_text = nebula::rt::result_ok_ref(component);
   if (!validate_component_name(component_text, error)) return false;
-  if (!require_node_props(node, error)) return false;
+  auto props_result = nebula::rt::json_get_value(node, "props");
+  if (nebula::rt::result_is_err(props_result)) {
+    if (error != nullptr) *error = "expected UI node props object";
+    return false;
+  }
+  const auto& props = nebula::rt::result_ok_ref(props_result);
 
   if (component_text == "Window") {
-    if (auto title = string_prop(node, "title")) summary.title = *title;
+    if (auto title = string_prop_from_props(props, "title")) summary.title = *title;
     summary.has_window = true;
     summary.accessibility.push_back(AccessibilitySummary{"window", summary.title, ""});
   } else if (component_text == "Text") {
-    if (auto text = string_prop(node, "text")) summary.text_labels.push_back(*text);
+    if (auto text = string_prop_from_props(props, "text")) summary.text_labels.push_back(*text);
   } else if (component_text == "Button") {
     ButtonSummary button;
-    if (auto text = string_prop(node, "text")) button.text = *text;
-    auto action = string_prop(node, "action");
+    if (auto text = string_prop_from_props(props, "text")) button.text = *text;
+    auto action = string_prop_from_props(props, "action");
     if (!action.has_value() || action->empty()) {
       if (error != nullptr) *error = "Button node requires non-empty action string";
       return false;
@@ -143,19 +169,19 @@ inline bool summarize_node(const nebula::rt::JsonValue& node,
     summary.buttons.push_back(std::move(button));
   } else if (component_text == "Input") {
     InputSummary input;
-    if (auto value = string_prop(node, "value")) input.value = *value;
-    if (!require_non_empty_prop(node,
-                                "action",
-                                "Input node requires non-empty action string",
-                                &input.action,
-                                error)) {
+    if (auto value = string_prop_from_props(props, "value")) input.value = *value;
+    if (!require_non_empty_prop_from_props(props,
+                                           "action",
+                                           "Input node requires non-empty action string",
+                                           &input.action,
+                                           error)) {
       return false;
     }
-    if (!require_non_empty_prop(node,
-                                "accessibility_label",
-                                "Input node requires non-empty accessibility_label string",
-                                &input.accessibility_label,
-                                error)) {
+    if (!require_non_empty_prop_from_props(props,
+                                           "accessibility_label",
+                                           "Input node requires non-empty accessibility_label string",
+                                           &input.accessibility_label,
+                                           error)) {
       return false;
     }
     summary.accessibility.push_back(AccessibilitySummary{"textbox", input.accessibility_label, input.action});

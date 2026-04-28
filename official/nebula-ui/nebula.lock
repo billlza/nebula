@@ -1,6 +1,6 @@
 schema_version = 2
 root_package = "nebula-ui"
-root_manifest_hash = "7cf5c999299b15a7"
+root_manifest_hash = "7cf960897430a38e"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
@@ -14,8 +14,9 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "7cf5c999299b15a7"
-source_fingerprint = "9b2231188919a2d1"
-integrity_fingerprint = "5c0a6dbb39b4c351"
+manifest_hash = "7cf960897430a38e"
+source_fingerprint = "7687a234f5e953ce"
+integrity_fingerprint = "62be82b4f8a58e5"
 is_root = 1
+native_cxx_sources = ["native/headless_bridge.cpp"]
 dependencies = []

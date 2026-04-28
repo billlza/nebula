@@ -2972,12 +2972,46 @@ inline std::optional<std::string_view> json_lookup_field_text(const JsonValue& v
   }
 }
 
+struct JsonIndexedSlice {
+  std::string_view raw;
+  JsonValueView view;
+};
+
+inline JsonValueView json_relative_view(JsonValueView view, std::size_t start) {
+  view.raw_end -= start;
+  view.raw_start = 0;
+  return view;
+}
+
+inline std::optional<JsonIndexedSlice> json_lookup_field_indexed(const JsonValue& value,
+                                                                 std::string_view key) {
+  if (!value.has_object_fields) return std::nullopt;
+  for (std::size_t i = 0; i < value.object_fields.count; ++i) {
+    const auto& field = value.object_fields.fields[i];
+    if (!json_object_field_key_equals(value, field, key)) continue;
+    const auto raw = std::string_view(value.text).substr(field.value.raw_start,
+                                                         field.value.raw_end - field.value.raw_start);
+    return JsonIndexedSlice{raw, json_relative_view(field.value, field.value.raw_start)};
+  }
+  return std::nullopt;
+}
+
 inline std::optional<std::string_view> json_lookup_array_item_text(const JsonValue& value, std::int64_t index) {
   if (index < 0) return std::nullopt;
   const auto idx = static_cast<std::size_t>(index);
   if (!value.has_array_items || idx >= value.array_items.items.size()) return std::nullopt;
   const auto& item = value.array_items.items[idx];
   return std::string_view(value.text).substr(item.raw_start, item.raw_end - item.raw_start);
+}
+
+inline std::optional<JsonIndexedSlice> json_lookup_array_item_indexed(const JsonValue& value,
+                                                                      std::int64_t index) {
+  if (index < 0) return std::nullopt;
+  const auto idx = static_cast<std::size_t>(index);
+  if (!value.has_array_items || idx >= value.array_items.items.size()) return std::nullopt;
+  const auto& item = value.array_items.items[idx];
+  const auto raw = std::string_view(value.text).substr(item.raw_start, item.raw_end - item.raw_start);
+  return JsonIndexedSlice{raw, json_relative_view(item, item.raw_start)};
 }
 
 template <typename... Sizes>
@@ -3139,6 +3173,25 @@ inline JsonValue finish_json_array(std::string text, JsonArrayIndex array_items)
   parsed.raw_start = 0;
   parsed.raw_end = text.size();
   return JsonValue{std::move(text), std::move(parsed), std::move(array_items)};
+}
+
+inline Result<JsonValue, std::string> json_parse(std::string text);
+
+inline Result<JsonValue, std::string> json_indexed_subvalue(std::string_view raw,
+                                                            JsonValueView view) {
+  if (view.raw_start == 0 && view.raw_end == raw.size()) {
+    if (view.kind == JsonValueKind::String ||
+        view.kind == JsonValueKind::Int ||
+        view.kind == JsonValueKind::Bool ||
+        view.kind == JsonValueKind::Null) {
+      return ok_result(JsonValue{std::string(raw), std::move(view)});
+    }
+    if (view.kind == JsonValueKind::Array && raw == "[]") {
+      JsonArrayIndex array_items;
+      return ok_result(finish_json_array("[]", std::move(array_items)));
+    }
+  }
+  return json_parse(std::string(raw));
 }
 
 inline bool json_structured_object_push(JsonStructuredValue& object,
@@ -3585,6 +3638,8 @@ inline JsonValue json_array_build(JsonArrayBuilder builder) {
 }
 
 inline Result<JsonValue, std::string> json_get_value(const JsonValue& value, std::string_view key) {
+  const auto indexed = json_lookup_field_indexed(value, key);
+  if (indexed.has_value()) return json_indexed_subvalue(indexed->raw, indexed->view);
   const auto field = json_lookup_field_text(value, key);
   if (!field.has_value()) return err_result<JsonValue>("JSON field not found: " + std::string(key));
   return json_parse(std::string(*field));
@@ -3631,6 +3686,8 @@ inline Result<std::int64_t, std::string> json_array_len(const JsonValue& value) 
 }
 
 inline Result<JsonValue, std::string> json_array_get(const JsonValue& value, std::int64_t index) {
+  const auto indexed = json_lookup_array_item_indexed(value, index);
+  if (indexed.has_value()) return json_indexed_subvalue(indexed->raw, indexed->view);
   const auto item = json_lookup_array_item_text(value, index);
   if (!item.has_value()) {
     return err_result<JsonValue>("JSON array index out of range");

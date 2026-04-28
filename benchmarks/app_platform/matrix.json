@@ -163,7 +163,8 @@
       "description": "Nebula UI action identifier extraction and validation path",
       "timed_scope": "build UI tree, extract the first button action from JSON IR, and validate action id",
       "correctness_contract": [
-        "action=targets.refresh"
+        "action=targets.refresh",
+        "validation_first_dispatch=targets.filter"
       ],
       "nebula_paths": [
         "examples/local_ops_console_ui",

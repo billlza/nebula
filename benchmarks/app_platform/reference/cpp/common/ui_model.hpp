@@ -135,6 +135,37 @@ inline const std::string& dashboard_input_action(const Node& root) {
   return prop_value(root.children[0].children[1], "action");
 }
 
+inline bool is_allowed_component(const std::string& component) {
+  return component == "Window" || component == "Column" || component == "Row" ||
+         component == "Text" || component == "Button" || component == "Input" ||
+         component == "Spacer";
+}
+
+inline void validate_action_node(const Node& node, const std::string& action, bool& found) {
+  if (!is_allowed_component(node.component)) fail("unsupported UI component: " + node.component);
+  if (node.component == "Button") {
+    const auto& candidate = prop_value(node, "action");
+    if (candidate.empty()) fail("Button node requires non-empty action string");
+    if (candidate == action) found = true;
+  } else if (node.component == "Input") {
+    const auto& candidate = prop_value(node, "action");
+    if (candidate.empty()) fail("Input node requires non-empty action string");
+    const auto& label = prop_value(node, "accessibility_label");
+    if (label.empty()) fail("Input node requires non-empty accessibility_label string");
+    if (candidate == action) found = true;
+  }
+  for (const auto& child : node.children) {
+    validate_action_node(child, action, found);
+  }
+}
+
+inline void validate_dispatch_action(const Node& root, const std::string& action) {
+  if (action.empty()) fail("action id must be non-empty");
+  bool found = false;
+  validate_action_node(root, action, found);
+  if (!found) fail("action not found: " + action);
+}
+
 inline std::string prop_or(const std::vector<Prop>& props, const std::string& name, std::string fallback = "") {
   for (const auto& prop : props) {
     if (prop.name == name) return prop.value;
@@ -451,6 +482,7 @@ inline std::uint64_t run_action_roundtrip() {
   expect_eq(action, "targets.refresh", "ui action");
   const std::string& input_action = dashboard_input_action(root);
   expect_eq(input_action, "targets.filter", "ui input action");
+  validate_dispatch_action(root, input_action);
   return checksum_text(action + input_action);
 }
 

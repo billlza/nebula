@@ -4,6 +4,7 @@ import std::json
 import std::result
 
 extern fn __nebula_rt_string_len(value: String) -> Int
+extern fn __nebula_ui_headless_dispatch_action_wire(tree: Json, action: String) -> Result<String, String>
 
 fn text_concat(lhs: String, rhs: String) -> String {
   return to_string(concat(from_string(lhs), from_string(rhs)))
@@ -223,16 +224,16 @@ fn render_with_children(line: String, child_text: String) -> String {
 }
 
 fn render_view(node: Json, depth: Int) -> Result<String, String> {
-  let component = checked_component(node)?
-  let props = get_value(node, "props")?
-  let children = get_value(node, "children")?
+  let component = validate_view_component(node)?
+  let props = require_props(node)?
+  validate_component_props(component, props)?
+  let children = require_children(node)?
   let line = render_view_line(component, props, depth)
   let child_text = render_children(children, depth + 1)?
   return Ok(render_with_children(line, child_text))
 }
 
 fn render(tree: Json) -> Result<String, String> {
-  validate(tree)?
   return render_view(tree, 0)
 }
 
@@ -283,16 +284,34 @@ fn action_exists_view(node: Json, action: String) -> Result<Bool, String> {
   return action_exists_children(children, action)
 }
 
+fn validate_action_children(children: Json, action: String) -> Result<Bool, String> {
+  let found = false
+  let count = array_len(children)?
+  let index = 0
+  while index < count {
+    let child = array_get(children, index)?
+    if validate_action_view(child, action)? {
+      found = true
+    }
+    index += 1
+  }
+  return Ok(found)
+}
+
+fn validate_action_view(node: Json, action: String) -> Result<Bool, String> {
+  let component = validate_view_component(node)?
+  let children = validate_view_children(node, component)?
+  let props = get_value(node, "props")?
+  let found_here = false
+  if component == "Button" || component == "Input" {
+    found_here = props_action_matches(props, action)?
+  }
+  let found_child = validate_action_children(children, action)?
+  return Ok(found_here || found_child)
+}
+
 fn dispatch_action(tree: Json, action: String) -> Result<String, String> {
-  if action == "" {
-    return Err("action id must be non-empty")
-  }
-  validate(tree)?
-  let found = action_exists_view(tree, action)?
-  if found {
-    return Ok(dispatch_marker(action))
-  }
-  return Err(text_concat("action not found: ", action))
+  return __nebula_ui_headless_dispatch_action_wire(tree, action)
 }
 
 struct LayoutBuild {
