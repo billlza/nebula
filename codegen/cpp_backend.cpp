@@ -405,6 +405,26 @@ static std::string cpp_param_decl(const Function& fn, const Param& p) {
   return cpp_decl(p.ty, p.name, false);
 }
 
+static bool extern_uses_hosted_const_ref_contract(const Function& fn) {
+  if (fn.is_async) return false;
+  // Only exact native-hosted preview surfaces that opt into the C++ const-ref ABI belong here.
+  // Runtime std externs keep their by-value wrapper signatures unless their definitions move too.
+  static const std::unordered_set<std::string_view> kConstRefExterns = {
+      "__nebula_ui_headless_action_summary_wire",
+      "__nebula_ui_headless_dispatch_action_wire",
+      "__nebula_ui_headless_dispatch_action_summary_wire",
+  };
+  return kConstRefExterns.contains(fn.name);
+}
+
+static std::string cpp_extern_param_decl(const Function& fn, const Param& p) {
+  if (p.is_ref) return cpp_decl(p.ty, p.name, true);
+  if (extern_uses_hosted_const_ref_contract(fn) && should_pass_param_by_const_ref(p.ty)) {
+    return "const " + cpp_type(p.ty) + "& " + p.name;
+  }
+  return cpp_decl(p.ty, p.name, false);
+}
+
 static std::string ctor_field_init_expr(const Ty& t, const std::string& name) {
   if (should_pass_param_by_const_ref(t)) {
     return "std::move(" + name + ")";
@@ -586,6 +606,12 @@ static bool is_std_json_call(const Expr::Call& call, std::string_view local_name
   const std::string target = nebula::nir::call_target_identity(call);
   return is_direct_std_call(call, "json", local_name) ||
          target == ("std::json::" + std::string(local_name)) || target == local_name;
+}
+
+static bool is_resolved_std_json_call(const Expr::Call& call, std::string_view local_name) {
+  const std::string target = nebula::nir::call_target_identity(call);
+  return is_direct_std_call(call, "json", local_name) ||
+         target == ("std::json::" + std::string(local_name));
 }
 
 static bool is_std_http_json_call(const Expr::Call& call, std::string_view local_name) {
@@ -1387,6 +1413,54 @@ static bool current_function_reassigns_var(const EmitCtx& ctx, VarId target) {
          block_reassigns_var(*ctx.current_function->body, target);
 }
 
+static bool expr_uses_var(const Expr& e, VarId target);
+
+static bool call_uses_var(const Expr::Call& call, VarId target) {
+  for (const auto& arg : call.args) {
+    if (expr_uses_var(*arg, target)) return true;
+  }
+  return call.kind == nebula::nir::CallKind::Indirect && call.callee_var == target;
+}
+
+static bool expr_uses_var(const Expr& e, VarId target) {
+  return std::visit(
+      [&](auto&& n) -> bool {
+        using N = std::decay_t<decltype(n)>;
+        if constexpr (std::is_same_v<N, Expr::VarRef>) {
+          return n.var == target;
+        } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
+          return n.base_var == target;
+        } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
+          return expr_uses_var(*n.base, target);
+        } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant> ||
+                             std::is_same_v<N, Expr::EnumPayload>) {
+          return expr_uses_var(*n.subject, target);
+        } else if constexpr (std::is_same_v<N, Expr::Unary> ||
+                             std::is_same_v<N, Expr::Prefix> ||
+                             std::is_same_v<N, Expr::Await>) {
+          return expr_uses_var(*n.inner, target);
+        } else if constexpr (std::is_same_v<N, Expr::Binary>) {
+          return expr_uses_var(*n.lhs, target) || expr_uses_var(*n.rhs, target);
+        } else if constexpr (std::is_same_v<N, Expr::Call>) {
+          return call_uses_var(n, target);
+        } else if constexpr (std::is_same_v<N, Expr::Construct>) {
+          for (const auto& arg : n.args) {
+            if (expr_uses_var(*arg, target)) return true;
+          }
+          return false;
+        } else if constexpr (std::is_same_v<N, Expr::Match>) {
+          if (expr_uses_var(*n.subject, target)) return true;
+          for (const auto& arm : n.arms) {
+            if (expr_uses_var(*arm->value, target)) return true;
+          }
+          return false;
+        } else {
+          return false;
+        }
+      },
+      e.node);
+}
+
 static bool expr_uses_var_outside_parse_alias(const Expr& e, VarId target);
 
 static bool call_uses_var_outside_parse_alias(const Expr::Call& call, VarId target) {
@@ -1503,6 +1577,20 @@ static bool should_bind_let_by_const_ref(const EmitCtx& ctx, const Stmt::Let& st
   case Ty::Kind::Enum: return true;
   default: return false;
   }
+}
+
+static std::optional<std::string> emit_json_array_builder_self_push(const EmitCtx& ctx,
+                                                                    const Stmt::AssignVar& st) {
+  if (!matches_std_type(st.ty, "json", "JsonArrayBuilder")) return std::nullopt;
+  if (!std::holds_alternative<Expr::Call>(st.value->node)) return std::nullopt;
+  const auto& call = std::get<Expr::Call>(st.value->node);
+  if (!is_resolved_std_json_call(call, "array_push") || call.args.size() != 2) return std::nullopt;
+  if (!std::holds_alternative<Expr::VarRef>(call.args[0]->node)) return std::nullopt;
+  const auto& builder_ref = std::get<Expr::VarRef>(call.args[0]->node);
+  if (builder_ref.var != st.var) return std::nullopt;
+  if (expr_uses_var(*call.args[1], st.var)) return std::nullopt;
+  return "nebula::rt::json_array_push(std::move(" + st.name + "), " +
+         emit_expr(ctx, *call.args[1]) + ")";
 }
 
 static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
@@ -1624,6 +1712,10 @@ static void emit_stmt(Cpp& out, EmitCtx& ctx, const Stmt& s) {
           emit_let(out, ctx, st);
         } else if constexpr (std::is_same_v<S, Stmt::AssignVar>) {
           ctx.stringify_source_vars.erase(st.var);
+          if (auto moved_builder = emit_json_array_builder_self_push(ctx, st); moved_builder.has_value()) {
+            out.line(st.name + " = " + *moved_builder + ";");
+            return;
+          }
           out.line(st.name + " = " + emit_expr(ctx, *st.value) + ";");
         } else if constexpr (std::is_same_v<S, Stmt::AssignField>) {
           out.line(emit_member_access(ctx, st.base_var, st.base_name, st.field) + " = " +
@@ -1959,7 +2051,7 @@ static void emit_function(Cpp& out,
     decl << cpp_type(fn.ret) << " " << fn_name << "(";
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
       if (i) decl << ", ";
-      decl << cpp_decl(fn.params[i].ty, fn.params[i].name, fn.params[i].is_ref);
+      decl << cpp_extern_param_decl(fn, fn.params[i]);
     }
     decl << ");";
     out.line(decl.str());
@@ -2021,7 +2113,7 @@ static void emit_function_forward_decl(Cpp& out,
     decl << cpp_type(fn.ret) << " " << fn_name << "(";
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
       if (i) decl << ", ";
-      decl << cpp_decl(fn.params[i].ty, fn.params[i].name, fn.params[i].is_ref);
+      decl << cpp_extern_param_decl(fn, fn.params[i]);
     }
     decl << ");";
     out.line(decl.str());

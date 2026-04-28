@@ -1,0 +1,111 @@
+id = "TST-304-codegen-extern-const-ref-builder-move-smoke"
+suite = "test"
+description = "C++ codegen emits allowlisted extern const-ref declarations and self-updating JSON builders with move"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+
+root = Path("work/codegen_extern_const_ref_builder_move/app")
+(root / "src").mkdir(parents=True, exist_ok=True)
+(root / "native").mkdir(parents=True, exist_ok=True)
+(root / "nebula.toml").write_text('''schema_version = 1
+
+[package]
+name = "codegen-extern-const-ref-builder-move"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[native]
+cxx_sources = ["native/probe.cpp"]
+''', encoding="utf-8")
+(root / "native" / "probe.cpp").write_text('''#include "runtime/nebula_runtime.hpp"
+
+#include <string>
+
+nebula::rt::Result<std::string, std::string> __nebula_ui_headless_dispatch_action_wire(
+    const nebula::rt::JsonValue& value,
+    const std::string& action) {
+  (void)value;
+  return nebula::rt::ok_result(std::string("probe=") + action);
+}
+
+std::string host_probe(std::string action) {
+  return action;
+}
+''', encoding="utf-8")
+(root / "src" / "main.nb").write_text('''module main
+import std::json
+import std::result
+
+extern fn __nebula_ui_headless_dispatch_action_wire(value: Json, action: String) -> Result<String, String>
+extern fn host_probe(action: String) -> String
+
+fn probe(tree: Json) -> String {
+  match __nebula_ui_headless_dispatch_action_wire(tree, "targets.refresh") {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      return msg
+    }
+  }
+}
+
+fn main() -> Void {
+  let items = array_builder()
+  let saved = string_value("saved")
+  items = array_push(items, string_value("a"))
+  items = array_push(items, saved)
+  items = array_push(items, string_value("b"))
+  let guard = array_builder()
+  guard = array_push(guard, array_build(guard))
+  let payload = array_build(items)
+  let marker = probe(payload)
+  if marker != "probe=targets.refresh" || host_probe("host") != "host" {
+    print("bad-probe")
+  }
+  print(stringify(payload))
+}
+''', encoding="utf-8")
+PY
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "build"
+source = "work/codegen_extern_const_ref_builder_move/app"
+args = ["--emit-cpp"]
+expect_rc = 0
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+
+text = Path("generated_cpp/main.cpp").read_text(encoding="utf-8")
+expected_decl = "__nebula_ui_headless_dispatch_action_wire(const nebula::rt::JsonValue& value, const std::string& action);"
+if expected_decl not in text:
+    raise SystemExit(f"missing extern const-ref declaration: {expected_decl}")
+host_decl = "host_probe(std::string action);"
+if host_decl not in text:
+    raise SystemExit(f"non-allowlisted host extern should stay by-value: {host_decl}")
+move_pattern = "items = nebula::rt::json_array_push(std::move(items),"
+if text.count(move_pattern) != 3:
+    raise SystemExit(f"missing self-updating builder move peephole: {move_pattern}")
+if "items = nebula::rt::json_array_push(items," in text:
+    raise SystemExit("builder self-push still copies the builder variable")
+if "guard = nebula::rt::json_array_push(std::move(guard)," in text:
+    raise SystemExit("builder move peephole moved a builder used by the value argument")
+if "std::move(saved)" in text:
+    raise SystemExit("builder move peephole moved a reusable JSON value argument")
+print("codegen-extern-const-ref-builder-move-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["codegen-extern-const-ref-builder-move-ok"]

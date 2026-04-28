@@ -274,7 +274,7 @@ RtJson action_summary_json(const ActionSummary& summary) {
 
 }  // namespace
 
-RtResult __nebula_ui_headless_dispatch_action_wire(RtJson tree, std::string action) {
+RtResult __nebula_ui_headless_dispatch_action_wire(const RtJson& tree, const std::string& action) {
   if (action.empty()) return err_string("action id must be non-empty");
 
   if (tree.text.empty()) return err_string("expected nebula-ui.tree.v1 root-view schema");
@@ -287,7 +287,7 @@ RtResult __nebula_ui_headless_dispatch_action_wire(RtJson tree, std::string acti
   return err_string("action not found: " + action);
 }
 
-RtJsonResult __nebula_ui_headless_action_summary_wire(RtJson tree) {
+RtJsonResult __nebula_ui_headless_action_summary_wire(const RtJson& tree) {
   if (tree.text.empty()) return nebula::rt::err_result<RtJson>("expected nebula-ui.tree.v1 root-view schema");
 
   bool found = false;
@@ -299,7 +299,7 @@ RtJsonResult __nebula_ui_headless_action_summary_wire(RtJson tree) {
   return nebula::rt::ok_result(action_summary_json(summary));
 }
 
-RtResult __nebula_ui_headless_dispatch_action_summary_wire(RtJson summary, std::string action) {
+RtResult __nebula_ui_headless_dispatch_action_summary_wire(const RtJson& summary, const std::string& action) {
   if (action.empty()) return err_string("action id must be non-empty");
 
   auto schema = nebula::rt::json_get_string(summary, "schema");
