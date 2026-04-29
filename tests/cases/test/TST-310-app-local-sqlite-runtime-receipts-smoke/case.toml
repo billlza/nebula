@@ -1,0 +1,298 @@
+id = "TST-310-app-local-sqlite-runtime-receipts-smoke"
+suite = "test"
+description = "app-local substrate persists generic command/event/recovery/update receipts into SQLite"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_sqlite_runtime_receipts")
+app = root / "app"
+db_path = root / "state" / "receipts.db"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-sqlite-runtime-receipts"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn db_path() -> String {
+  return "work/app_local_sqlite_runtime_receipts/state/receipts.db"
+}
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_receipt_error(result: Result<AppLocalReceipt, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn principal_value() -> AppLocalPrincipal {
+  return AppLocalPrincipal("local-operator", "app.local.writer", "internal")
+}
+
+fn app_id() -> String {
+  return "app.local.demo"
+}
+
+fn context_value() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-1", "corr-1", 4, principal_value(), 1777431000000)
+}
+
+fn rejected_context_value() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-2", "corr-rejected", 5, principal_value(), 1777431000001)
+}
+
+fn verify_counts() -> Result<Bool, String> {
+  let command_count = receipt_count(db_path(), app_id(), "command_context")?
+  let event_count = receipt_count(db_path(), app_id(), "event")?
+  let recovery_count = receipt_count(db_path(), app_id(), "recovery_marker")?
+  let update_count = receipt_count(db_path(), app_id(), "update_marker")?
+  return Ok(command_count == 2 && event_count == 2 && recovery_count == 1 && update_count == 1)
+}
+
+fn verify_rejected_event_receipt() -> Result<Bool, String> {
+  let receipt = latest_receipt(db_path(), app_id(), "event", "corr-rejected")?
+  let kind = get_string(receipt.payload, "event_kind")?
+  let accepted = get_bool(receipt.payload, "accepted")?
+  let revision = get_int(receipt.payload, "state_revision")?
+  return Ok(receipt.app_id == app_id() &&
+            receipt.schema == "nebula.app-local.event.v1" &&
+            receipt.receipt_kind == "event" &&
+            receipt.receipt_key == "cmd-2" &&
+            receipt.correlation_id == "corr-rejected" &&
+            receipt.state_revision == 5 &&
+            kind == "command_rejected" &&
+            accepted == false &&
+            revision == 5)
+}
+
+fn verify_update_receipt() -> Result<Bool, String> {
+  let receipt = latest_receipt(db_path(), app_id(), "update_marker", "corr-1")?
+  let checksum = get_string(receipt.payload, "manifest_sha256")?
+  let manifest_path = get_string(receipt.payload, "manifest_path")?
+  return Ok(receipt.schema == "nebula.app-local.update-marker.v1" &&
+            receipt.receipt_key == "corr-1" &&
+            receipt.state_revision == 6 &&
+            checksum == "abc123" &&
+            manifest_path == "/tmp/update.json")
+}
+
+fn verify_latest_missing() -> Void {
+  match latest_receipt(db_path(), app_id(), "event", "missing") {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, "app-local substrate receipt not found")
+    }
+  }
+}
+
+fn verify_scope_negative_contracts() -> Void {
+  expect_receipt_error(record_receipt(db_path(), "", "event", "key", "corr-1", 0, "schema", object1("kind", string_value("bad")), 1),
+                       "app-local substrate receipt app_id is required")
+  expect_receipt_error(record_receipt(db_path(), app_id(), "", "key", "corr-1", 0, "schema", object1("kind", string_value("bad")), 1),
+                       "app-local substrate receipt_kind is required")
+}
+
+fn verify_identity_negative_contracts() -> Void {
+  expect_receipt_error(record_receipt(db_path(), app_id(), "event", "", "corr-1", 0, "schema", object1("kind", string_value("bad")), 1),
+                       "app-local substrate receipt_key is required")
+  expect_receipt_error(record_receipt(db_path(), app_id(), "event", "key", "", 0, "schema", object1("kind", string_value("bad")), 1),
+                       "app-local substrate receipt correlation_id is required")
+}
+
+fn verify_value_negative_contracts() -> Void {
+  expect_receipt_error(record_receipt(db_path(), app_id(), "event", "key", "corr-1", -1, "schema", object1("kind", string_value("bad")), 1),
+                       "app-local substrate receipt state_revision must be non-negative")
+  expect_receipt_error(record_receipt(db_path(), app_id(), "event", "key", "corr-1", 0, "", object1("kind", string_value("bad")), 1),
+                       "app-local substrate receipt schema is required")
+  expect_receipt_error(record_receipt(db_path(), app_id(), "event", "key", "corr-1", 0, "schema", object1("kind", string_value("bad")), -1),
+                       "app-local substrate receipt created_unix_ms must be non-negative")
+}
+
+fn verify_negative_contracts() -> Void {
+  verify_scope_negative_contracts()
+  verify_identity_negative_contracts()
+  verify_value_negative_contracts()
+}
+
+fn record_context_idempotency(context: AppLocalCommandContext) -> Result<Bool, String> {
+  let first = record_command_context_receipt(db_path(), app_id(), context, 1777431000000)?
+  let duplicate = record_command_context_receipt(db_path(), app_id(), context, 1777431009999)?
+  return Ok(first.receipt_id > 0 && duplicate.receipt_id == first.receipt_id)
+}
+
+fn record_command_pair(context: AppLocalCommandContext,
+                       rejected_context: AppLocalCommandContext,
+                       accepted_event: AppLocalEvent,
+                       rejected_event: AppLocalEvent) -> Result<Bool, String> {
+  if !record_context_idempotency(context)? {
+    return Ok(false)
+  }
+  record_event_receipt(db_path(), app_id(), accepted_event, 1777431000001)?
+  record_command_context_receipt(db_path(), app_id(), rejected_context, 1777431000002)?
+  record_event_receipt(db_path(), app_id(), rejected_event, 1777431000003)?
+  return Ok(true)
+}
+
+fn record_marker_pair() -> Result<Bool, String> {
+  let recovery = recovery_marker(app_id(), "corr-1", 6, "crash_detected", "/tmp/app.marker")?
+  let update = update_marker(app_id(), "corr-1", 6, "staged", "/tmp/update.json", "abc123")?
+  record_recovery_marker_receipt(db_path(), recovery, 1777431000004)?
+  record_update_marker_receipt(db_path(), update, 1777431000005)?
+  return Ok(true)
+}
+
+fn record_sample_command_receipts() -> Result<Bool, String> {
+  let context = context_value()?
+  let rejected_context = rejected_context_value()?
+  let accepted_event = command_accepted_event(context, "settings.updated", "ok")?
+  let rejected_event = command_rejected_event(rejected_context, "stale command")?
+  return record_command_pair(context, rejected_context, accepted_event, rejected_event)
+}
+
+fn record_sample_receipts() -> Result<Bool, String> {
+  initialize_receipts(db_path())?
+  if !record_sample_command_receipts()? {
+    return Ok(false)
+  }
+  return record_marker_pair()
+}
+
+fn verify_runtime_receipts() -> Result<Bool, String> {
+  if !record_sample_receipts()? {
+    return Ok(false)
+  }
+  if !verify_counts()? {
+    return Ok(false)
+  }
+  if !verify_rejected_event_receipt()? {
+    return Ok(false)
+  }
+  return verify_update_receipt()
+}
+
+fn main() -> Int {
+  match verify_runtime_receipts() {
+    Ok(ok) => {
+      if !ok {
+        print("app-local-sqlite-runtime-receipts-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_latest_missing()
+  verify_negative_contracts()
+  print("app-local-sqlite-runtime-receipts-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local SQLite receipts check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True)
+if run.returncode != 0 or "app-local-sqlite-runtime-receipts-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local SQLite receipts smoke failed")
+
+with sqlite3.connect(db_path) as conn:
+    rows = conn.execute(
+        "SELECT app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema FROM app_local_runtime_receipts ORDER BY receipt_id"
+    ).fetchall()
+if [row[1] for row in rows] != [
+    "command_context",
+    "event",
+    "command_context",
+    "event",
+    "recovery_marker",
+    "update_marker",
+]:
+    raise SystemExit(f"unexpected SQLite receipt order: {rows!r}")
+if rows[0][0] != "app.local.demo" or rows[0][2] != "cmd-1":
+    raise SystemExit(f"unexpected SQLite receipt identity: {rows[0]!r}")
+if rows[-1][5] != "nebula.app-local.update-marker.v1":
+    raise SystemExit(f"unexpected SQLite receipt schema: {rows[-1]!r}")
+print("app-local-sqlite-runtime-receipts-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-sqlite-runtime-receipts-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+for marker in [
+    "AppLocalReceipt",
+    "record_command_context_receipt",
+    "record_event_receipt",
+    "record_recovery_marker_receipt",
+    "record_update_marker_receipt",
+    "app_local_runtime_receipts",
+]:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing receipt marker: {marker}")
+for marker in [
+    "Runtime Receipts",
+    "app_local_runtime_receipts",
+    "sidecar output",
+    "narrower than an audit log or event-sourcing framework",
+]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing receipt marker: {marker}")
+print("app-local-sqlite-runtime-receipts-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-sqlite-runtime-receipts-docs-ok"]

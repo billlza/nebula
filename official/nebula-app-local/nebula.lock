@@ -1,6 +1,6 @@
 schema_version = 2
 root_package = "nebula-app-local"
-root_manifest_hash = "a413ae56e70bbe2f"
+root_manifest_hash = "7d9da0d8783d3383"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
@@ -14,11 +14,11 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "a413ae56e70bbe2f"
-source_fingerprint = "5d7ba618661439de"
-integrity_fingerprint = "769a3cdf78730bc3"
+manifest_hash = "7d9da0d8783d3383"
+source_fingerprint = "7f2f9646e2138efa"
+integrity_fingerprint = "a21445dfd6c53c55"
 is_root = 1
-dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "jobs=nebula-jobs", "observe=nebula-observe"]
+dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs=nebula-jobs", "observe=nebula-observe"]
 
 [[package]]
 name = "nebula-auth"

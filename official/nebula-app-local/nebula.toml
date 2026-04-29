@@ -10,5 +10,6 @@ src_dir = "src"
 app_config = { path = "../nebula-config" }
 auth_pkg = { path = "../nebula-auth" }
 db_postgres = { path = "../nebula-db-postgres" }
+db_sqlite = { path = "../nebula-db-sqlite" }
 jobs = { path = "../nebula-jobs" }
 observe = { path = "../nebula-observe" }

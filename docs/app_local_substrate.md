@@ -87,6 +87,20 @@ Update markers use `nebula.app-local.update-marker.v1` and carry app id, correla
 revision, status, manifest path, and manifest checksum. They are a sidecar contract for host-owned
 bundle/update flows, not a downloader, signer, notarization flow, rollback engine, or auto-updater.
 
+## Runtime Receipts
+
+The default local recoverability path is SQLite. `official/nebula-app-local` provides a generic
+`app_local_runtime_receipts` table plus helpers for command contexts, command events, recovery
+markers, and update markers. Receipts store the stable schema string, app id, receipt key,
+correlation id, state revision, created time, and the same JSON payload that can still be emitted as
+sidecar output. `app_id + receipt_kind + receipt_key` is unique so replaying the same command or
+marker returns the existing receipt instead of creating an ambiguous duplicate.
+
+This is intentionally narrower than an audit log or event-sourcing framework. It gives a thin-host
+shell enough local facts to replay, reject, diagnose crashes, and correlate staged updates, while
+leaving media libraries, game save data, editor documents, and sync semantics to the validation app
+that actually needs them.
+
 ## App Boundaries
 
 The substrate is allowed to standardize:

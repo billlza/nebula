@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "d26c765b01a799a3"
-source_fingerprint = "6a0b1abd1e488de1"
-integrity_fingerprint = "d9d96da3350d5c9e"
+source_fingerprint = "e20bba78df5a8e88"
+integrity_fingerprint = "ca84321d5d43c177"
 is_root = 1
 host_cxx = ["host.cpp"]
 dependencies = ["app_local=nebula-app-local", "bridge=nebula-thin-host-bridge", "ui=nebula-ui"]
@@ -31,11 +31,11 @@ src_dir = "src"
 source_kind = "path"
 source_hint = "../../official/nebula-app-local"
 resolved_rev = ""
-manifest_hash = "a413ae56e70bbe2f"
-source_fingerprint = "5d7ba618661439de"
-integrity_fingerprint = "682b3d13c64c587a"
+manifest_hash = "7d9da0d8783d3383"
+source_fingerprint = "7f2f9646e2138efa"
+integrity_fingerprint = "8c976afb9cd65a20"
 is_root = 0
-dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "jobs=nebula-jobs", "observe=nebula-observe"]
+dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs=nebula-jobs", "observe=nebula-observe"]
 
 [[package]]
 name = "nebula-auth"

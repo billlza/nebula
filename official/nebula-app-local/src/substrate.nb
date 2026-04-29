@@ -1,10 +1,11 @@
 module substrate
 import app_config::config
 import auth_pkg::jwt
-import db_postgres::postgres
+import db_sqlite::sqlite
 import jobs::graph
 import observe::log
 import observe::metrics
+import postgres_probe
 import std::json
 import std::result
 
@@ -71,6 +72,44 @@ struct AppLocalUpdateMarker {
   status: String
   manifest_path: String
   manifest_sha256: String
+}
+
+struct AppLocalReceipt {
+  receipt_id: Int
+  app_id: String
+  receipt_kind: String
+  receipt_key: String
+  correlation_id: String
+  state_revision: Int
+  schema: String
+  payload: Json
+  created_unix_ms: Int
+}
+
+struct AppLocalReceiptWrite {
+  app_id: String
+  receipt_kind: String
+  receipt_key: String
+  correlation_id: String
+  state_revision: Int
+  schema: String
+  payload: Json
+  created_unix_ms: Int
+}
+
+struct AppLocalReceiptIdentity {
+  receipt_id: Int
+  app_id: String
+  receipt_kind: String
+  receipt_key: String
+  correlation_id: String
+}
+
+struct AppLocalReceiptData {
+  state_revision: Int
+  schema: String
+  payload: Json
+  created_unix_ms: Int
 }
 
 fn app_local_config(app_id: String,
@@ -170,7 +209,7 @@ fn postgres_runtime_available_if_needed(config_value: AppLocalConfig) -> Result<
   if config_value.data_backend != "postgres" {
     return Ok(false)
   }
-  match probe_runtime() {
+  match postgres_probe_runtime() {
     Ok(available) => {
       if available {
         return Ok(true)
@@ -436,6 +475,279 @@ fn AppLocalUpdateMarker_as_json(self: AppLocalUpdateMarker) -> Json {
                  string_value(self.manifest_path),
                  "manifest_sha256",
                  string_value(self.manifest_sha256))
+}
+
+fn AppLocalReceipt_as_json(self: AppLocalReceipt) -> Json {
+  return object9("receipt_id",
+                 int_value(self.receipt_id),
+                 "app_id",
+                 string_value(self.app_id),
+                 "receipt_kind",
+                 string_value(self.receipt_kind),
+                 "receipt_key",
+                 string_value(self.receipt_key),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "schema",
+                 string_value(self.schema),
+                 "payload",
+                 self.payload,
+                 "created_unix_ms",
+                 int_value(self.created_unix_ms))
+}
+
+fn ensure_receipt_schema(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS app_local_runtime_receipts (receipt_id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT NOT NULL, receipt_kind TEXT NOT NULL, receipt_key TEXT NOT NULL, correlation_id TEXT NOT NULL, state_revision INTEGER NOT NULL, schema TEXT NOT NULL, payload TEXT NOT NULL, created_unix_ms INTEGER NOT NULL, UNIQUE(app_id, receipt_kind, receipt_key))")?
+  conn.execute0("CREATE INDEX IF NOT EXISTS idx_app_local_runtime_receipts_lookup ON app_local_runtime_receipts(app_id, receipt_kind, correlation_id, state_revision)")?
+  return Ok(true)
+}
+
+fn receipt_write(app_id: String,
+                 receipt_kind: String,
+                 receipt_key: String,
+                 correlation_id: String,
+                 state_revision: Int,
+                 schema: String,
+                 payload: Json,
+                 created_unix_ms: Int) -> AppLocalReceiptWrite {
+  return AppLocalReceiptWrite(app_id,
+                              receipt_kind,
+                              receipt_key,
+                              correlation_id,
+                              state_revision,
+                              schema,
+                              payload,
+                              created_unix_ms)
+}
+
+fn receipt_params(draft: AppLocalReceiptWrite) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(draft.app_id))
+  let builder3 = array_push(builder2, string_value(draft.receipt_kind))
+  let builder4 = array_push(builder3, string_value(draft.receipt_key))
+  let builder5 = array_push(builder4, string_value(draft.correlation_id))
+  let builder6 = array_push(builder5, int_value(draft.state_revision))
+  let builder7 = array_push(builder6, string_value(draft.schema))
+  let builder8 = array_push(builder7, string_value(stringify(draft.payload)))
+  let builder9 = array_push(builder8, int_value(draft.created_unix_ms))
+  return array_build(builder9)
+}
+
+fn receipt_count_params(app_id: String, receipt_kind: String) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  let builder3 = array_push(builder2, string_value(receipt_kind))
+  return array_build(builder3)
+}
+
+fn receipt_identity_params(app_id: String, receipt_kind: String, receipt_key: String) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  let builder3 = array_push(builder2, string_value(receipt_kind))
+  let builder4 = array_push(builder3, string_value(receipt_key))
+  return array_build(builder4)
+}
+
+fn receipt_lookup_params(app_id: String, receipt_kind: String, correlation_id: String) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  let builder3 = array_push(builder2, string_value(receipt_kind))
+  let builder4 = array_push(builder3, string_value(correlation_id))
+  return array_build(builder4)
+}
+
+fn validate_receipt_scope(app_id: String, receipt_kind: String) -> Result<Bool, String> {
+  if app_id == "" {
+    return Err("app-local substrate receipt app_id is required")
+  }
+  if receipt_kind == "" {
+    return Err("app-local substrate receipt_kind is required")
+  }
+  return Ok(true)
+}
+
+fn validate_receipt_input(draft: AppLocalReceiptWrite) -> Result<Bool, String> {
+  validate_receipt_scope(draft.app_id, draft.receipt_kind)?
+  if draft.receipt_key == "" {
+    return Err("app-local substrate receipt_key is required")
+  }
+  if draft.correlation_id == "" {
+    return Err("app-local substrate receipt correlation_id is required")
+  }
+  if draft.state_revision < 0 {
+    return Err("app-local substrate receipt state_revision must be non-negative")
+  }
+  if draft.schema == "" {
+    return Err("app-local substrate receipt schema is required")
+  }
+  if draft.created_unix_ms < 0 {
+    return Err("app-local substrate receipt created_unix_ms must be non-negative")
+  }
+  return Ok(true)
+}
+
+fn initialize_receipts(path: String) -> Result<Bool, String> {
+  let conn = open_receipt_store(path)?
+  conn.close()?
+  return Ok(true)
+}
+
+fn open_receipt_store(path: String) -> Result<Connection, String> {
+  let conn = open(path)?
+  ensure_receipt_schema(conn)?
+  return Ok(conn)
+}
+
+fn record_receipt(path: String,
+                  app_id: String,
+                  receipt_kind: String,
+                  receipt_key: String,
+                  correlation_id: String,
+                  state_revision: Int,
+                  schema: String,
+                  payload: Json,
+                  created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  let draft = receipt_write(app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms)
+  return record_receipt_write(path, draft)
+}
+
+fn record_receipt_write(path: String, draft: AppLocalReceiptWrite) -> Result<AppLocalReceipt, String> {
+  validate_receipt_input(draft)?
+  let conn = open_receipt_store(path)?
+  insert_receipt(conn, draft)?
+  let receipt = load_receipt_by_draft(conn, draft)?
+  conn.close()?
+  return Ok(receipt)
+}
+
+fn insert_receipt(conn: Connection, draft: AppLocalReceiptWrite) -> Result<Int, String> {
+  return conn.execute("INSERT OR IGNORE INTO app_local_runtime_receipts(app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                      receipt_params(draft))
+}
+
+fn load_receipt_by_draft(conn: Connection, draft: AppLocalReceiptWrite) -> Result<AppLocalReceipt, String> {
+  return load_receipt_by_key(conn, draft.app_id, draft.receipt_kind, draft.receipt_key)
+}
+
+fn record_command_context_receipt(path: String, app_id: String, context: AppLocalCommandContext, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_receipt(path,
+                        app_id,
+                        "command_context",
+                        context.command_id,
+                        context.correlation_id,
+                        context.state_revision,
+                        "nebula.app-local.command-context.v1",
+                        context.as_json(),
+                        created_unix_ms)
+}
+
+fn record_event_receipt(path: String, app_id: String, event_value: AppLocalEvent, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_receipt(path,
+                        app_id,
+                        "event",
+                        event_value.command_id,
+                        event_value.correlation_id,
+                        event_value.state_revision,
+                        "nebula.app-local.event.v1",
+                        event_value.as_json(),
+                        created_unix_ms)
+}
+
+fn record_recovery_marker_receipt(path: String, marker: AppLocalRecoveryMarker, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_receipt(path,
+                        marker.app_id,
+                        "recovery_marker",
+                        marker.correlation_id,
+                        marker.correlation_id,
+                        marker.state_revision,
+                        "nebula.app-local.recovery-marker.v1",
+                        marker.as_json(),
+                        created_unix_ms)
+}
+
+fn record_update_marker_receipt(path: String, marker: AppLocalUpdateMarker, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_receipt(path,
+                        marker.app_id,
+                        "update_marker",
+                        marker.correlation_id,
+                        marker.correlation_id,
+                        marker.state_revision,
+                        "nebula.app-local.update-marker.v1",
+                        marker.as_json(),
+                        created_unix_ms)
+}
+
+fn receipt_count(path: String, app_id: String, receipt_kind: String) -> Result<Int, String> {
+  validate_receipt_scope(app_id, receipt_kind)?
+  let conn = open_receipt_store(path)?
+  let count = receipt_count_conn(conn, app_id, receipt_kind)?
+  conn.close()?
+  return Ok(count)
+}
+
+fn receipt_count_conn(conn: Connection, app_id: String, receipt_kind: String) -> Result<Int, String> {
+  let rows = conn.query("SELECT COUNT(*) AS count FROM app_local_runtime_receipts WHERE app_id = ? AND receipt_kind = ?", receipt_count_params(app_id, receipt_kind))?
+  return rows.row(0)?.get_int_at(0)
+}
+
+fn load_receipt_by_key(conn: Connection, app_id: String, receipt_kind: String, receipt_key: String) -> Result<AppLocalReceipt, String> {
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? AND receipt_kind = ? AND receipt_key = ? LIMIT 1",
+                        receipt_identity_params(app_id, receipt_kind, receipt_key))?
+  if rows.len()? == 0 {
+    return Err("app-local substrate receipt not found")
+  }
+  return receipt_from_row(rows.row(0)?)
+}
+
+fn receipt_from_row(row: Row) -> Result<AppLocalReceipt, String> {
+  let identity = receipt_identity_from_row(row)?
+  let data = receipt_data_from_row(row)?
+  return Ok(AppLocalReceipt(identity.receipt_id,
+                            identity.app_id,
+                            identity.receipt_kind,
+                            identity.receipt_key,
+                            identity.correlation_id,
+                            data.state_revision,
+                            data.schema,
+                            data.payload,
+                            data.created_unix_ms))
+}
+
+fn receipt_identity_from_row(row: Row) -> Result<AppLocalReceiptIdentity, String> {
+  return Ok(AppLocalReceiptIdentity(row.get_int_at(0)?,
+                                    row.get_string_at(1)?,
+                                    row.get_string_at(2)?,
+                                    row.get_string_at(3)?,
+                                    row.get_string_at(4)?))
+}
+
+fn receipt_data_from_row(row: Row) -> Result<AppLocalReceiptData, String> {
+  return Ok(AppLocalReceiptData(row.get_int_at(5)?,
+                                row.get_string_at(6)?,
+                                parse(row.get_string_at(7)?)?,
+                                row.get_int_at(8)?))
+}
+
+fn latest_receipt(path: String, app_id: String, receipt_kind: String, correlation_id: String) -> Result<AppLocalReceipt, String> {
+  validate_receipt_scope(app_id, receipt_kind)?
+  if correlation_id == "" {
+    return Err("app-local substrate receipt correlation_id is required")
+  }
+  let conn = open_receipt_store(path)?
+  let receipt = latest_receipt_conn(conn, app_id, receipt_kind, correlation_id)?
+  conn.close()?
+  return Ok(receipt)
+}
+
+fn latest_receipt_conn(conn: Connection, app_id: String, receipt_kind: String, correlation_id: String) -> Result<AppLocalReceipt, String> {
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? AND receipt_kind = ? AND correlation_id = ? ORDER BY receipt_id DESC LIMIT 1",
+                        receipt_lookup_params(app_id, receipt_kind, correlation_id))?
+  if rows.len()? == 0 {
+    return Err("app-local substrate receipt not found")
+  }
+  return receipt_from_row(rows.row(0)?)
 }
 
 fn validate_background_stages(stages: Json) -> Result<Bool, String> {

@@ -43,6 +43,14 @@ fn int_text(value: Int) -> String {
   return stringify(int_value(value))
 }
 
+fn receipt_db_path() -> String {
+  return "work/thin_host_gui_host_shell/app-local-receipts.db"
+}
+
+fn app_id() -> String {
+  return "thin-host-gui-host-shell"
+}
+
 fn initial_state() -> ShellState {
   return ShellState("targets", 0, "boot", 0)
 }
@@ -97,7 +105,10 @@ fn publish_app_local_accepted(command_id: String,
                               message: String) -> Result<Bool, String> {
   let context = app_local_context(command_id, correlation_id, previous_revision)?
   publish_app_local_context(context)
-  publish_app_local_event(command_accepted_event(context, event_kind, message)?)
+  record_command_context_receipt(receipt_db_path(), app_id(), context, 1777431000000)?
+  let event_value = command_accepted_event(context, event_kind, message)?
+  publish_app_local_event(event_value)
+  record_event_receipt(receipt_db_path(), app_id(), event_value, 1777431000000)?
   return Ok(true)
 }
 
@@ -107,22 +118,29 @@ fn publish_app_local_rejected(command_id: String,
                               reason: String) -> Result<Bool, String> {
   let context = app_local_context(command_id, correlation_id, revision)?
   publish_app_local_context(context)
-  publish_app_local_event(command_rejected_event(context, reason)?)
+  record_command_context_receipt(receipt_db_path(), app_id(), context, 1777431000000)?
+  let event_value = command_rejected_event(context, reason)?
+  publish_app_local_event(event_value)
+  record_event_receipt(receipt_db_path(), app_id(), event_value, 1777431000000)?
   return Ok(true)
 }
 
 fn publish_app_local_shutdown(correlation_id: String, revision: Int) -> Result<Bool, String> {
-  publish_app_local_recovery(recovery_marker("thin-host-gui-host-shell",
-                                             correlation_id,
-                                             revision,
-                                             "manual-preview",
-                                             "logs/thin-host-gui-host-shell.ndjson")?)
-  publish_app_local_update(update_marker("thin-host-gui-host-shell",
-                                         correlation_id,
-                                         revision,
-                                         "staged-preview",
-                                         "deploy/update/manifest.preview.json",
-                                         "52457a884a25b45c67e40519907515393af3b7c6ac451baca974285987a4766c")?)
+  let recovery = recovery_marker(app_id(),
+                                 correlation_id,
+                                 revision,
+                                 "manual-preview",
+                                 "logs/thin-host-gui-host-shell.ndjson")?
+  publish_app_local_recovery(recovery)
+  record_recovery_marker_receipt(receipt_db_path(), recovery, 1777431000000)?
+  let update = update_marker(app_id(),
+                             correlation_id,
+                             revision,
+                             "staged-preview",
+                             "deploy/update/manifest.preview.json",
+                             "52457a884a25b45c67e40519907515393af3b7c6ac451baca974285987a4766c")?
+  publish_app_local_update(update)
+  record_update_marker_receipt(receipt_db_path(), update, 1777431000000)?
   return Ok(true)
 }
 
