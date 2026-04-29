@@ -1,0 +1,287 @@
+id = "TST-316-app-local-runtime-session-summary-smoke"
+suite = "test"
+description = "app-local substrate derives windowed runtime session summaries from lifecycle marker receipts"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_runtime_session_summary")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-runtime-session-summary"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn db_path() -> String {
+  return "work/app_local_runtime_session_summary/state/receipts.db"
+}
+
+fn app_id() -> String {
+  return "app.local.session-summary"
+}
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_session_error(result: Result<AppLocalRuntimeSessionSummary, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => { fail() }
+    Err(msg) => { expect_text(msg, expected) }
+  }
+}
+
+fn marker(session_id: String,
+          correlation_id: String,
+          revision: Int,
+          status: String,
+          reason: String) -> Result<AppLocalLifecycleMarker, String> {
+  return lifecycle_marker(app_id(), session_id, correlation_id, revision, status, reason)
+}
+
+fn record_marker(session_id: String,
+                 correlation_id: String,
+                 revision: Int,
+                 status: String,
+                 reason: String,
+                 created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_lifecycle_marker_receipt(db_path(),
+                                         marker(session_id, correlation_id, revision, status, reason)?,
+                                         created_unix_ms)
+}
+
+fn verify_summary_json(summary: AppLocalRuntimeSessionSummary,
+                       expected_completion: String,
+                       expected_status: String,
+                       expected_revision: Int) -> Result<Bool, String> {
+  let value = summary.as_json()
+  if get_string(value, "schema")? != "nebula.app-local.runtime-session-summary.v1" {
+    return Ok(false)
+  }
+  if get_string(value, "completion")? != expected_completion {
+    return Ok(false)
+  }
+  return verify_summary_json_parts(summary, value, expected_status, expected_revision)
+}
+
+fn verify_summary_json_parts(summary: AppLocalRuntimeSessionSummary,
+                             value: Json,
+                             expected_status: String,
+                             expected_revision: Int) -> Result<Bool, String> {
+  if !verify_summary_flags_json(summary, get_value(value, "flags")?)? {
+    return Ok(false)
+  }
+  if !verify_summary_window_json(summary, get_value(value, "receipt_window")?)? {
+    return Ok(false)
+  }
+  return verify_summary_last_json(get_value(value, "last_marker")?, expected_status, expected_revision)
+}
+
+fn verify_summary_flags_json(summary: AppLocalRuntimeSessionSummary, flags: Json) -> Result<Bool, String> {
+  return Ok(get_bool(flags, "started")? == summary.started &&
+            get_bool(flags, "ready")? == summary.ready &&
+            get_bool(flags, "degraded")? == summary.degraded &&
+            get_bool(flags, "shutdown_clean")? == summary.shutdown_clean)
+}
+
+fn verify_summary_window_json(summary: AppLocalRuntimeSessionSummary, window: Json) -> Result<Bool, String> {
+  return Ok(get_int(window, "first_receipt_id")? == summary.first_receipt_id &&
+            get_int(window, "last_receipt_id")? == summary.last_receipt_id)
+}
+
+fn verify_summary_last_json(last: Json, expected_status: String, expected_revision: Int) -> Result<Bool, String> {
+  return Ok(get_string(last, "status")? == expected_status &&
+            get_int(last, "state_revision")? == expected_revision)
+}
+
+fn session_one_core_ok(summary: AppLocalRuntimeSessionSummary) -> Bool {
+  return summary.runtime_session_id == "session-1" &&
+         summary.marker_count == 4 &&
+         summary.started &&
+         summary.ready &&
+         summary.degraded &&
+         summary.shutdown_clean
+}
+
+fn session_one_last_ok(summary: AppLocalRuntimeSessionSummary) -> Bool {
+  return summary.first_receipt_id == 1 &&
+         summary.last_receipt_id == 4 &&
+         summary.last_status == "shutdown_clean" &&
+         summary.last_reason == "normal quit"
+}
+
+fn verify_session_one() -> Result<Bool, String> {
+  let summary = runtime_session_summary(db_path(), app_id(), "session-1", 10)?
+  if !session_one_core_ok(summary) || !session_one_last_ok(summary) {
+    return Ok(false)
+  }
+  if summary.last_state_revision != 3 || summary.last_correlation_id != "session-1-clean" {
+    return Ok(false)
+  }
+  return Ok(runtime_session_completion(summary) == "degraded_clean" &&
+            verify_summary_json(summary, "degraded_clean", "shutdown_clean", 3)?)
+}
+
+fn latest_session_core_ok(summary: AppLocalRuntimeSessionSummary) -> Bool {
+  return summary.runtime_session_id == "session-2" &&
+         summary.marker_count == 1 &&
+         summary.started &&
+         !summary.ready &&
+         !summary.degraded &&
+         !summary.shutdown_clean
+}
+
+fn verify_latest_session() -> Result<Bool, String> {
+  let summary = latest_runtime_session_summary(db_path(), app_id(), 10)?
+  if !latest_session_core_ok(summary) || summary.last_status != "startup_started" {
+    return Ok(false)
+  }
+  return Ok(runtime_session_completion(summary) == "incomplete" &&
+            verify_summary_json(summary, "incomplete", "startup_started", 0)?)
+}
+
+fn verify_policy_latest_session(policy: AppLocalStartupRecoveryPolicy, latest: Json) -> Result<Bool, String> {
+  return Ok(policy.recommendation == "inspect_incomplete_session" &&
+            get_string(latest, "schema")? == "nebula.app-local.runtime-session-summary.v1" &&
+            get_string(latest, "runtime_session_id")? == "session-2" &&
+            get_string(latest, "completion")? == "incomplete")
+}
+
+fn verify_startup_policy_session_summary() -> Result<Bool, String> {
+  let policy = startup_recovery_policy(db_path(), app_id(), 10)?
+  let lifecycle = get_value(policy.evidence, "lifecycle")?
+  return verify_policy_latest_session(policy, get_value(lifecycle, "last_runtime_session")?)
+}
+
+fn verify_negative_contracts() -> Void {
+  expect_session_error(runtime_session_summary(db_path(), app_id(), "", 10),
+                       "app-local substrate runtime_session_id is required")
+  expect_session_error(runtime_session_summary(db_path(), app_id(), "missing-session", 10),
+                       "app-local substrate runtime session not found")
+  expect_session_error(runtime_session_summary(db_path(), app_id(), "session-1", 0),
+                       "app-local substrate replay limit must be positive")
+}
+
+fn seed_session_one() -> Result<Bool, String> {
+  record_marker("session-1", "session-1-start", 0, "startup_started", "process started", 1777435000001)?
+  record_marker("session-1", "session-1-ready", 1, "app_ready", "first snapshot ready", 1777435000002)?
+  record_marker("session-1", "session-1-degraded", 2, "app_degraded", "background worker unavailable", 1777435000003)?
+  record_marker("session-1", "session-1-clean", 3, "shutdown_clean", "normal quit", 1777435000004)?
+  return Ok(true)
+}
+
+fn seed_receipts() -> Result<Bool, String> {
+  initialize_receipts(db_path())?
+  seed_session_one()?
+  record_marker("session-2", "session-2-start", 0, "startup_started", "next process started", 1777435000005)?
+  return Ok(true)
+}
+
+fn verify_runtime_session_summaries() -> Result<Bool, String> {
+  seed_receipts()?
+  if !verify_session_one()? {
+    return Ok(false)
+  }
+  if !verify_latest_session()? {
+    return Ok(false)
+  }
+  return verify_startup_policy_session_summary()
+}
+
+fn main() -> Int {
+  match verify_runtime_session_summaries() {
+    Ok(ok) => {
+      if !ok {
+        print("app-local-runtime-session-summary-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_negative_contracts()
+  print("app-local-runtime-session-summary-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local runtime session summary check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True)
+if run.returncode != 0 or "app-local-runtime-session-summary-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local runtime session summary smoke failed")
+print("app-local-runtime-session-summary-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-runtime-session-summary-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+for marker in [
+    "AppLocalRuntimeSessionSummary",
+    "runtime_session_summary",
+    "latest_runtime_session_summary",
+    "nebula.app-local.runtime-session-summary.v1",
+    "degraded_clean",
+]:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing runtime session summary marker: {marker}")
+for marker in [
+    "Runtime session summaries",
+    "runtime_session_summary",
+    "latest_runtime_session_summary",
+    "nebula.app-local.runtime-session-summary.v1",
+    "windowed diagnostic",
+]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing runtime session summary marker: {marker}")
+print("app-local-runtime-session-summary-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-runtime-session-summary-docs-ok"]

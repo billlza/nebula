@@ -18,6 +18,7 @@ Current surface:
 - `substrate::AppLocalReceiptReplayBatch`
 - `substrate::AppLocalReplayTrace`
 - `substrate::AppLocalStartupRecoveryPolicy`
+- `substrate::AppLocalRuntimeSessionSummary`
 - `substrate::app_local_config(...) -> Result<AppLocalConfig, String>`
 - `substrate::config_from_env(default_app_id, default_sqlite_path, default_principal_subject, default_observe_service) -> Result<AppLocalConfig, String>`
 - `substrate::validate_config(config) -> Result<Bool, String>`
@@ -39,6 +40,8 @@ Current surface:
 - `substrate::record_recovery_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_update_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_lifecycle_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
+- `substrate::runtime_session_summary(path, app_id, runtime_session_id, limit) -> Result<AppLocalRuntimeSessionSummary, String>`
+- `substrate::latest_runtime_session_summary(path, app_id, limit) -> Result<AppLocalRuntimeSessionSummary, String>`
 - `substrate::receipt_by_key(path, app_id, receipt_kind, receipt_key) -> Result<AppLocalReceipt, String>`
 - `substrate::replay_receipts(path, app_id, receipt_kind, after_receipt_id, limit) -> Result<AppLocalReceiptReplayBatch, String>`
 - `substrate::recovery_replay_trace(path, app_id, limit) -> Result<AppLocalReplayTrace, String>`
@@ -93,6 +96,10 @@ Current guarantees:
   `runtime_session_id`, correlation id, state revision, status, and reason. The preview status set is
   `startup_started`, `app_ready`, `app_degraded`, and `shutdown_clean`; these receipts are evidence
   for startup diagnosis, not a hidden runtime state machine.
+- Runtime session summaries use `nebula.app-local.runtime-session-summary.v1` to fold lifecycle
+  markers for one `runtime_session_id` into windowed `started`, `ready`, `degraded`,
+  `shutdown_clean`, last-marker, and completion evidence (`clean`, `degraded_clean`, `incomplete`,
+  or `none`). The summary is diagnostic evidence and does not choose a recovery action.
 - Runtime receipts use the default SQLite data plane to persist command context, command event,
   snapshot, recovery marker, update marker, and lifecycle marker payloads under
   `app_local_runtime_receipts`. The
@@ -105,9 +112,10 @@ Current guarantees:
   markers. Replay limits are bounded and this is not an audit-log query language.
 - Startup recovery policy uses `recovery_replay_trace(...)` to produce
   `nebula.app-local.startup-recovery-policy.v1`: latest revision evidence, last snapshot, last
-  accepted/rejected command event, last recovery/update marker, and lifecycle session evidence. The
-  policy is diagnostic-only, reports `action_owner="app"` and windowed revision confidence, and keeps
-  recovery, replay, rollback, or update application decisions in the app.
+  accepted/rejected command event, last recovery/update marker, lifecycle session evidence, and the
+  latest runtime session summary. The policy is diagnostic-only, reports `action_owner="app"` and
+  windowed revision confidence, and keeps recovery, replay, rollback, or update application
+  decisions in the app.
 - Jobs integration is limited to DAG validation in this package; worker lease/outbox storage remains
   in `nebula-jobs`.
 - Observe integration emits log-first preflight events and delta-counter metrics through

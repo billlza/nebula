@@ -175,6 +175,22 @@ struct AppLocalStartupRecoveryPolicy {
   trace: AppLocalReplayTrace
 }
 
+struct AppLocalRuntimeSessionSummary {
+  app_id: String
+  runtime_session_id: String
+  marker_count: Int
+  started: Bool
+  ready: Bool
+  degraded: Bool
+  shutdown_clean: Bool
+  first_receipt_id: Int
+  last_receipt_id: Int
+  last_status: String
+  last_reason: String
+  last_state_revision: Int
+  last_correlation_id: String
+}
+
 fn app_local_config(app_id: String,
                     data_backend: String,
                     sqlite_path: String,
@@ -673,6 +689,67 @@ fn AppLocalStartupRecoveryPolicy_as_json(self: AppLocalStartupRecoveryPolicy) ->
                  self.trace.as_json())
 }
 
+fn AppLocalRuntimeSessionSummary_as_json(self: AppLocalRuntimeSessionSummary) -> Json {
+  return object8("schema",
+                 string_value("nebula.app-local.runtime-session-summary.v1"),
+                 "app_id",
+                 string_value(self.app_id),
+                 "runtime_session_id",
+                 string_value(self.runtime_session_id),
+                 "marker_count",
+                 int_value(self.marker_count),
+                 "completion",
+                 string_value(runtime_session_completion(self)),
+                 "flags",
+                 runtime_session_flags_json(self),
+                 "receipt_window",
+                 runtime_session_receipt_window_json(self),
+                 "last_marker",
+                 runtime_session_last_marker_json(self))
+}
+
+fn runtime_session_flags_json(self: AppLocalRuntimeSessionSummary) -> Json {
+  return object4("started",
+                 bool_value(self.started),
+                 "ready",
+                 bool_value(self.ready),
+                 "degraded",
+                 bool_value(self.degraded),
+                 "shutdown_clean",
+                 bool_value(self.shutdown_clean))
+}
+
+fn runtime_session_receipt_window_json(self: AppLocalRuntimeSessionSummary) -> Json {
+  return object2("first_receipt_id",
+                 int_value(self.first_receipt_id),
+                 "last_receipt_id",
+                 int_value(self.last_receipt_id))
+}
+
+fn runtime_session_last_marker_json(self: AppLocalRuntimeSessionSummary) -> Json {
+  return object4("status",
+                 string_value(self.last_status),
+                 "reason",
+                 string_value(self.last_reason),
+                 "state_revision",
+                 int_value(self.last_state_revision),
+                 "correlation_id",
+                 string_value(self.last_correlation_id))
+}
+
+fn runtime_session_completion(self: AppLocalRuntimeSessionSummary) -> String {
+  if self.marker_count == 0 {
+    return "none"
+  }
+  if self.last_status == "shutdown_clean" {
+    if self.degraded {
+      return "degraded_clean"
+    }
+    return "clean"
+  }
+  return "incomplete"
+}
+
 fn startup_latest_revision_json(self: AppLocalStartupRecoveryPolicy) -> Json {
   return object4("value",
                  int_value(self.latest_state_revision),
@@ -821,6 +898,14 @@ fn validate_receipt_replay_request(app_id: String, receipt_kind: String, after_r
   return validate_replay_request(app_id, limit)
 }
 
+fn validate_runtime_session_summary_request(app_id: String, runtime_session_id: String, limit: Int) -> Result<Bool, String> {
+  validate_replay_request(app_id, limit)?
+  if runtime_session_id == "" {
+    return Err("app-local substrate runtime_session_id is required")
+  }
+  return Ok(true)
+}
+
 fn validate_receipt_input(draft: AppLocalReceiptWrite) -> Result<Bool, String> {
   validate_receipt_scope(draft.app_id, draft.receipt_kind)?
   if draft.receipt_key == "" {
@@ -967,6 +1052,21 @@ fn record_lifecycle_marker_receipt(path: String, marker: AppLocalLifecycleMarker
                         "nebula.app-local.lifecycle-marker.v1",
                         marker.as_json(),
                         created_unix_ms)
+}
+
+fn runtime_session_summary(path: String,
+                           app_id: String,
+                           runtime_session_id: String,
+                           limit: Int) -> Result<AppLocalRuntimeSessionSummary, String> {
+  validate_runtime_session_summary_request(app_id, runtime_session_id, limit)?
+  let lifecycle_receipts = recent_receipts_by_kind(path, app_id, "lifecycle_marker", limit)?
+  return runtime_session_summary_from_lifecycle_markers(app_id, runtime_session_id, lifecycle_receipts)
+}
+
+fn latest_runtime_session_summary(path: String, app_id: String, limit: Int) -> Result<AppLocalRuntimeSessionSummary, String> {
+  validate_replay_request(app_id, limit)?
+  let lifecycle_receipts = recent_receipts_by_kind(path, app_id, "lifecycle_marker", limit)?
+  return latest_runtime_session_summary_from_lifecycle_markers(app_id, lifecycle_receipts)
 }
 
 fn receipt_count(path: String, app_id: String, receipt_kind: String) -> Result<Int, String> {
@@ -1265,7 +1365,7 @@ fn startup_marker_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
 
 fn startup_lifecycle_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
   let last_marker = latest_json_receipt(trace.lifecycle_markers, trace.app_id)?
-  return Ok(object6("last_lifecycle_marker",
+  return Ok(object7("last_lifecycle_marker",
                     last_marker,
                     "last_startup_started",
                     latest_lifecycle_receipt_by_status(trace.lifecycle_markers, trace.app_id, "startup_started")?,
@@ -1276,7 +1376,9 @@ fn startup_lifecycle_evidence(trace: AppLocalReplayTrace) -> Result<Json, String
                     "last_shutdown_clean",
                     latest_lifecycle_receipt_by_status(trace.lifecycle_markers, trace.app_id, "shutdown_clean")?,
                     "previous_session_clean",
-                    bool_value(receipt_lifecycle_status(last_marker) == "shutdown_clean")))
+                    bool_value(receipt_lifecycle_status(last_marker) == "shutdown_clean"),
+                    "last_runtime_session",
+                    latest_runtime_session_summary_from_lifecycle_markers(trace.app_id, trace.lifecycle_markers)?.as_json()))
 }
 
 fn startup_recovery_recommendation(trace: AppLocalReplayTrace, evidence: Json) -> Result<String, String> {
@@ -1478,6 +1580,28 @@ fn receipt_lifecycle_status(receipt: Json) -> String {
   }
 }
 
+fn receipt_lifecycle_runtime_session_id(receipt: Json) -> String {
+  match get_string(get_value_or_empty_payload(receipt), "runtime_session_id") {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      return ""
+    }
+  }
+}
+
+fn receipt_lifecycle_reason(receipt: Json) -> String {
+  match get_string(get_value_or_empty_payload(receipt), "reason") {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      return ""
+    }
+  }
+}
+
 fn get_value_or_empty_payload(receipt: Json) -> Json {
   match get_value(receipt, "payload") {
     Ok(value) => {
@@ -1487,6 +1611,81 @@ fn get_value_or_empty_payload(receipt: Json) -> Json {
       return object1("kind", string_value("empty"))
     }
   }
+}
+
+fn runtime_session_summary_placeholder(app_id: String, runtime_session_id: String) -> AppLocalRuntimeSessionSummary {
+  return AppLocalRuntimeSessionSummary(app_id,
+                                       runtime_session_id,
+                                       0,
+                                       false,
+                                       false,
+                                       false,
+                                       false,
+                                       0,
+                                       0,
+                                       "",
+                                       "",
+                                       0,
+                                       "")
+}
+
+fn latest_runtime_session_summary_from_lifecycle_markers(app_id: String, receipts: Json) -> Result<AppLocalRuntimeSessionSummary, String> {
+  let latest = latest_json_receipt(receipts, app_id)?
+  if receipt_json_id(latest) == 0 {
+    return Ok(runtime_session_summary_placeholder(app_id, ""))
+  }
+  return runtime_session_summary_from_lifecycle_markers(app_id, receipt_lifecycle_runtime_session_id(latest), receipts)
+}
+
+fn runtime_session_summary_from_lifecycle_markers(app_id: String,
+                                                 runtime_session_id: String,
+                                                 receipts: Json) -> Result<AppLocalRuntimeSessionSummary, String> {
+  if runtime_session_id == "" {
+    return Err("app-local substrate runtime_session_id is required")
+  }
+  let summary = runtime_session_summary_placeholder(app_id, runtime_session_id)
+  let count = array_len(receipts)?
+  let index = 0
+  while index < count {
+    let receipt = array_get(receipts, index)?
+    summary = runtime_session_summary_accept_receipt(summary, receipt)?
+    index += 1
+  }
+  if summary.marker_count == 0 {
+    return Err("app-local substrate runtime session not found")
+  }
+  return Ok(summary)
+}
+
+fn runtime_session_summary_accept_receipt(summary: AppLocalRuntimeSessionSummary, receipt: Json) -> Result<AppLocalRuntimeSessionSummary, String> {
+  if receipt_lifecycle_runtime_session_id(receipt) != summary.runtime_session_id {
+    return Ok(summary)
+  }
+  return Ok(runtime_session_summary_with_receipt(summary, receipt))
+}
+
+fn runtime_session_summary_with_receipt(summary: AppLocalRuntimeSessionSummary, receipt: Json) -> AppLocalRuntimeSessionSummary {
+  let status = receipt_lifecycle_status(receipt)
+  return AppLocalRuntimeSessionSummary(summary.app_id,
+                                       summary.runtime_session_id,
+                                       summary.marker_count + 1,
+                                       summary.started || status == "startup_started",
+                                       summary.ready || status == "app_ready",
+                                       summary.degraded || status == "app_degraded",
+                                       summary.shutdown_clean || status == "shutdown_clean",
+                                       runtime_session_first_receipt_id(summary, receipt),
+                                       receipt_json_id(receipt),
+                                       status,
+                                       receipt_lifecycle_reason(receipt),
+                                       receipt_json_revision(receipt),
+                                       receipt_json_correlation_id(receipt))
+}
+
+fn runtime_session_first_receipt_id(summary: AppLocalRuntimeSessionSummary, receipt: Json) -> Int {
+  if summary.first_receipt_id == 0 {
+    return receipt_json_id(receipt)
+  }
+  return summary.first_receipt_id
 }
 
 fn latest_json_receipt(receipts: Json, app_id: String) -> Result<Json, String> {

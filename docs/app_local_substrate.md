@@ -93,6 +93,12 @@ Runtime lifecycle markers use `nebula.app-local.lifecycle-marker.v1` and carry a
 runtime session, not a hidden runtime state machine; the app still owns whether an incomplete or
 degraded session should resume, restore, discard, or prompt the user.
 
+Runtime session summaries use `nebula.app-local.runtime-session-summary.v1` to fold lifecycle
+markers for one `runtime_session_id` into a bounded, windowed diagnostic: whether the session
+started, reached ready, degraded, ended with `shutdown_clean`, which marker was last, and whether
+the visible completion is `clean`, `degraded_clean`, `incomplete`, or `none`. The helper is a read
+model over receipts, not a lifecycle orchestrator.
+
 ## Runtime Receipts
 
 The default local recoverability path is SQLite. `official/nebula-app-local` provides a generic
@@ -124,8 +130,8 @@ event can be replayed, and which recovery action is safe.
 `startup_recovery_policy(...)` builds on `recovery_replay_trace(...)` and returns
 `nebula.app-local.startup-recovery-policy.v1`, a diagnostic summary designed for app startup. It
 reports the latest revision evidence, last snapshot, last accepted command event, last rejected
-command event, last recovery marker, last update marker, lifecycle session evidence, and
-`action_owner="app"` inside a bounded replay window.
+command event, last recovery marker, last update marker, lifecycle session evidence, the latest
+runtime session summary, and `action_owner="app"` inside a bounded replay window.
 
 The policy is intentionally explanatory rather than executable. It may recommend that the app inspect
 an update marker, recovery marker, rejected command, snapshot, or raw receipts. The substrate policy
@@ -143,6 +149,10 @@ previous runtime session last report, and how far did this runtime session get? 
 compute startup recovery policy before recording the new `startup_started` marker, then record
 `app_ready` after the first usable app snapshot, `app_degraded` when startup continues with a known
 missing capability, and `shutdown_clean` during normal quit.
+
+`runtime_session_summary(...)` and `latest_runtime_session_summary(...)` provide a windowed read
+model over those markers. They let a host shell explain a previous session without rescanning every
+raw receipt itself, while still keeping the final resume/restore/discard decision in the app.
 
 These markers do not restore snapshots, replay commands, apply updates, or choose UX. They only make
 session evidence durable enough for a media player, game, editor, or operations console to explain
