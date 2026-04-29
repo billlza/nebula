@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>dev.nebula.thin-host-media-player</string>
+  <key>CFBundleName</key>
+  <string>Nebula Media Player Preview</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0-preview</string>
+  <key>NebulaHostAPI</key>
+  <string>thin-host-shell.preview.v1</string>
+</dict>
+</plist>

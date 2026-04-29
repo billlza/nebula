@@ -1,0 +1,62 @@
+id = "TST-321-media-player-jobs-outbox-smoke"
+suite = "test"
+description = "media player uses nebula-jobs for retry/dead-letter and durable outbox evidence"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_media_player"
+root = Path("work/media_player_jobs_outbox")
+entry = root / "thin-host-media-player"
+receipt_db = root / "receipts.db"
+jobs_db = Path("work/thin_host_media_player/jobs.db")
+shutil.rmtree(root, ignore_errors=True)
+shutil.rmtree(Path("work/thin_host_media_player"), ignore_errors=True)
+root.mkdir(parents=True, exist_ok=True)
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"media player check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+subprocess.run([binary, "build", str(app), "--out", str(entry)], check=True, capture_output=True, text=True)
+env = {**os.environ, "APP_SQLITE_PATH": str(receipt_db)}
+run = subprocess.run([str(entry)], capture_output=True, text=True, env=env, check=True)
+markers = [
+    json.loads(line[len("media-player-jobs:"):])
+    for line in run.stdout.splitlines()
+    if line.startswith("media-player-jobs:")
+]
+if len(markers) != 1:
+    raise SystemExit(f"missing media-player jobs marker: {markers!r}")
+marker = markers[0]
+if marker["final_run_status"] != "failed" or marker["outbox_status"] != "dead_letter":
+    raise SystemExit(f"bad media-player jobs marker: {marker!r}")
+if marker["dead_letter_visible"] is not True:
+    raise SystemExit(f"dead-letter was not visible: {marker!r}")
+
+with sqlite3.connect(jobs_db) as conn:
+    runs = conn.execute("SELECT status, result_message FROM jobs_runs").fetchall()
+    stages = conn.execute("SELECT status, attempt, result_message FROM jobs_stage_runs ORDER BY stage_index").fetchall()
+    outbox = conn.execute("SELECT status, attempt, result_message FROM jobs_outbox_messages").fetchall()
+if runs != [("failed", "metadata scan dead-letter")]:
+    raise SystemExit(f"bad jobs run state: {runs!r}")
+if stages[0] != ("failed", 2, "metadata scan dead-letter"):
+    raise SystemExit(f"bad retry/dead-letter stage state: {stages!r}")
+if outbox != [("dead_letter", 1, "relay unavailable")]:
+    raise SystemExit(f"bad outbox state: {outbox!r}")
+
+print("media-player-jobs-outbox-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["media-player-jobs-outbox-ok"]

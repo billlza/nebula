@@ -1,0 +1,76 @@
+id = "TST-320-media-player-bundle-update-recovery-smoke"
+suite = "test"
+description = "media player stages preview bundle/update/recovery manifests with crash correlation"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_media_player"
+root = Path("work/media_player_bundle_update")
+entry = root / "bin" / "thin-host-media-player"
+receipt_db = root / "state" / "receipts.db"
+shutil.rmtree(root, ignore_errors=True)
+shutil.rmtree(Path("work/thin_host_media_player"), ignore_errors=True)
+entry.parent.mkdir(parents=True, exist_ok=True)
+receipt_db.parent.mkdir(parents=True, exist_ok=True)
+
+bundle_path = app / "deploy" / "bundle" / "manifest.preview.json"
+bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+if bundle["schema"] != "nebula.gui.preview.package.v1":
+    raise SystemExit(f"bad bundle schema: {bundle!r}")
+if bundle["runtime"]["app_core"] != "nebula-first":
+    raise SystemExit(f"bundle did not preserve Nebula-first boundary: {bundle!r}")
+if bundle["runtime"]["command_schema"] != "media-player.command.v1":
+    raise SystemExit(f"bad command schema: {bundle!r}")
+update_path = app / bundle["update_manifest"]["path"]
+actual_update_sha = hashlib.sha256(update_path.read_bytes()).hexdigest()
+if actual_update_sha != bundle["update_manifest"]["sha256"]:
+    raise SystemExit(f"stale update checksum: {actual_update_sha} vs {bundle['update_manifest']['sha256']}")
+for rel in [asset["path"] for asset in bundle["assets"]]:
+    if not (app / rel).exists():
+        raise SystemExit(f"missing bundle asset: {rel}")
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"media player check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+subprocess.run([binary, "build", str(app), "--out", str(entry)], check=True, capture_output=True, text=True)
+env = {**os.environ, "APP_SQLITE_PATH": str(receipt_db)}
+run = subprocess.run([str(entry)], capture_output=True, text=True, env=env, check=True)
+output = run.stdout
+for marker in [
+    "thin-host-media-player-crash-report-schema=nebula.gui.preview.crash.v1",
+    "thin-host-media-player-crash-correlation-id=media-9",
+    "thin-host-media-player-crash-state-revision=9",
+    "thin-host-media-player-recovery-log=logs/thin-host-media-player.ndjson",
+    "app-local-recovery:",
+    "app-local-update:",
+]:
+    if marker not in output:
+        raise SystemExit(f"missing launch marker {marker!r}")
+
+updates = [
+    json.loads(line[len("app-local-update:"):])
+    for line in output.splitlines()
+    if line.startswith("app-local-update:")
+]
+if len(updates) != 1 or updates[0]["manifest_sha256"] != actual_update_sha:
+    raise SystemExit(f"bad update marker: {updates!r}")
+if bundle["crash"]["last_event_correlation_id"] != "media-9" or bundle["crash"]["last_state_revision"] != 9:
+    raise SystemExit(f"bad crash correlation contract: {bundle!r}")
+
+print("media-player-bundle-update-recovery-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["media-player-bundle-update-recovery-ok"]

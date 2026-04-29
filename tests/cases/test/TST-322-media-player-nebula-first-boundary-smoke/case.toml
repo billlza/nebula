@@ -1,0 +1,76 @@
+id = "TST-322-media-player-nebula-first-boundary-smoke"
+suite = "test"
+description = "media player keeps business state and jobs/recovery logic in Nebula, leaving C++ as host adapter only"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_media_player"
+main_nb = (app / "src" / "main.nb").read_text(encoding="utf-8")
+host_cpp = (app / "host.cpp").read_text(encoding="utf-8")
+readme = (app / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "media_player_validation_app.md").read_text(encoding="utf-8")
+
+required_nebula_markers = [
+    "struct MediaState",
+    "fn apply_command",
+    "fn validate_torrent_payload",
+    "media-player.event.v1",
+    "media-player.snapshot.v1",
+    "record_command_context_receipt",
+    "record_event_receipt",
+    "record_snapshot_receipt",
+    "record_host_snapshot_readiness_receipt",
+    "run_media_jobs_outbox_smoke",
+    "enqueue_outbox",
+    "complete_outbox",
+]
+missing = [marker for marker in required_nebula_markers if marker not in main_nb]
+if missing:
+    raise SystemExit(f"media player core missing Nebula-first markers: {missing!r}")
+
+for forbidden in [
+    "struct MediaState",
+    "media-player.event.v1",
+    "media-player.snapshot.v1",
+    "record_command_context_receipt",
+    "run_media_jobs_outbox_smoke",
+    "complete_worker",
+    "enqueue_outbox",
+    "validate_torrent_payload",
+]:
+    if forbidden in host_cpp:
+        raise SystemExit(f"C++ host adapter contains business marker {forbidden!r}")
+if "host_cxx = [\\"host.cpp\\"]" not in (app / "nebula.toml").read_text(encoding="utf-8"):
+    raise SystemExit("media player host adapter boundary is not explicit")
+for marker in [
+    "Nebula-first validation APP skeleton",
+    "does not own media-player business state",
+    "Torrent import is limited to legal media",
+]:
+    if marker not in readme:
+        raise SystemExit(f"media player README missing boundary marker: {marker}")
+for marker in [
+    "thin-host media player",
+    "legal media only",
+    "host-owned transport adapter",
+]:
+    if marker not in doc:
+        raise SystemExit(f"media player validation doc missing boundary marker: {marker}")
+
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"media player check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+
+print("media-player-nebula-first-boundary-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["media-player-nebula-first-boundary-ok"]

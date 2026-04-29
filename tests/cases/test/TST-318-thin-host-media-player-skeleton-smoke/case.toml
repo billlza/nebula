@@ -1,0 +1,120 @@
+id = "TST-318-thin-host-media-player-skeleton-smoke"
+suite = "test"
+description = "thin-host media player validation app runs Nebula-first command/event/snapshot and app-local receipt loop"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+app = repo / "examples" / "thin_host_media_player"
+root = Path("work/thin_host_media_player_skeleton")
+entry = root / "bin" / "thin-host-media-player"
+receipt_db = root / "state" / "receipts.db"
+jobs_dir = Path("work/thin_host_media_player")
+shutil.rmtree(root, ignore_errors=True)
+shutil.rmtree(jobs_dir, ignore_errors=True)
+entry.parent.mkdir(parents=True, exist_ok=True)
+receipt_db.parent.mkdir(parents=True, exist_ok=True)
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"media player check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+build = subprocess.run([binary, "build", str(app), "--out", str(entry)], capture_output=True, text=True, check=True)
+if "warning:" in build.stdout or "warning:" in build.stderr:
+    raise SystemExit(f"media player build emitted warnings:\\n{build.stdout}\\n{build.stderr}")
+
+env = {**os.environ, "APP_SQLITE_PATH": str(receipt_db), "APP_LOCAL_APP_ID": "thin-host-media-player"}
+run = subprocess.run([str(entry)], capture_output=True, text=True, env=env, check=True)
+output = run.stdout
+if "thin-host-media-player-error" in output or "app-local-error:" in output:
+    raise SystemExit(output)
+
+events = []
+snapshots = []
+lifecycle = []
+jobs = []
+for line in output.splitlines():
+    if line.startswith("media-player-event:"):
+        events.append(json.loads(line[len("media-player-event:"):]))
+    if line.startswith("media-player-snapshot:"):
+        snapshots.append(json.loads(line[len("media-player-snapshot:"):]))
+    if line.startswith("app-local-lifecycle:"):
+        lifecycle.append(json.loads(line[len("app-local-lifecycle:"):]))
+    if line.startswith("media-player-jobs:"):
+        jobs.append(json.loads(line[len("media-player-jobs:"):]))
+
+if not jobs or jobs[0]["schema"] != "media-player.jobs-outbox.v1":
+    raise SystemExit(f"missing jobs/outbox marker: {jobs!r}")
+if jobs[0]["final_run_status"] != "failed" or jobs[0]["outbox_status"] != "dead_letter":
+    raise SystemExit(f"bad jobs/outbox marker: {jobs!r}")
+if [item["status"] for item in lifecycle] != ["startup_started", "app_ready", "shutdown_clean"]:
+    raise SystemExit(f"bad lifecycle sequence: {lifecycle!r}")
+
+kinds = [event["kind"] for event in events]
+expected = [
+    "media_player_booted",
+    "library_file_imported",
+    "playback_audio_quality_set",
+    "command_rejected",
+    "command_rejected",
+    "download_import_queued",
+    "command_rejected",
+    "playback_video_quality_set",
+    "playback_bitrate_policy_set",
+    "download_paused",
+    "download_resumed",
+    "download_cancelled",
+    "media_player_quit",
+]
+if kinds != expected:
+    raise SystemExit(f"unexpected media event kinds: {kinds!r}")
+if [event["state_revision"] for event in events] != [0, 1, 2, 2, 2, 3, 3, 4, 5, 6, 7, 8, 9]:
+    raise SystemExit(f"bad revision sequence: {events!r}")
+if events[3]["message"] != "torrent source policy rejected":
+    raise SystemExit(f"illegal torrent rejection missing: {events[3]!r}")
+if events[4]["message"] != "torrent transport unavailable":
+    raise SystemExit(f"sidecar unavailable rejection missing: {events[4]!r}")
+if events[-1]["terminal"] is not True or events[-1]["correlation_id"] != "media-9":
+    raise SystemExit(f"bad terminal event: {events[-1]!r}")
+
+final = snapshots[-1]
+if final["schema"] != "media-player.snapshot.v1":
+    raise SystemExit(f"bad snapshot schema: {final!r}")
+if final["library"]["items"] != 1 or final["library"]["import_queue"] != 2:
+    raise SystemExit(f"bad library snapshot: {final!r}")
+if final["playback"]["audio_quality"] != "lossless" or final["playback"]["video_quality"] != "4k":
+    raise SystemExit(f"bad playback snapshot: {final!r}")
+if final["playback"]["bitrate_policy"] != "adaptive-high":
+    raise SystemExit(f"bad bitrate snapshot: {final!r}")
+
+with sqlite3.connect(receipt_db) as conn:
+    counts = dict(conn.execute(
+        "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
+    ).fetchall())
+expected_counts = {
+    "command_context": 12,
+    "event": 12,
+    "host_snapshot_readiness": 13,
+    "lifecycle_marker": 3,
+    "recovery_marker": 1,
+    "snapshot": 13,
+    "update_marker": 1,
+}
+if counts != expected_counts:
+    raise SystemExit(f"unexpected app-local receipt counts: {counts!r}")
+
+print("thin-host-media-player-skeleton-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["thin-host-media-player-skeleton-ok"]

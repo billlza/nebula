@@ -1,0 +1,13 @@
+{
+  "schema": "nebula.thin-host.update-manifest.preview.v1",
+  "app_id": "dev.nebula.thin-host-media-player",
+  "version": "0.1.0-preview",
+  "channel": "preview",
+  "min_host_api": "thin-host-shell.preview.v1",
+  "assets": [
+    {
+      "path": "bin/thin-host-media-player",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

@@ -1,0 +1,817 @@
+module main
+import app_local::substrate
+import bridge::host_bridge
+import jobs::contracts
+import jobs::graph
+import jobs::sqlite
+import std::bytes
+import std::json
+import std::result
+import ui::ui
+
+extern fn host_player_begin() -> Void
+extern fn host_player_open() -> Bool
+extern fn host_player_next_command_text() -> String
+extern fn host_player_publish_event(event: String) -> Void
+extern fn host_player_publish_snapshot(snapshot: String) -> Void
+extern fn host_player_render_tree(tree: String) -> Void
+extern fn host_player_end(correlation_id: String, state_revision: Int) -> Void
+
+struct MediaState {
+  library_count: Int,
+  import_queue_count: Int,
+  active_downloads: Int,
+  completed_downloads: Int,
+  audio_quality: String,
+  video_quality: String,
+  bitrate_policy: String,
+  last_action: String,
+  last_error: String,
+  transport_status: String,
+  revision: Int
+}
+
+struct MediaStep {
+  state: MediaState,
+  terminal: Bool,
+  event_kind: String,
+  command_id: String,
+  previous_revision: Int,
+  correlation_id: String,
+  message: String
+}
+
+struct MediaCommandOutcome {
+  state: MediaState,
+  terminal: Bool
+}
+
+struct MediaRuntime {
+  config: AppLocalConfig,
+  preflight: AppLocalPreflight
+}
+
+fn text_join(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn receipt_db_path() -> String {
+  return "work/thin_host_media_player/app-local-receipts.db"
+}
+
+fn jobs_db_path() -> String {
+  return "work/thin_host_media_player/jobs.db"
+}
+
+fn app_id() -> String {
+  return "thin-host-media-player"
+}
+
+fn observe_service() -> String {
+  return "thin-host-media-player"
+}
+
+fn runtime_session_id() -> String {
+  return "thin-host-media-player-session-0001"
+}
+
+fn update_manifest_path() -> String {
+  return "deploy/update/manifest.preview.json"
+}
+
+fn update_manifest_sha256() -> String {
+  return "27081b18955c5b286254f3b13d87f9c765c3a4403a7aa3df9542005fe8a57aca"
+}
+
+fn media_runtime() -> Result<MediaRuntime, String> {
+  let config_value = config_from_env(app_id(), receipt_db_path(), "local-media-operator", observe_service())?
+  let report = preflight(config_value)?
+  return Ok(MediaRuntime(config_value, report))
+}
+
+fn initial_state() -> MediaState {
+  return MediaState(0,
+                    0,
+                    0,
+                    0,
+                    "balanced",
+                    "1080p",
+                    "adaptive",
+                    "boot",
+                    "",
+                    "idle",
+                    0)
+}
+
+fn shell_principal(runtime: MediaRuntime) -> AppLocalPrincipal {
+  return AppLocalPrincipal(runtime.config.principal_subject, "app.media.operator", runtime.config.auth_mode)
+}
+
+fn app_local_context(runtime: MediaRuntime, command_id: String, correlation_id: String, revision: Int) -> Result<AppLocalCommandContext, String> {
+  return command_context(command_id, correlation_id, revision, shell_principal(runtime), 1777437000000)
+}
+
+fn app_local_command_id(kind: String, correlation_id: String) -> String {
+  return text_join(kind, text_join(":", correlation_id))
+}
+
+fn app_local_snapshot_id(correlation_id: String) -> String {
+  return text_join("media-snapshot:", correlation_id)
+}
+
+fn publish_app_local_context(context: AppLocalCommandContext) -> Void {
+  print(text_join("app-local-context:", stringify(context.as_json())))
+}
+
+fn publish_app_local_event(event: AppLocalEvent) -> Void {
+  print(text_join("app-local-event:", stringify(event.as_json())))
+}
+
+fn publish_app_local_recovery(marker: AppLocalRecoveryMarker) -> Void {
+  print(text_join("app-local-recovery:", stringify(marker.as_json())))
+}
+
+fn publish_app_local_update(marker: AppLocalUpdateMarker) -> Void {
+  print(text_join("app-local-update:", stringify(marker.as_json())))
+}
+
+fn publish_app_local_lifecycle(marker: AppLocalLifecycleMarker) -> Void {
+  print(text_join("app-local-lifecycle:", stringify(marker.as_json())))
+}
+
+fn publish_app_local_preflight(report: AppLocalPreflight) -> Void {
+  print(text_join("app-local-preflight:", stringify(report.as_json())))
+}
+
+fn publish_app_local_startup_policy(policy: AppLocalStartupRecoveryPolicy) -> Void {
+  print(text_join("app-local-startup-policy:", stringify(policy.as_json())))
+}
+
+fn publish_app_local_error(msg: String) -> Void {
+  print(text_join("app-local-error:", msg))
+}
+
+fn publish_runtime_preflight(runtime: MediaRuntime) -> Result<Bool, String> {
+  publish_app_local_preflight(runtime.preflight)
+  emit_preflight_observe(runtime.config, runtime.preflight)
+  return Ok(true)
+}
+
+fn publish_startup_recovery_policy(runtime: MediaRuntime) -> Result<Bool, String> {
+  let policy = startup_recovery_policy(runtime.config.sqlite_path, runtime.config.app_id, 10)?
+  publish_app_local_startup_policy(policy)
+  return Ok(true)
+}
+
+fn publish_lifecycle_marker(runtime: MediaRuntime, status: String, reason: String, revision: Int) -> Result<Bool, String> {
+  let marker = lifecycle_marker(runtime.config.app_id,
+                                runtime_session_id(),
+                                runtime_session_id(),
+                                revision,
+                                status,
+                                reason)?
+  publish_app_local_lifecycle(marker)
+  record_lifecycle_marker_receipt(runtime.config.sqlite_path, marker, 1777437000000)?
+  return Ok(true)
+}
+
+fn publish_startup_diagnostics(runtime: MediaRuntime) -> Result<Bool, String> {
+  publish_runtime_preflight(runtime)?
+  return publish_startup_recovery_policy(runtime)
+}
+
+fn state_payload(state: MediaState) -> Json {
+  return object7("schema",
+                 string_value("media-player.snapshot.v1"),
+                 "library",
+                 object2("items", int_value(state.library_count), "import_queue", int_value(state.import_queue_count)),
+                 "downloads",
+                 object3("active", int_value(state.active_downloads), "completed", int_value(state.completed_downloads), "transport_status", string_value(state.transport_status)),
+                 "playback",
+                 object3("audio_quality", string_value(state.audio_quality), "video_quality", string_value(state.video_quality), "bitrate_policy", string_value(state.bitrate_policy)),
+                 "last_action",
+                 string_value(state.last_action),
+                 "last_error",
+                 string_value(state.last_error),
+                 "state_revision",
+                 int_value(state.revision))
+}
+
+fn media_event_json(kind: String,
+                    state: MediaState,
+                    accepted: Bool,
+                    correlation_id: String,
+                    message: String,
+                    terminal: Bool) -> Json {
+  return object8("schema",
+                 string_value("media-player.event.v1"),
+                 "kind",
+                 string_value(kind),
+                 "accepted",
+                 bool_value(accepted),
+                 "correlation_id",
+                 string_value(correlation_id),
+                 "state_revision",
+                 int_value(state.revision),
+                 "message",
+                 string_value(message),
+                 "payload",
+                 state_payload(state),
+                 "terminal",
+                 bool_value(terminal))
+}
+
+fn publish_media_event(kind: String,
+                       state: MediaState,
+                       accepted: Bool,
+                       correlation_id: String,
+                       message: String,
+                       terminal: Bool) -> Void {
+  print(text_join("media-player-event:", stringify(media_event_json(kind, state, accepted, correlation_id, message, terminal))))
+}
+
+fn publish_media_snapshot(state: MediaState) -> Void {
+  print(text_join("media-player-snapshot:", stringify(state_payload(state))))
+}
+
+ui MediaPlayerShell(state: MediaState) {
+  view Window(title = "Nebula Media Player") {
+    view Input(value = state.audio_quality, action = "playback.set_audio_quality", accessibility_label = "Audio quality")
+    view Button(text = "Import file", action = "library.import_file")
+  }
+}
+
+fn render_state(runtime: MediaRuntime, state: MediaState, correlation_id: String) -> Result<Bool, String> {
+  let tree = MediaPlayerShell(state)
+  let snapshot_value = state_payload(state)
+  let bridge_snapshot = encode_snapshot_text_with_revision("media_player", tree, state.revision)
+  host_player_render_tree(stringify(tree))
+  host_player_publish_snapshot(bridge_snapshot)
+  publish_media_snapshot(state)
+  record_snapshot_receipt(runtime.config.sqlite_path,
+                          runtime.config.app_id,
+                          app_local_snapshot_id(correlation_id),
+                          correlation_id,
+                          state.revision,
+                          "media-player.snapshot.v1",
+                          snapshot_value,
+                          1777437000000)?
+  record_host_snapshot_readiness_marker(runtime, correlation_id, state.revision)?
+  return Ok(true)
+}
+
+fn record_host_snapshot_readiness_marker(runtime: MediaRuntime, correlation_id: String, revision: Int) -> Result<Bool, String> {
+  let readiness = host_snapshot_readiness(runtime.config.app_id,
+                                          runtime_session_id(),
+                                          correlation_id,
+                                          revision,
+                                          app_local_snapshot_id(correlation_id),
+                                          "media-player.snapshot.v1",
+                                          "first_usable_snapshot",
+                                          "media-player snapshot rendered for host")?
+  record_host_snapshot_readiness_receipt(runtime.config.sqlite_path, readiness, 1777437000000)?
+  return Ok(true)
+}
+
+fn payload_value(command_text: String) -> Result<Json, String> {
+  let value = parse(command_text)?
+  match get_value(value, "payload") {
+    Ok(payload) => {
+      return Ok(payload)
+    }
+    Err(_) => {
+      return Ok(object1("empty", bool_value(true)))
+    }
+  }
+}
+
+fn payload_string_or(payload: Json, key: String, fallback: String) -> String {
+  match get_string(payload, key) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return fallback
+    }
+  }
+}
+
+fn payload_bool_or(payload: Json, key: String, fallback: Bool) -> Bool {
+  match get_bool(payload, key) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return fallback
+    }
+  }
+}
+
+fn require_payload_string(payload: Json, key: String, message: String) -> Result<String, String> {
+  let value = payload_string_or(payload, key, "")
+  if value == "" {
+    return Err(message)
+  }
+  return Ok(value)
+}
+
+fn legal_torrent_policy(policy: String) -> Bool {
+  if policy == "public-domain" {
+    return true
+  }
+  if policy == "open-licensed" {
+    return true
+  }
+  return policy == "operator-owned"
+}
+
+fn validate_file_payload(payload: Json) -> Result<Bool, String> {
+  require_payload_string(payload, "path", "media file path is required")?
+  require_payload_string(payload, "source_hash", "media file source_hash is required")?
+  return Ok(true)
+}
+
+fn validate_torrent_payload(payload: Json) -> Result<Bool, String> {
+  require_payload_string(payload, "source_uri", "torrent source_uri is required")?
+  require_payload_string(payload, "source_hash", "torrent source_hash is required")?
+  let policy = require_payload_string(payload, "policy", "torrent content policy is required")?
+  if !legal_torrent_policy(policy) {
+    return Err("torrent source policy rejected")
+  }
+  if !payload_bool_or(payload, "transport_available", false) {
+    return Err("torrent transport unavailable")
+  }
+  return Ok(true)
+}
+
+fn step(state: MediaState,
+        next_state: MediaState,
+        terminal: Bool,
+        event_kind: String,
+        command: ThinHostCommand,
+        message: String) -> MediaStep {
+  return MediaStep(next_state,
+                   terminal,
+                   event_kind,
+                   app_local_command_id(command.kind(), command.correlation_id()),
+                   state.revision,
+                   command.correlation_id(),
+                   message)
+}
+
+fn import_file_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  validate_file_payload(payload)?
+  let next_state = MediaState(state.library_count + 1,
+                              state.import_queue_count + 1,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              "local_file_imported",
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "library_file_imported", command, "local media file imported"))
+}
+
+fn import_torrent_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  validate_torrent_payload(payload)?
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count + 1,
+                              state.active_downloads + 1,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              "transport_stub_queued",
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "download_import_queued", command, "legal torrent import queued for host sidecar"))
+}
+
+fn set_audio_quality_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  let value = require_payload_string(payload, "value", "audio quality value is required")?
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              value,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_audio_quality_set", command, "audio quality updated"))
+}
+
+fn set_video_quality_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  let value = require_payload_string(payload, "value", "video quality value is required")?
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              value,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_video_quality_set", command, "video quality updated"))
+}
+
+fn set_bitrate_policy_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  let value = require_payload_string(payload, "value", "bitrate policy value is required")?
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              value,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_bitrate_policy_set", command, "bitrate policy updated"))
+}
+
+fn download_status_step(state: MediaState,
+                        command: ThinHostCommand,
+                        event_kind: String,
+                        status: String,
+                        message: String,
+                        active_delta: Int) -> MediaStep {
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads + active_delta,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              status,
+                              state.revision + 1)
+  return step(state, next_state, false, event_kind, command, message)
+}
+
+fn quit_step(state: MediaState, command: ThinHostCommand) -> MediaStep {
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.revision + 1)
+  return step(state, next_state, true, "media_player_quit", command, "host requested quit")
+}
+
+fn apply_import_command(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  if command.kind() == "library.import_file" {
+    return import_file_step(state, command, payload)
+  }
+  if command.kind() == "library.import_torrent" {
+    return import_torrent_step(state, command, payload)
+  }
+  return Err("not an import command")
+}
+
+fn apply_playback_command(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  if command.kind() == "playback.set_audio_quality" {
+    return set_audio_quality_step(state, command, payload)
+  }
+  if command.kind() == "playback.set_video_quality" {
+    return set_video_quality_step(state, command, payload)
+  }
+  if command.kind() == "playback.set_bitrate_policy" {
+    return set_bitrate_policy_step(state, command, payload)
+  }
+  return Err("not a playback command")
+}
+
+fn apply_download_command(state: MediaState, command: ThinHostCommand) -> Result<MediaStep, String> {
+  if command.kind() == "download.pause" {
+    return Ok(download_status_step(state, command, "download_paused", "paused", "download paused", 0))
+  }
+  if command.kind() == "download.resume" {
+    return Ok(download_status_step(state, command, "download_resumed", "downloading", "download resumed", 0))
+  }
+  if command.kind() == "download.cancel" {
+    return Ok(download_status_step(state, command, "download_cancelled", "cancelled", "download cancelled", -1))
+  }
+  return Err("not a download command")
+}
+
+fn apply_command_kind(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  if command.kind() == "library.import_file" {
+    return apply_import_command(state, command, payload)
+  }
+  if command.kind() == "library.import_torrent" {
+    return apply_import_command(state, command, payload)
+  }
+  if command.kind() == "playback.set_audio_quality" {
+    return apply_playback_command(state, command, payload)
+  }
+  if command.kind() == "playback.set_video_quality" {
+    return apply_playback_command(state, command, payload)
+  }
+  if command.kind() == "playback.set_bitrate_policy" {
+    return apply_playback_command(state, command, payload)
+  }
+  if command.kind() == "download.pause" {
+    return apply_download_command(state, command)
+  }
+  if command.kind() == "download.resume" {
+    return apply_download_command(state, command)
+  }
+  if command.kind() == "download.cancel" {
+    return apply_download_command(state, command)
+  }
+  if command.kind() == "quit" {
+    return Ok(quit_step(state, command))
+  }
+  return Err("unknown media-player command kind")
+}
+
+fn apply_command(state: MediaState, command_text: String) -> Result<MediaStep, String> {
+  let command = decode_command_text(command_text)?
+  if command.state_revision() != state.revision {
+    return Err("stale media-player command state_revision")
+  }
+  let payload = payload_value(command_text)?
+  return apply_command_kind(state, command, payload)
+}
+
+fn publish_app_local_accepted(runtime: MediaRuntime, step_value: MediaStep) -> Result<Bool, String> {
+  let context = app_local_context(runtime, step_value.command_id, step_value.correlation_id, step_value.previous_revision)?
+  publish_app_local_context(context)
+  record_command_context_receipt(runtime.config.sqlite_path, runtime.config.app_id, context, 1777437000000)?
+  let event_value = command_accepted_event(context, step_value.event_kind, step_value.message)?
+  publish_app_local_event(event_value)
+  record_event_receipt(runtime.config.sqlite_path, runtime.config.app_id, event_value, 1777437000000)?
+  return Ok(true)
+}
+
+fn publish_app_local_rejected(runtime: MediaRuntime,
+                              command_id: String,
+                              correlation_id: String,
+                              revision: Int,
+                              reason: String) -> Result<Bool, String> {
+  let context = app_local_context(runtime, command_id, correlation_id, revision)?
+  publish_app_local_context(context)
+  record_command_context_receipt(runtime.config.sqlite_path, runtime.config.app_id, context, 1777437000000)?
+  let event_value = command_rejected_event(context, reason)?
+  publish_app_local_event(event_value)
+  record_event_receipt(runtime.config.sqlite_path, runtime.config.app_id, event_value, 1777437000000)?
+  return Ok(true)
+}
+
+fn bridge_event_text(kind: String, state: MediaState, terminal: Bool, correlation_id: String) -> String {
+  return encode_event_text_with_context(kind, state_payload(state), terminal, correlation_id, state.revision)
+}
+
+fn handle_applied_step(runtime: MediaRuntime, step_value: MediaStep) -> Result<Bool, String> {
+  host_player_publish_event(bridge_event_text(step_value.event_kind, step_value.state, step_value.terminal, step_value.correlation_id))
+  publish_media_event(step_value.event_kind, step_value.state, true, step_value.correlation_id, step_value.message, step_value.terminal)
+  publish_app_local_accepted(runtime, step_value)?
+  render_state(runtime, step_value.state, step_value.correlation_id)?
+  if step_value.terminal {
+    publish_app_local_shutdown(runtime, step_value.correlation_id, step_value.state.revision)?
+    publish_lifecycle_marker(runtime, "shutdown_clean", "normal quit", step_value.state.revision)?
+    host_player_end(step_value.correlation_id, step_value.state.revision)
+    return Ok(true)
+  }
+  return Ok(false)
+}
+
+fn rejected_state(state: MediaState, reason: String) -> MediaState {
+  return MediaState(state.library_count,
+                    state.import_queue_count,
+                    state.active_downloads,
+                    state.completed_downloads,
+                    state.audio_quality,
+                    state.video_quality,
+                    state.bitrate_policy,
+                    state.last_action,
+                    reason,
+                    state.transport_status,
+                    state.revision)
+}
+
+fn handle_rejected_command(runtime: MediaRuntime, state: MediaState, command_text: String, reason: String) -> Result<Bool, String> {
+  let correlation_id = command_correlation_id_or(command_text, "media-command-rejected")
+  let next_state = rejected_state(state, reason)
+  host_player_publish_event(bridge_event_text("media_player_command_rejected", next_state, false, correlation_id))
+  publish_media_event("command_rejected", next_state, false, correlation_id, reason, false)
+  publish_app_local_rejected(runtime,
+                             app_local_command_id("media-player-command", correlation_id),
+                             correlation_id,
+                             state.revision,
+                             reason)?
+  render_state(runtime, next_state, correlation_id)?
+  return Ok(true)
+}
+
+fn handle_command(runtime: MediaRuntime, state: MediaState, command_text: String) -> Result<MediaCommandOutcome, String> {
+  match apply_command(state, command_text) {
+    Ok(step_value) => {
+      let done = handle_applied_step(runtime, step_value)?
+      return Ok(MediaCommandOutcome(step_value.state, done))
+    }
+    Err(msg) => {
+      handle_rejected_command(runtime, state, command_text, msg)?
+      return Ok(MediaCommandOutcome(state, false))
+    }
+  }
+}
+
+fn media_job_definition() -> JobDefinition {
+  let scan = JobStageSpec("scan", "leased_task", "media.scan", 30, 2, empty_json_array()).as_json()
+  let deps = array_build(array_push(array_builder(), string_value("scan")))
+  let publish = JobStageSpec("publish", "leased_task", "media.publish", 30, 2, deps).as_json()
+  let stages = array_builder()
+  stages = array_push(stages, scan)
+  stages = array_push(stages, publish)
+  return JobDefinition("media-import", "internal_event", "media_import_requested", array_build(stages), 1, "media-player", 1777437000000)
+}
+
+fn media_job_payload() -> Json {
+  return object2("source_hash", string_value("fixture-open-media-sha256"), "content_policy", string_value("public-domain"))
+}
+
+fn prepare_media_job_run() -> Result<JobRun, String> {
+  initialize(jobs_db_path())?
+  write_definition(jobs_db_path(), media_job_definition())?
+  return create_run(jobs_db_path(), "media-import", "media-import-event-1", media_job_payload(), "media-player", 1777437000100)
+}
+
+fn claim_media_scan(now_unix_ms: Int) -> Result<WorkerClaimEnvelope, String> {
+  let claim = claim_worker(jobs_db_path(), WorkerClaimRequest("media-worker", "media.scan", now_unix_ms))?
+  if claim.outcome != "claimed" {
+    return Err("media jobs worker did not claim scan stage")
+  }
+  return Ok(claim)
+}
+
+fn fail_media_scan(lease_id: String, message: String, now_unix_ms: Int) -> Result<JobRun, String> {
+  return complete_worker(jobs_db_path(), WorkerCompleteRequest("media-worker", lease_id, "failed", message, null_value(), now_unix_ms))
+}
+
+fn run_media_worker_retry_smoke() -> Result<JobRun, String> {
+  prepare_media_job_run()?
+  let claim1 = claim_media_scan(1777437000200)?
+  fail_media_scan(claim1.lease.lease_id, "metadata scan retry", 1777437000300)?
+  let claim2 = claim_media_scan(1777437000400)?
+  return fail_media_scan(claim2.lease.lease_id, "metadata scan dead-letter", 1777437000500)
+}
+
+fn run_media_outbox_dead_letter_smoke() -> Result<OutboxMessage, String> {
+  let outbox = enqueue_outbox(jobs_db_path(), "media.import.events", "media-import-event-1", "media-import-event-1", media_job_payload(), 1, 1777437000600)?
+  let outbox_claim = claim_outbox(jobs_db_path(), OutboxClaimRequest("media-relay", "media.import.events", 1777437000700))?
+  if outbox_claim.outcome != "claimed" {
+    return Err("media outbox did not claim message")
+  }
+  return complete_outbox(jobs_db_path(), outbox.message_id, OutboxCompleteRequest("media-relay", outbox_claim.message.lease_id, "failed", "relay unavailable", 1777437000800, 1777437000800))
+}
+
+fn jobs_marker_json(failed_run: JobRun, dead: OutboxMessage) -> Json {
+  return object8("schema",
+                 string_value("media-player.jobs-outbox.v1"),
+                 "run_id",
+                 int_value(failed_run.run_id),
+                 "after_retry_status",
+                 string_value("ready"),
+                 "final_run_status",
+                 string_value(failed_run.status),
+                 "outbox_message_id",
+                 int_value(dead.message_id),
+                 "outbox_status",
+                 string_value(dead.status),
+                 "outbox_result",
+                 string_value(dead.result_message),
+                 "dead_letter_visible",
+                 bool_value(dead.status == "dead_letter"))
+}
+
+fn run_media_jobs_outbox_smoke() -> Result<Json, String> {
+  let failed_run = run_media_worker_retry_smoke()?
+  let dead = run_media_outbox_dead_letter_smoke()?
+  return Ok(jobs_marker_json(failed_run, dead))
+}
+
+fn publish_jobs_marker() -> Result<Bool, String> {
+  let definition = media_job_definition()
+  validate_stage_graph(definition.stages)?
+  let marker = run_media_jobs_outbox_smoke()?
+  print(text_join("media-player-jobs:", stringify(marker)))
+  return Ok(true)
+}
+
+fn publish_app_local_shutdown(runtime: MediaRuntime, correlation_id: String, revision: Int) -> Result<Bool, String> {
+  let recovery = recovery_marker(runtime.config.app_id,
+                                 correlation_id,
+                                 revision,
+                                 "manual-preview",
+                                 "logs/thin-host-media-player.ndjson")?
+  publish_app_local_recovery(recovery)
+  record_recovery_marker_receipt(runtime.config.sqlite_path, recovery, 1777437000000)?
+  let update = update_marker(runtime.config.app_id,
+                             correlation_id,
+                             revision,
+                             "staged-preview",
+                             update_manifest_path(),
+                             update_manifest_sha256())?
+  publish_app_local_update(update)
+  record_update_marker_receipt(runtime.config.sqlite_path, update, 1777437000000)?
+  return Ok(true)
+}
+
+fn publish_boot_event(state: MediaState) -> Void {
+  host_player_publish_event(bridge_event_text("media_player_booted", state, false, "boot"))
+  publish_media_event("media_player_booted", state, true, "boot", "media player booted", false)
+}
+
+fn boot_player(runtime: MediaRuntime, state: MediaState) -> Result<Bool, String> {
+  publish_startup_diagnostics(runtime)?
+  publish_lifecycle_marker(runtime, "startup_started", "media player started", state.revision)?
+  publish_jobs_marker()?
+  publish_boot_event(state)
+  render_state(runtime, state, "boot")?
+  return publish_lifecycle_marker(runtime, "app_ready", "first media-player snapshot rendered", state.revision)
+}
+
+fn run_command_loop(runtime: MediaRuntime, state: MediaState) -> Result<MediaCommandOutcome, String> {
+  while host_player_open() {
+    let command_text = host_player_next_command_text()
+    let outcome = handle_command(runtime, state, command_text)?
+    state = outcome.state
+    if outcome.terminal {
+      return Ok(outcome)
+    }
+  }
+  return Ok(MediaCommandOutcome(state, false))
+}
+
+fn fail_app_local(msg: String) -> Int {
+  publish_app_local_error(msg)
+  host_player_end("app-local-error", 0)
+  return 1
+}
+
+fn fail_app_local_runtime(runtime: MediaRuntime, msg: String, revision: Int) -> Int {
+  match publish_lifecycle_marker(runtime, "app_degraded", msg, revision) {
+    Ok(_) => {}
+    Err(marker_msg) => {
+      publish_app_local_error(marker_msg)
+    }
+  }
+  return fail_app_local(msg)
+}
+
+fn run_player(runtime: MediaRuntime, state: MediaState) -> Int {
+  match boot_player(runtime, state) {
+    Ok(_) => {}
+    Err(msg) => {
+      return fail_app_local_runtime(runtime, msg, state.revision)
+    }
+  }
+  match run_command_loop(runtime, state) {
+    Ok(outcome) => {
+      if outcome.terminal {
+        return 0
+      }
+      match publish_lifecycle_marker(runtime, "shutdown_clean", "host shell closed", outcome.state.revision) {
+        Ok(_) => {}
+        Err(msg) => {
+          return fail_app_local(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return fail_app_local_runtime(runtime, msg, state.revision)
+    }
+  }
+  host_player_end("host-close", state.revision)
+  return 0
+}
+
+fn main() -> Int {
+  let state = initial_state()
+  host_player_begin()
+  match media_runtime() {
+    Ok(runtime) => {
+      return run_player(runtime, state)
+    }
+    Err(msg) => {
+      return fail_app_local(msg)
+    }
+  }
+}

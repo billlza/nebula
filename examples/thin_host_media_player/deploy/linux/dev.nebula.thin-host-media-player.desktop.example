@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Nebula Media Player Preview
+Exec=thin-host-media-player
+Terminal=false
+Categories=AudioVideo;Player;
+X-Nebula-Host-API=thin-host-shell.preview.v1

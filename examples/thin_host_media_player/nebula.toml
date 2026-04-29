@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+name = "thin-host-media-player"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+host_cxx = ["host.cpp"]
+
+[dependencies]
+app_local = { path = "../../official/nebula-app-local" }
+bridge = { path = "../../official/nebula-thin-host-bridge" }
+jobs = { path = "../../official/nebula-jobs" }
+ui = { path = "../../official/nebula-ui" }

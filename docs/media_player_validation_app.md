@@ -4,6 +4,11 @@ The first full-app validation probe is a thin-host media player. It is a forcing
 app-core, app-local substrate, packaging/update, and performance contracts; it is not a reusable app template
 and not a claim that Nebula owns the native audio/video renderer.
 
+The repo-local skeleton lives in `examples/thin_host_media_player`. Its V1 implementation keeps the
+media-player state machine, command validation, events, snapshots, SQLite receipts, jobs/outbox,
+observe markers, and update/recovery markers in Nebula. The C++ host file is only a preview adapter
+and command fixture for native shell/UI IR smoke.
+
 The platform should not pre-build media-player-specific capabilities before the app work needs them.
 Generic pieces such as command/event/snapshot envelopes, typed view models, local storage,
 background jobs, config preflight, auth principals, telemetry, bundle manifests, update manifests,
@@ -65,7 +70,7 @@ Other platform pieces remain generic capabilities, not media-player-only APIs:
 
 ## First App-Specific Contract Slice
 
-When the media player implementation starts, define `media-player.command.v1` commands:
+The first skeleton defines `media-player.command.v1` commands:
    - `library.import_file`
    - `library.import_torrent`
    - `playback.set_audio_quality`

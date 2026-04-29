@@ -1,0 +1,50 @@
+{
+  "schema": "nebula.gui.preview.package.v1",
+  "app_id": "dev.nebula.thin-host-media-player",
+  "version": "0.1.0-preview",
+  "channel": "preview",
+  "host_api": "thin-host-shell.preview.v1",
+  "entry": {
+    "binary": "thin-host-media-player"
+  },
+  "runtime": {
+    "app_core": "nebula-first",
+    "command_schema": "media-player.command.v1",
+    "event_schema": "media-player.event.v1",
+    "snapshot_schema": "media-player.snapshot.v1",
+    "stale_command_policy": "reject-preserve-state"
+  },
+  "app_local_substrate": {
+    "default_store": "sqlite",
+    "postgres": "preview-optional",
+    "jobs": "nebula-jobs",
+    "observe": "nebula-observe"
+  },
+  "update_manifest": {
+    "path": "deploy/update/manifest.preview.json",
+    "sha256": "27081b18955c5b286254f3b13d87f9c765c3a4403a7aa3df9542005fe8a57aca"
+  },
+  "telemetry": {
+    "correlation_id_source": "media-player.command.v1.correlation_id"
+  },
+  "crash": {
+    "crash_report_schema": "nebula.gui.preview.crash.v1",
+    "last_event_correlation_id": "media-9",
+    "last_state_revision": 9
+  },
+  "recovery": {
+    "mode": "manual-preview",
+    "log_path": "logs/thin-host-media-player.ndjson"
+  },
+  "assets": [
+    {
+      "path": "deploy/macos/Info.plist.example"
+    },
+    {
+      "path": "deploy/linux/dev.nebula.thin-host-media-player.desktop.example"
+    },
+    {
+      "path": "deploy/update/manifest.preview.json"
+    }
+  ]
+}

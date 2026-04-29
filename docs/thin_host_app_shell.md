@@ -89,14 +89,14 @@ The shell records `nebula.app-local.host-snapshot-readiness.v1` after the snapsh
 and before `app_ready`, making "first usable app snapshot" a replayable app-local fact rather than an
 implied ordering convention.
 
-The next validation probe is a thin-host media player, tracked in
-`docs/media_player_validation_app.md`. That app should prove app-core state, app-local storage,
-optional PostgreSQL metadata, background jobs, telemetry, and preview bundle/update/recovery
-contracts before Nebula claims a complete APP platform. It is not a reusable app template: generic
-substrate belongs in Nebula, while media-specific behavior should be discovered while building the
-app. Torrent import for that app is limited to public-domain, open-licensed, or operator-owned media;
-Nebula should validate policy and state transitions while a host/sidecar owns the legal network
-transport.
+The current validation probe is a thin-host media player, tracked in
+`docs/media_player_validation_app.md` and `examples/thin_host_media_player`. That app proves app-core
+state, app-local storage, optional PostgreSQL metadata preflight, background jobs, telemetry, and
+preview bundle/update/recovery contracts before Nebula claims a complete APP platform. It is not a reusable app template:
+generic substrate belongs in Nebula, while media-specific behavior should be
+discovered while building the app. Torrent import for that app is limited to public-domain,
+open-licensed, or operator-owned media; Nebula validates policy and state transitions while a
+host/sidecar owns the legal network transport.
 
 The generic substrate boundary is tracked separately in `docs/app_local_substrate.md`: SQLite default
 state, optional PostgreSQL preview preflight, config/secrets, auth principal carriage, jobs/outbox,
