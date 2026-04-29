@@ -28,5 +28,8 @@ Preview closure markers:
   it is diagnostic-only and keeps `action_owner="app"`
 - runtime lifecycle: `app-local-lifecycle:` publishes `nebula.app-local.lifecycle-marker.v1` for
   `startup_started`, `app_ready`, and `shutdown_clean` evidence
+- host snapshot readiness: `nebula.app-local.host-snapshot-readiness.v1` is recorded after a
+  snapshot receipt is durable and before `app_ready`, proving the first usable host snapshot without
+  binding the app-local substrate to a GUI renderer
 - deploy examples under `deploy/` are schema fixtures for host packaging/update contracts only;
   they are not signing, notarization, store packaging, or auto-update implementation

@@ -73,6 +73,12 @@ markers = evidence["markers"]
 lifecycle = evidence["lifecycle"]
 if evidence["last_snapshot"]["receipt_key"] != "snapshot:gui-3":
     raise SystemExit(f"bad last snapshot evidence: {evidence['last_snapshot']!r}")
+snapshot_readiness = evidence["snapshot_readiness"]
+last_readiness = snapshot_readiness["last_host_snapshot_readiness"]
+if last_readiness["payload"]["snapshot_receipt_key"] != "snapshot:gui-3":
+    raise SystemExit(f"bad host snapshot readiness evidence: {snapshot_readiness!r}")
+if last_readiness["payload"]["readiness"]["value"] != "first_usable_snapshot":
+    raise SystemExit(f"bad host snapshot readiness value: {snapshot_readiness!r}")
 if commands["last_rejected_event"]["payload"]["event_kind"] != "command_rejected":
     raise SystemExit(f"bad rejected command evidence: {commands!r}")
 if commands["last_rejected_event"]["payload"]["accepted"] is not False:
@@ -87,17 +93,17 @@ if lifecycle["previous_session_clean"] is not True:
     raise SystemExit(f"previous session should be clean: {lifecycle!r}")
 if lifecycle["last_lifecycle_marker"]["payload"]["status"] != "shutdown_clean":
     raise SystemExit(f"bad lifecycle evidence: {lifecycle!r}")
-if second["trace"]["receipt_count"] != 21:
-    raise SystemExit(f"startup trace should explain prior 21 receipts: {second['trace']!r}")
+if second["trace"]["receipt_count"] != 27:
+    raise SystemExit(f"startup trace should explain prior 27 receipts: {second['trace']!r}")
 
 with sqlite3.connect(receipt_db) as conn:
     count = conn.execute("SELECT COUNT(*) FROM app_local_runtime_receipts").fetchone()[0]
     kinds = dict(conn.execute(
         "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
     ).fetchall())
-if count != 21:
+if count != 27:
     raise SystemExit(f"second launch should be idempotent over receipt keys, got {count}")
-if kinds != {"snapshot": 6, "command_context": 5, "event": 5, "lifecycle_marker": 3, "recovery_marker": 1, "update_marker": 1}:
+if kinds != {"snapshot": 6, "host_snapshot_readiness": 6, "command_context": 5, "event": 5, "lifecycle_marker": 3, "recovery_marker": 1, "update_marker": 1}:
     raise SystemExit(f"unexpected receipt kind counts after replay: {kinds!r}")
 
 print("thin-host-startup-recovery-policy-ok")

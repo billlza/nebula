@@ -85,6 +85,10 @@ During the current session the host shell emits `app-local-lifecycle:` markers w
 continue after a known missing capability. These markers describe runtime evidence, not a host-owned
 restore policy.
 
+The shell records `nebula.app-local.host-snapshot-readiness.v1` after the snapshot receipt is durable
+and before `app_ready`, making "first usable app snapshot" a replayable app-local fact rather than an
+implied ordering convention.
+
 The next validation probe is a thin-host media player, tracked in
 `docs/media_player_validation_app.md`. That app should prove app-core state, app-local storage,
 optional PostgreSQL metadata, background jobs, telemetry, and preview bundle/update/recovery

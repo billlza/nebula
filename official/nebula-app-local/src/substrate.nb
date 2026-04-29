@@ -84,6 +84,17 @@ struct AppLocalLifecycleMarker {
   reason: String
 }
 
+struct AppLocalHostSnapshotReadiness {
+  app_id: String
+  runtime_session_id: String
+  correlation_id: String
+  state_revision: Int
+  snapshot_receipt_key: String
+  snapshot_schema: String
+  readiness: String
+  reason: String
+}
+
 struct AppLocalReceipt {
   receipt_id: Int
   app_id: String
@@ -145,6 +156,7 @@ struct AppLocalReplayTrace {
   receipt_count: Int
   receipts: Json
   snapshots: Json
+  snapshot_readiness: Json
   command_contexts: Json
   events: Json
   markers: Json
@@ -155,6 +167,21 @@ struct AppLocalReplayTraceEvidence {
   receipt_count: Int
   receipts: Json
   snapshots: Json
+  snapshot_readiness: Json
+  command_contexts: Json
+  events: Json
+  markers: Json
+  lifecycle_markers: Json
+}
+
+struct AppLocalReplayTracePrimaryEvidence {
+  receipt_count: Int
+  receipts: Json
+  snapshots: Json
+  snapshot_readiness: Json
+}
+
+struct AppLocalReplayTraceSecondaryEvidence {
   command_contexts: Json
   events: Json
   markers: Json
@@ -581,6 +608,64 @@ fn lifecycle_marker(app_id: String,
   return Ok(AppLocalLifecycleMarker(app_id, runtime_session_id, correlation_id, state_revision, status, reason))
 }
 
+fn host_snapshot_readiness_allowed(readiness: String) -> Bool {
+  return readiness == "first_usable_snapshot" ||
+         readiness == "degraded_snapshot" ||
+         readiness == "rejected_snapshot"
+}
+
+fn host_snapshot_readiness_receipt_key(runtime_session_id: String, snapshot_receipt_key: String) -> Result<String, String> {
+  if runtime_session_id == "" {
+    return Err("app-local substrate host snapshot readiness runtime_session_id is required")
+  }
+  if snapshot_receipt_key == "" {
+    return Err("app-local substrate host snapshot readiness snapshot_receipt_key is required")
+  }
+  return Ok(app_local_text_concat3(runtime_session_id, ":", snapshot_receipt_key))
+}
+
+fn host_snapshot_readiness(app_id: String,
+                           runtime_session_id: String,
+                           correlation_id: String,
+                           state_revision: Int,
+                           snapshot_receipt_key: String,
+                           snapshot_schema: String,
+                           readiness: String,
+                           reason: String) -> Result<AppLocalHostSnapshotReadiness, String> {
+  if app_id == "" {
+    return Err("app-local substrate host snapshot readiness app_id is required")
+  }
+  if runtime_session_id == "" {
+    return Err("app-local substrate host snapshot readiness runtime_session_id is required")
+  }
+  if correlation_id == "" {
+    return Err("app-local substrate host snapshot readiness correlation_id is required")
+  }
+  if state_revision < 0 {
+    return Err("app-local substrate host snapshot readiness state_revision must be non-negative")
+  }
+  if snapshot_receipt_key == "" {
+    return Err("app-local substrate host snapshot readiness snapshot_receipt_key is required")
+  }
+  if snapshot_schema == "" {
+    return Err("app-local substrate host snapshot readiness snapshot_schema is required")
+  }
+  if !host_snapshot_readiness_allowed(readiness) {
+    return Err("app-local substrate host snapshot readiness must be first_usable_snapshot, degraded_snapshot, or rejected_snapshot")
+  }
+  if reason == "" {
+    return Err("app-local substrate host snapshot readiness reason is required")
+  }
+  return Ok(AppLocalHostSnapshotReadiness(app_id,
+                                          runtime_session_id,
+                                          correlation_id,
+                                          state_revision,
+                                          snapshot_receipt_key,
+                                          snapshot_schema,
+                                          readiness,
+                                          reason))
+}
+
 fn AppLocalUpdateMarker_as_json(self: AppLocalUpdateMarker) -> Json {
   return object7("schema",
                  string_value("nebula.app-local.update-marker.v1"),
@@ -611,6 +696,32 @@ fn AppLocalLifecycleMarker_as_json(self: AppLocalLifecycleMarker) -> Json {
                  int_value(self.state_revision),
                  "status",
                  string_value(self.status),
+                 "reason",
+                 string_value(self.reason))
+}
+
+fn AppLocalHostSnapshotReadiness_as_json(self: AppLocalHostSnapshotReadiness) -> Json {
+  return object8("schema",
+                 string_value("nebula.app-local.host-snapshot-readiness.v1"),
+                 "app_id",
+                 string_value(self.app_id),
+                 "runtime_session_id",
+                 string_value(self.runtime_session_id),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "snapshot_receipt_key",
+                 string_value(self.snapshot_receipt_key),
+                 "snapshot_schema",
+                 string_value(self.snapshot_schema),
+                 "readiness",
+                 host_snapshot_readiness_json(self))
+}
+
+fn host_snapshot_readiness_json(self: AppLocalHostSnapshotReadiness) -> Json {
+  return object2("value",
+                 string_value(self.readiness),
                  "reason",
                  string_value(self.reason))
 }
@@ -762,10 +873,12 @@ fn startup_latest_revision_json(self: AppLocalStartupRecoveryPolicy) -> Json {
 }
 
 fn replay_trace_trajectory_json(self: AppLocalReplayTrace) -> Json {
-  return object6("receipts",
+  return object7("receipts",
                  self.receipts,
                  "snapshots",
                  self.snapshots,
+                 "snapshot_readiness",
+                 self.snapshot_readiness,
                  "command_contexts",
                  self.command_contexts,
                  "events",
@@ -1010,6 +1123,51 @@ fn record_snapshot_receipt(path: String,
                         schema,
                         payload,
                         created_unix_ms)
+}
+
+fn record_host_snapshot_readiness_receipt(path: String, readiness: AppLocalHostSnapshotReadiness, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  validate_host_snapshot_readiness_reference_path(path, readiness)?
+  let draft = host_snapshot_readiness_receipt_write(readiness, created_unix_ms)?
+  return record_receipt_write(path, draft)
+}
+
+fn host_snapshot_readiness_receipt_write(readiness: AppLocalHostSnapshotReadiness, created_unix_ms: Int) -> Result<AppLocalReceiptWrite, String> {
+  return Ok(receipt_write(readiness.app_id,
+                          "host_snapshot_readiness",
+                          host_snapshot_readiness_receipt_key(readiness.runtime_session_id, readiness.snapshot_receipt_key)?,
+                          readiness.correlation_id,
+                          readiness.state_revision,
+                          "nebula.app-local.host-snapshot-readiness.v1",
+                          readiness.as_json(),
+                          created_unix_ms))
+}
+
+fn validate_host_snapshot_readiness_reference_path(path: String, readiness: AppLocalHostSnapshotReadiness) -> Result<Bool, String> {
+  let snapshot = load_host_snapshot_readiness_snapshot(path, readiness)?
+  if snapshot.correlation_id != readiness.correlation_id {
+    return Err("app-local substrate host snapshot readiness snapshot correlation_id mismatch")
+  }
+  if snapshot.state_revision != readiness.state_revision {
+    return Err("app-local substrate host snapshot readiness snapshot state_revision mismatch")
+  }
+  if snapshot.schema != readiness.snapshot_schema {
+    return Err("app-local substrate host snapshot readiness snapshot schema mismatch")
+  }
+  return Ok(true)
+}
+
+fn load_host_snapshot_readiness_snapshot(path: String, readiness: AppLocalHostSnapshotReadiness) -> Result<AppLocalReceipt, String> {
+  let conn = open_receipt_store(path)?
+  match load_receipt_by_key(conn, readiness.app_id, "snapshot", readiness.snapshot_receipt_key) {
+    Ok(snapshot) => {
+      conn.close()?
+      return Ok(snapshot)
+    }
+    Err(msg) => {
+      conn.close()?
+      return Err("app-local substrate host snapshot readiness snapshot receipt not found")
+    }
+  }
 }
 
 fn record_recovery_marker_receipt(path: String, marker: AppLocalRecoveryMarker, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
@@ -1297,6 +1455,7 @@ fn recovery_replay_trace_conn(conn: Connection, app_id: String, limit: Int) -> R
                                 evidence.receipt_count,
                                 evidence.receipts,
                                 evidence.snapshots,
+                                evidence.snapshot_readiness,
                                 evidence.command_contexts,
                                 evidence.events,
                                 evidence.markers,
@@ -1304,13 +1463,30 @@ fn recovery_replay_trace_conn(conn: Connection, app_id: String, limit: Int) -> R
 }
 
 fn recovery_replay_trace_evidence_conn(conn: Connection, app_id: String, limit: Int) -> Result<AppLocalReplayTraceEvidence, String> {
-  return Ok(AppLocalReplayTraceEvidence(receipt_total_count_conn(conn, app_id)?,
-                                        recent_receipts_conn(conn, app_id, limit)?,
-                                        recent_receipts_by_kind_conn(conn, app_id, "snapshot", limit)?,
-                                        recent_receipts_by_kind_conn(conn, app_id, "command_context", limit)?,
-                                        recent_receipts_by_kind_conn(conn, app_id, "event", limit)?,
-                                        recent_marker_receipts_conn(conn, app_id, limit)?,
-                                        recent_receipts_by_kind_conn(conn, app_id, "lifecycle_marker", limit)?))
+  let primary = recovery_replay_trace_primary_evidence_conn(conn, app_id, limit)?
+  let secondary = recovery_replay_trace_secondary_evidence_conn(conn, app_id, limit)?
+  return Ok(AppLocalReplayTraceEvidence(primary.receipt_count,
+                                        primary.receipts,
+                                        primary.snapshots,
+                                        primary.snapshot_readiness,
+                                        secondary.command_contexts,
+                                        secondary.events,
+                                        secondary.markers,
+                                        secondary.lifecycle_markers))
+}
+
+fn recovery_replay_trace_primary_evidence_conn(conn: Connection, app_id: String, limit: Int) -> Result<AppLocalReplayTracePrimaryEvidence, String> {
+  return Ok(AppLocalReplayTracePrimaryEvidence(receipt_total_count_conn(conn, app_id)?,
+                                              recent_receipts_conn(conn, app_id, limit)?,
+                                              recent_receipts_by_kind_conn(conn, app_id, "snapshot", limit)?,
+                                              recent_receipts_by_kind_conn(conn, app_id, "host_snapshot_readiness", limit)?))
+}
+
+fn recovery_replay_trace_secondary_evidence_conn(conn: Connection, app_id: String, limit: Int) -> Result<AppLocalReplayTraceSecondaryEvidence, String> {
+  return Ok(AppLocalReplayTraceSecondaryEvidence(recent_receipts_by_kind_conn(conn, app_id, "command_context", limit)?,
+                                                recent_receipts_by_kind_conn(conn, app_id, "event", limit)?,
+                                                recent_marker_receipts_conn(conn, app_id, limit)?,
+                                                recent_receipts_by_kind_conn(conn, app_id, "lifecycle_marker", limit)?))
 }
 
 fn startup_recovery_policy(path: String, app_id: String, limit: Int) -> Result<AppLocalStartupRecoveryPolicy, String> {
@@ -1337,14 +1513,25 @@ fn startup_recovery_policy_from_trace(trace: AppLocalReplayTrace) -> Result<AppL
 
 fn startup_recovery_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
   let snapshot = latest_json_receipt(trace.snapshots, trace.app_id)?
-  return Ok(object4("last_snapshot",
+  return Ok(object5("last_snapshot",
                     snapshot,
+                    "snapshot_readiness",
+                    startup_snapshot_readiness_evidence(trace)?,
                     "commands",
                     startup_command_evidence(trace)?,
                     "markers",
                     startup_marker_evidence(trace)?,
                     "lifecycle",
                     startup_lifecycle_evidence(trace)?))
+}
+
+fn startup_snapshot_readiness_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
+  return Ok(object3("last_host_snapshot_readiness",
+                    latest_json_receipt(trace.snapshot_readiness, trace.app_id)?,
+                    "last_usable_host_snapshot_readiness",
+                    latest_snapshot_readiness_receipt_by_value(trace.snapshot_readiness, trace.app_id, "first_usable_snapshot")?,
+                    "last_rejected_host_snapshot_readiness",
+                    latest_snapshot_readiness_receipt_by_value(trace.snapshot_readiness, trace.app_id, "rejected_snapshot")?))
 }
 
 fn startup_command_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
@@ -1413,6 +1600,10 @@ fn startup_marker_recommendation(evidence: Json) -> Result<String, String> {
 }
 
 fn startup_resume_recommendation(evidence: Json) -> Result<String, String> {
+  let readiness_recommendation = startup_snapshot_readiness_recommendation(evidence)?
+  if readiness_recommendation != "" {
+    return Ok(readiness_recommendation)
+  }
   if startup_has_snapshot(evidence)? {
     return Ok("app_decide_from_snapshot")
   }
@@ -1454,6 +1645,10 @@ fn startup_marker_reason(evidence: Json) -> Result<String, String> {
 }
 
 fn startup_resume_reason(evidence: Json) -> Result<String, String> {
+  let readiness_reason = startup_snapshot_readiness_reason(evidence)?
+  if readiness_reason != "" {
+    return Ok(readiness_reason)
+  }
   if startup_has_snapshot(evidence)? {
     return Ok("latest snapshot is available for app-owned resume logic")
   }
@@ -1499,8 +1694,48 @@ fn startup_last_lifecycle_marker(evidence: Json) -> Result<Json, String> {
   return get_value(get_value(evidence, "lifecycle")?, "last_lifecycle_marker")
 }
 
+fn startup_last_host_snapshot_readiness(evidence: Json) -> Result<Json, String> {
+  return get_value(get_value(evidence, "snapshot_readiness")?, "last_host_snapshot_readiness")
+}
+
 fn startup_has_snapshot(evidence: Json) -> Result<Bool, String> {
   return Ok(receipt_json_id(get_value(evidence, "last_snapshot")?) > 0)
+}
+
+fn startup_snapshot_readiness_recommendation(evidence: Json) -> Result<String, String> {
+  let readiness = startup_last_host_snapshot_readiness(evidence)?
+  if receipt_json_id(readiness) == 0 {
+    return Ok("")
+  }
+  let value = receipt_snapshot_readiness_value(readiness)
+  if value == "first_usable_snapshot" {
+    return Ok("app_decide_from_snapshot")
+  }
+  if value == "degraded_snapshot" {
+    return Ok("inspect_degraded_snapshot")
+  }
+  if value == "rejected_snapshot" {
+    return Ok("inspect_rejected_snapshot")
+  }
+  return Ok("")
+}
+
+fn startup_snapshot_readiness_reason(evidence: Json) -> Result<String, String> {
+  let readiness = startup_last_host_snapshot_readiness(evidence)?
+  if receipt_json_id(readiness) == 0 {
+    return Ok("")
+  }
+  let value = receipt_snapshot_readiness_value(readiness)
+  if value == "first_usable_snapshot" {
+    return Ok("latest host snapshot readiness marks the snapshot as first usable for app-owned resume logic")
+  }
+  if value == "degraded_snapshot" {
+    return Ok("latest host snapshot readiness marks the snapshot degraded; app should inspect before resuming")
+  }
+  if value == "rejected_snapshot" {
+    return Ok("latest host snapshot readiness rejected the snapshot; app should not resume directly from it")
+  }
+  return Ok("")
 }
 
 fn startup_has_recovery_marker(evidence: Json) -> Result<Bool, String> {
@@ -1576,6 +1811,28 @@ fn receipt_lifecycle_status(receipt: Json) -> String {
     }
     Err(msg) => {
       return ""
+    }
+  }
+}
+
+fn receipt_snapshot_readiness_value(receipt: Json) -> String {
+  match get_string(get_value_or_empty_readiness(get_value_or_empty_payload(receipt)), "value") {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      return ""
+    }
+  }
+}
+
+fn get_value_or_empty_readiness(value: Json) -> Json {
+  match get_value(value, "readiness") {
+    Ok(readiness) => {
+      return readiness
+    }
+    Err(msg) => {
+      return object1("kind", string_value("empty"))
     }
   }
 }
@@ -1731,6 +1988,20 @@ fn latest_lifecycle_receipt_by_status(receipts: Json, app_id: String, status: St
   while index < count {
     let receipt = array_get(receipts, index)?
     if receipt_lifecycle_status(receipt) == status {
+      selected = receipt
+    }
+    index += 1
+  }
+  return Ok(selected)
+}
+
+fn latest_snapshot_readiness_receipt_by_value(receipts: Json, app_id: String, readiness: String) -> Result<Json, String> {
+  let count = array_len(receipts)?
+  let index = 0
+  let selected = receipt_placeholder(app_id).as_json()
+  while index < count {
+    let receipt = array_get(receipts, index)?
+    if receipt_snapshot_readiness_value(receipt) == readiness {
       selected = receipt
     }
     index += 1

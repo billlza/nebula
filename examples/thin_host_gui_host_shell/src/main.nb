@@ -215,16 +215,36 @@ ui OpsShell(state: ShellState) {
 fn render_state(runtime: ShellRuntime, state: ShellState, correlation_id: String) -> Result<Bool, String> {
   let tree = OpsShell(state)
   let snapshot_text = encode_snapshot_text_with_revision("local_ops_console", tree, state.revision)
+  let snapshot_value = parse(snapshot_text)?
   host_shell_render_tree(stringify(tree))
   host_shell_publish_snapshot(snapshot_text)
+  record_bridge_snapshot(runtime, correlation_id, state.revision, snapshot_value)?
+  record_host_snapshot_readiness_marker(runtime, correlation_id, state.revision)?
+  return Ok(true)
+}
+
+fn record_bridge_snapshot(runtime: ShellRuntime, correlation_id: String, revision: Int, snapshot_value: Json) -> Result<Bool, String> {
   record_snapshot_receipt(runtime.config.sqlite_path,
                           runtime.config.app_id,
                           app_local_snapshot_id(correlation_id),
                           correlation_id,
-                          state.revision,
+                          revision,
                           "thin-host-bridge.snapshot.v1",
-                          parse(snapshot_text)?,
+                          snapshot_value,
                           1777431000000)?
+  return Ok(true)
+}
+
+fn record_host_snapshot_readiness_marker(runtime: ShellRuntime, correlation_id: String, revision: Int) -> Result<Bool, String> {
+  let readiness = host_snapshot_readiness(runtime.config.app_id,
+                                          runtime_session_id(),
+                                          correlation_id,
+                                          revision,
+                                          app_local_snapshot_id(correlation_id),
+                                          "thin-host-bridge.snapshot.v1",
+                                          "first_usable_snapshot",
+                                          "snapshot rendered for host")?
+  record_host_snapshot_readiness_receipt(runtime.config.sqlite_path, readiness, 1777431000000)?
   return Ok(true)
 }
 

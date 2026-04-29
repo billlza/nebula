@@ -14,6 +14,7 @@ Current surface:
 - `substrate::AppLocalRecoveryMarker`
 - `substrate::AppLocalUpdateMarker`
 - `substrate::AppLocalLifecycleMarker`
+- `substrate::AppLocalHostSnapshotReadiness`
 - `substrate::AppLocalReceipt`
 - `substrate::AppLocalReceiptReplayBatch`
 - `substrate::AppLocalReplayTrace`
@@ -32,11 +33,13 @@ Current surface:
 - `substrate::recovery_marker(app_id, correlation_id, state_revision, status, path) -> Result<AppLocalRecoveryMarker, String>`
 - `substrate::update_marker(app_id, correlation_id, state_revision, status, manifest_path, manifest_sha256) -> Result<AppLocalUpdateMarker, String>`
 - `substrate::lifecycle_marker(app_id, runtime_session_id, correlation_id, state_revision, status, reason) -> Result<AppLocalLifecycleMarker, String>`
+- `substrate::host_snapshot_readiness(app_id, runtime_session_id, correlation_id, state_revision, snapshot_receipt_key, snapshot_schema, readiness, reason) -> Result<AppLocalHostSnapshotReadiness, String>`
 - `substrate::initialize_receipts(path) -> Result<Bool, String>`
 - `substrate::record_receipt(path, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_command_context_receipt(path, app_id, context, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_event_receipt(path, app_id, event, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_snapshot_receipt(path, app_id, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms) -> Result<AppLocalReceipt, String>`
+- `substrate::record_host_snapshot_readiness_receipt(path, readiness, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_recovery_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_update_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_lifecycle_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
@@ -96,12 +99,18 @@ Current guarantees:
   `runtime_session_id`, correlation id, state revision, status, and reason. The preview status set is
   `startup_started`, `app_ready`, `app_degraded`, and `shutdown_clean`; these receipts are evidence
   for startup diagnosis, not a hidden runtime state machine.
+- Host snapshot readiness uses `nebula.app-local.host-snapshot-readiness.v1` to persist the fact that
+  a previously recorded snapshot receipt became the first usable host snapshot for a runtime
+  session. The readiness receipt stores `runtime_session_id`, correlation id, state revision,
+  `snapshot_receipt_key`, `snapshot_schema`, readiness value, and reason; it references the snapshot
+  receipt and does not duplicate the snapshot payload. Writes verify the referenced snapshot exists
+  for the same app, correlation id, state revision, and schema.
 - Runtime session summaries use `nebula.app-local.runtime-session-summary.v1` to fold lifecycle
   markers for one `runtime_session_id` into windowed `started`, `ready`, `degraded`,
   `shutdown_clean`, last-marker, and completion evidence (`clean`, `degraded_clean`, `incomplete`,
   or `none`). The summary is diagnostic evidence and does not choose a recovery action.
 - Runtime receipts use the default SQLite data plane to persist command context, command event,
-  snapshot, recovery marker, update marker, and lifecycle marker payloads under
+  snapshot, host snapshot readiness, recovery marker, update marker, and lifecycle marker payloads under
   `app_local_runtime_receipts`. The
   receipt schema is generic, keyed by `app_id + receipt_kind + receipt_key` for idempotent replay,
   and indexed by app id, receipt kind, correlation id, and state revision so host shells can recover
@@ -112,10 +121,10 @@ Current guarantees:
   markers. Replay limits are bounded and this is not an audit-log query language.
 - Startup recovery policy uses `recovery_replay_trace(...)` to produce
   `nebula.app-local.startup-recovery-policy.v1`: latest revision evidence, last snapshot, last
-  accepted/rejected command event, last recovery/update marker, lifecycle session evidence, and the
-  latest runtime session summary. The policy is diagnostic-only, reports `action_owner="app"` and
-  windowed revision confidence, and keeps recovery, replay, rollback, or update application
-  decisions in the app.
+  host snapshot readiness, last accepted/rejected command event, last recovery/update marker,
+  lifecycle session evidence, and the latest runtime session summary. The policy is diagnostic-only,
+  reports `action_owner="app"` and windowed revision confidence, and keeps recovery, replay,
+  rollback, or update application decisions in the app.
 - Jobs integration is limited to DAG validation in this package; worker lease/outbox storage remains
   in `nebula-jobs`.
 - Observe integration emits log-first preflight events and delta-counter metrics through

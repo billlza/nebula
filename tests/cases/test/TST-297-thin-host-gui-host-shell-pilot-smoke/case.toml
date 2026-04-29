@@ -202,6 +202,7 @@ with sqlite3.connect(receipt_db) as conn:
     ).fetchall())
 if receipt_counts != {
     "snapshot": 6,
+    "host_snapshot_readiness": 6,
     "command_context": 5,
     "event": 5,
     "lifecycle_marker": 3,
@@ -209,10 +210,20 @@ if receipt_counts != {
     "update_marker": 1,
 }:
     raise SystemExit(f"unexpected persisted app-local receipt counts: {receipt_counts!r}")
-if [row[1] for row in receipt_rows[:3]] != ["lifecycle_marker", "snapshot", "lifecycle_marker"]:
+if [row[1] for row in receipt_rows[:4]] != ["lifecycle_marker", "snapshot", "host_snapshot_readiness", "lifecycle_marker"]:
     raise SystemExit(f"unexpected persisted app-local receipt kinds: {receipt_rows!r}")
 if receipt_rows[0][0] != "thin-host-gui-host-shell" or receipt_rows[0][2] != "thin-host-gui-preview-session-0001:startup_started:thin-host-gui-preview-session-0001":
     raise SystemExit(f"unexpected persisted app-local receipt identity: {receipt_rows[0]!r}")
+host_snapshot_rows = [row for row in receipt_rows if row[1] == "host_snapshot_readiness"]
+if [row[2] for row in host_snapshot_rows] != [
+    "thin-host-gui-preview-session-0001:snapshot:boot",
+    "thin-host-gui-preview-session-0001:snapshot:gui-1",
+    "thin-host-gui-preview-session-0001:snapshot:gui-stale",
+    "thin-host-gui-preview-session-0001:snapshot:gui-unknown",
+    "thin-host-gui-preview-session-0001:snapshot:gui-2",
+    "thin-host-gui-preview-session-0001:snapshot:gui-3",
+]:
+    raise SystemExit(f"unexpected persisted app-local host snapshot readiness keys: {host_snapshot_rows!r}")
 command_rows = [row for row in receipt_rows if row[1] == "command_context"]
 if [row[3] for row in command_rows] != ["gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
     raise SystemExit(f"unexpected persisted app-local command correlations: {receipt_rows!r}")
@@ -247,6 +258,7 @@ with sqlite3.connect(receipt_db) as conn:
     ).fetchall())
 if host_close_counts != {
     "snapshot": 3,
+    "host_snapshot_readiness": 3,
     "command_context": 2,
     "event": 2,
     "lifecycle_marker": 3,

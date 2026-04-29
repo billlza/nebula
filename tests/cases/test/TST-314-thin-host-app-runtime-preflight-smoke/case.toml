@@ -110,7 +110,7 @@ with sqlite3.connect(receipt_db) as conn:
     counts = dict(conn.execute(
         "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
     ).fetchall())
-if counts != {"snapshot": 6, "command_context": 5, "event": 5, "lifecycle_marker": 3, "recovery_marker": 1, "update_marker": 1}:
+if counts != {"snapshot": 6, "host_snapshot_readiness": 6, "command_context": 5, "event": 5, "lifecycle_marker": 3, "recovery_marker": 1, "update_marker": 1}:
     raise SystemExit(f"unexpected runtime preflight receipt counts: {counts!r}")
 if {row[0] for row in rows} != {"thin-host-runtime-preflight-app"}:
     raise SystemExit(f"runtime app id did not flow into receipts: {rows!r}")
