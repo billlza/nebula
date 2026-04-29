@@ -70,13 +70,13 @@ struct StringZeroizer {
 
 RtResult<RtBytes> export_secret_owner_result(RtResult<SecretBytesOwner> owner_result) {
   if (auto* err = result_err_ptr(owner_result)) {
-    return make_err<RtBytes>(err->value);
+    return make_err<RtBytes>(*err);
   }
   auto* ok = result_ok_ptr(owner_result);
   if (ok == nullptr) {
     nebula::rt::panic("secret owner result is in an invalid state");
   }
-  return make_ok(ok->value.export_bytes());
+  return make_ok(ok->export_bytes());
 }
 
 RtResult<RtBytes> validate_secret_bytes(RtBytes bytes,

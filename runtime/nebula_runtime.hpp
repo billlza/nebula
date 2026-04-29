@@ -195,27 +195,51 @@ inline bool result_is_err(const Result<T, E>& result) {
 }
 
 template <typename T, typename E>
-inline typename Result<T, E>::Ok* result_ok_ptr(Result<T, E>& result) {
+inline typename Result<T, E>::Ok* result_ok_variant_ptr(Result<T, E>& result) {
   if (!result.ok) return nullptr;
   return std::get_if<typename Result<T, E>::Ok>(&result.data);
 }
 
 template <typename T, typename E>
-inline const typename Result<T, E>::Ok* result_ok_ptr(const Result<T, E>& result) {
+inline const typename Result<T, E>::Ok* result_ok_variant_ptr(const Result<T, E>& result) {
   if (!result.ok) return nullptr;
   return std::get_if<typename Result<T, E>::Ok>(&result.data);
 }
 
 template <typename T, typename E>
-inline typename Result<T, E>::Err* result_err_ptr(Result<T, E>& result) {
+inline typename Result<T, E>::Err* result_err_variant_ptr(Result<T, E>& result) {
   if (result.ok) return nullptr;
   return std::get_if<typename Result<T, E>::Err>(&result.data);
 }
 
 template <typename T, typename E>
-inline const typename Result<T, E>::Err* result_err_ptr(const Result<T, E>& result) {
+inline const typename Result<T, E>::Err* result_err_variant_ptr(const Result<T, E>& result) {
   if (result.ok) return nullptr;
   return std::get_if<typename Result<T, E>::Err>(&result.data);
+}
+
+template <typename T, typename E>
+inline T* result_ok_ptr(Result<T, E>& result) {
+  auto* ok = result_ok_variant_ptr(result);
+  return ok == nullptr ? nullptr : &ok->value;
+}
+
+template <typename T, typename E>
+inline const T* result_ok_ptr(const Result<T, E>& result) {
+  auto* ok = result_ok_variant_ptr(result);
+  return ok == nullptr ? nullptr : &ok->value;
+}
+
+template <typename T, typename E>
+inline E* result_err_ptr(Result<T, E>& result) {
+  auto* err = result_err_variant_ptr(result);
+  return err == nullptr ? nullptr : &err->value;
+}
+
+template <typename T, typename E>
+inline const E* result_err_ptr(const Result<T, E>& result) {
+  auto* err = result_err_variant_ptr(result);
+  return err == nullptr ? nullptr : &err->value;
 }
 
 template <typename T, typename E>
