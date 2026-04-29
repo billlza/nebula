@@ -14,6 +14,8 @@ Current surface:
 - `substrate::AppLocalRecoveryMarker`
 - `substrate::AppLocalUpdateMarker`
 - `substrate::AppLocalReceipt`
+- `substrate::AppLocalReceiptReplayBatch`
+- `substrate::AppLocalReplayTrace`
 - `substrate::app_local_config(...) -> Result<AppLocalConfig, String>`
 - `substrate::config_from_env(default_app_id, default_sqlite_path, default_principal_subject, default_observe_service) -> Result<AppLocalConfig, String>`
 - `substrate::validate_config(config) -> Result<Bool, String>`
@@ -30,8 +32,12 @@ Current surface:
 - `substrate::record_receipt(path, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_command_context_receipt(path, app_id, context, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_event_receipt(path, app_id, event, created_unix_ms) -> Result<AppLocalReceipt, String>`
+- `substrate::record_snapshot_receipt(path, app_id, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_recovery_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
 - `substrate::record_update_marker_receipt(path, marker, created_unix_ms) -> Result<AppLocalReceipt, String>`
+- `substrate::receipt_by_key(path, app_id, receipt_kind, receipt_key) -> Result<AppLocalReceipt, String>`
+- `substrate::replay_receipts(path, app_id, receipt_kind, after_receipt_id, limit) -> Result<AppLocalReceiptReplayBatch, String>`
+- `substrate::recovery_replay_trace(path, app_id, limit) -> Result<AppLocalReplayTrace, String>`
 - `substrate::receipt_count(path, app_id, receipt_kind) -> Result<Int, String>`
 - `substrate::latest_receipt(path, app_id, receipt_kind, correlation_id) -> Result<AppLocalReceipt, String>`
 - `substrate::validate_background_stages(stages) -> Result<Bool, String>`
@@ -79,10 +85,14 @@ Current guarantees:
   revision, status, manifest path, and manifest checksum. They do not download, sign, notarize, or
   apply updates.
 - Runtime receipts use the default SQLite data plane to persist command context, command event,
-  recovery marker, and update marker payloads under `app_local_runtime_receipts`. The receipt schema
-  is generic, keyed by `app_id + receipt_kind + receipt_key` for idempotent replay, and indexed by
-  app id, receipt kind, correlation id, and state revision so host shells can recover or diagnose
-  app-core progress without adopting a media, game, or editor domain model.
+  snapshot, recovery marker, and update marker payloads under `app_local_runtime_receipts`. The
+  receipt schema is generic, keyed by `app_id + receipt_kind + receipt_key` for idempotent replay,
+  and indexed by app id, receipt kind, correlation id, and state revision so host shells can recover
+  or diagnose app-core progress without adopting a media, game, or editor domain model.
+- Recovery/replay reads are cursor-based by receipt id. `receipt_by_key(...)` resolves one stable
+  receipt, `replay_receipts(...)` pages one receipt kind, and `recovery_replay_trace(...)` returns a
+  startup-oriented summary of recent snapshots, command contexts, events, and recovery/update
+  markers. Replay limits are bounded and this is not an audit-log query language.
 - Jobs integration is limited to DAG validation in this package; worker lease/outbox storage remains
   in `nebula-jobs`.
 - Observe integration emits log-first preflight events and delta-counter metrics through

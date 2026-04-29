@@ -163,25 +163,26 @@ with sqlite3.connect(receipt_db) as conn:
     receipt_rows = conn.execute(
         "SELECT app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema FROM app_local_runtime_receipts ORDER BY receipt_id"
     ).fetchall()
-if [row[1] for row in receipt_rows] != [
-    "command_context",
-    "event",
-    "command_context",
-    "event",
-    "command_context",
-    "event",
-    "command_context",
-    "event",
-    "command_context",
-    "event",
-    "recovery_marker",
-    "update_marker",
-]:
+    receipt_counts = dict(conn.execute(
+        "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
+    ).fetchall())
+if receipt_counts != {
+    "snapshot": 6,
+    "command_context": 5,
+    "event": 5,
+    "recovery_marker": 1,
+    "update_marker": 1,
+}:
+    raise SystemExit(f"unexpected persisted app-local receipt counts: {receipt_counts!r}")
+if [row[1] for row in receipt_rows[:3]] != ["snapshot", "command_context", "event"]:
     raise SystemExit(f"unexpected persisted app-local receipt kinds: {receipt_rows!r}")
-if [row[3] for row in receipt_rows[1::2][:5]] != ["gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
-    raise SystemExit(f"unexpected persisted app-local receipt correlations: {receipt_rows!r}")
-if receipt_rows[0][0] != "thin-host-gui-host-shell" or receipt_rows[0][2] != "targets.refresh:gui-1":
+if receipt_rows[0][0] != "thin-host-gui-host-shell" or receipt_rows[0][2] != "snapshot:boot":
     raise SystemExit(f"unexpected persisted app-local receipt identity: {receipt_rows[0]!r}")
+command_rows = [row for row in receipt_rows if row[1] == "command_context"]
+if [row[3] for row in command_rows] != ["gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
+    raise SystemExit(f"unexpected persisted app-local command correlations: {receipt_rows!r}")
+if command_rows[0][2] != "targets.refresh:gui-1":
+    raise SystemExit(f"unexpected persisted app-local command key: {command_rows[0]!r}")
 if receipt_rows[-1][5] != "nebula.app-local.update-marker.v1":
     raise SystemExit(f"unexpected persisted app-local update receipt: {receipt_rows[-1]!r}")
 

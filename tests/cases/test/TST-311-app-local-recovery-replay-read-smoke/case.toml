@@ -1,0 +1,297 @@
+id = "TST-311-app-local-recovery-replay-read-smoke"
+suite = "test"
+description = "app-local substrate reads replay pages and recovery traces from generic SQLite receipts"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_recovery_replay_read")
+app = root / "app"
+db_path = root / "state" / "receipts.db"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-recovery-replay-read"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn db_path() -> String {
+  return "work/app_local_recovery_replay_read/state/receipts.db"
+}
+
+fn app_id() -> String {
+  return "app.local.replay"
+}
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_receipt_error(result: Result<AppLocalReceipt, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => { fail() }
+    Err(msg) => { expect_text(msg, expected) }
+  }
+}
+
+fn expect_batch_error(result: Result<AppLocalReceiptReplayBatch, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => { fail() }
+    Err(msg) => { expect_text(msg, expected) }
+  }
+}
+
+fn principal_value() -> AppLocalPrincipal {
+  return AppLocalPrincipal("local-operator", "app.local.writer", "internal")
+}
+
+fn context_one() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-1", "corr-1", 0, principal_value(), 1777432000000)
+}
+
+fn context_two() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-2", "corr-2", 1, principal_value(), 1777432000001)
+}
+
+fn snapshot_payload(screen: String, revision: Int) -> Json {
+  return object4("schema",
+                 string_value("thin-host-bridge.snapshot.v1"),
+                 "screen",
+                 string_value(screen),
+                 "payload",
+                 object1("screen", string_value(screen)),
+                 "state_revision",
+                 int_value(revision))
+}
+
+fn record_first_command_receipts() -> Result<Bool, String> {
+  let first = context_one()?
+  record_command_context_receipt(db_path(), app_id(), first, 1777432000001)?
+  record_event_receipt(db_path(), app_id(), command_accepted_event(first, "state.updated", "ok")?, 1777432000002)?
+  return Ok(true)
+}
+
+fn record_second_command_receipts() -> Result<Bool, String> {
+  let second = context_two()?
+  record_command_context_receipt(db_path(), app_id(), second, 1777432000004)?
+  record_event_receipt(db_path(), app_id(), command_rejected_event(second, "stale command")?, 1777432000005)?
+  return Ok(true)
+}
+
+fn record_command_receipts() -> Result<Bool, String> {
+  record_first_command_receipts()?
+  return record_second_command_receipts()
+}
+
+fn record_snapshot_receipts() -> Result<Bool, String> {
+  record_snapshot_receipt(db_path(), app_id(), "snapshot:boot", "boot", 0, "thin-host-bridge.snapshot.v1", snapshot_payload("home", 0), 1777432000000)?
+  record_snapshot_receipt(db_path(), app_id(), "snapshot:corr-1", "corr-1", 1, "thin-host-bridge.snapshot.v1", snapshot_payload("home", 1), 1777432000003)?
+  return Ok(true)
+}
+
+fn record_marker_receipts() -> Result<Bool, String> {
+  let recovery = recovery_marker(app_id(), "corr-2", 1, "crash_detected", "/tmp/app.recovery")?
+  let update = update_marker(app_id(), "corr-2", 1, "staged", "/tmp/update.json", "abc123")?
+  record_recovery_marker_receipt(db_path(), recovery, 1777432000006)?
+  record_update_marker_receipt(db_path(), update, 1777432000007)?
+  return Ok(true)
+}
+
+fn record_sample_receipts() -> Result<Bool, String> {
+  initialize_receipts(db_path())?
+  record_snapshot_receipts()?
+  record_command_receipts()?
+  return record_marker_receipts()
+}
+
+fn verify_receipt_by_key() -> Result<Bool, String> {
+  let receipt = receipt_by_key(db_path(), app_id(), "command_context", "cmd-1")?
+  if receipt.correlation_id != "corr-1" || receipt.state_revision != 0 {
+    return Ok(false)
+  }
+  expect_receipt_error(receipt_by_key(db_path(), app_id(), "event", "missing"),
+                       "app-local substrate receipt not found")
+  return Ok(true)
+}
+
+fn first_replay_page_ok(batch: AppLocalReceiptReplayBatch) -> Result<Bool, String> {
+  if array_len(batch.receipts)? != 1 || !batch.has_more || batch.next_after_receipt_id <= 0 {
+    return Ok(false)
+  }
+  let item = array_get(batch.receipts, 0)?
+  return Ok(get_string(item, "receipt_key")? == "cmd-1")
+}
+
+fn second_replay_page_ok(first: AppLocalReceiptReplayBatch, second: AppLocalReceiptReplayBatch) -> Result<Bool, String> {
+  if array_len(second.receipts)? != 1 || second.has_more {
+    return Ok(false)
+  }
+  let item = array_get(second.receipts, 0)?
+  return Ok(second.next_after_receipt_id > first.next_after_receipt_id &&
+            get_string(item, "receipt_key")? == "cmd-2")
+}
+
+fn verify_replay_pages() -> Result<Bool, String> {
+  let first = replay_receipts(db_path(), app_id(), "event", 0, 1)?
+  if !first_replay_page_ok(first)? {
+    return Ok(false)
+  }
+  let second = replay_receipts(db_path(), app_id(), "event", first.next_after_receipt_id, 2)?
+  return second_replay_page_ok(first, second)
+}
+
+fn trace_counts_ok(trace: AppLocalReplayTrace) -> Result<Bool, String> {
+  return Ok(array_len(trace.snapshots)? == 2 &&
+            array_len(trace.command_contexts)? == 2 &&
+            array_len(trace.events)? == 2 &&
+            array_len(trace.markers)? == 2)
+}
+
+fn trace_latest_ok(trace: AppLocalReplayTrace) -> Bool {
+  if trace.receipt_count != 8 || trace.latest_state_revision != 1 || trace.latest_correlation_id != "corr-2" {
+    return false
+  }
+  return true
+}
+
+fn verify_recovery_trace() -> Result<Bool, String> {
+  let trace = recovery_replay_trace(db_path(), app_id(), 10)?
+  if !trace_latest_ok(trace) {
+    return Ok(false)
+  }
+  return trace_counts_ok(trace)
+}
+
+fn verify_negative_contracts() -> Void {
+  expect_batch_error(replay_receipts(db_path(), app_id(), "event", -1, 1),
+                     "app-local substrate replay after_receipt_id must be non-negative")
+  expect_batch_error(replay_receipts(db_path(), app_id(), "event", 0, 0),
+                     "app-local substrate replay limit must be positive")
+  expect_batch_error(replay_receipts(db_path(), app_id(), "event", 0, 501),
+                     "app-local substrate replay limit must be <= 500")
+  expect_batch_error(replay_receipts(db_path(), "", "event", 0, 1),
+                     "app-local substrate receipt app_id is required")
+  expect_batch_error(replay_receipts(db_path(), app_id(), "", 0, 1),
+                     "app-local substrate receipt_kind is required")
+}
+
+fn verify_replay_contract() -> Result<Bool, String> {
+  record_sample_receipts()?
+  if !verify_receipt_by_key()? {
+    return Ok(false)
+  }
+  if !verify_replay_pages()? {
+    return Ok(false)
+  }
+  return verify_recovery_trace()
+}
+
+fn main() -> Int {
+  match verify_replay_contract() {
+    Ok(ok) => {
+      if !ok {
+        print("app-local-recovery-replay-read-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_negative_contracts()
+  print("app-local-recovery-replay-read-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local recovery replay check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True)
+if run.returncode != 0 or "app-local-recovery-replay-read-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local recovery replay smoke failed")
+
+with sqlite3.connect(db_path) as conn:
+    migration_tables = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__nebula_schema_migrations'"
+    ).fetchall()
+    kinds = dict(conn.execute(
+        "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
+    ).fetchall())
+if migration_tables:
+    raise SystemExit(f"app-local receipts unexpectedly used migration table: {migration_tables!r}")
+if kinds != {"snapshot": 2, "command_context": 2, "event": 2, "recovery_marker": 1, "update_marker": 1}:
+    raise SystemExit(f"unexpected receipt kind counts: {kinds!r}")
+print("app-local-recovery-replay-read-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-recovery-replay-read-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+for marker in [
+    "AppLocalReceiptReplayBatch",
+    "AppLocalReplayTrace",
+    "record_snapshot_receipt",
+    "receipt_by_key",
+    "replay_receipts",
+    "recovery_replay_trace",
+]:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing replay marker: {marker}")
+for marker in [
+    "Recovery Replay",
+    "receipt_by_key",
+    "replay_receipts",
+    "recovery_replay_trace",
+    "not an audit-log query language",
+]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing replay marker: {marker}")
+print("app-local-recovery-replay-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-recovery-replay-docs-ok"]

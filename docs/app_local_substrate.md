@@ -91,7 +91,7 @@ bundle/update flows, not a downloader, signer, notarization flow, rollback engin
 
 The default local recoverability path is SQLite. `official/nebula-app-local` provides a generic
 `app_local_runtime_receipts` table plus helpers for command contexts, command events, recovery
-markers, and update markers. Receipts store the stable schema string, app id, receipt key,
+markers, update markers, and host snapshots. Receipts store the stable schema string, app id, receipt key,
 correlation id, state revision, created time, and the same JSON payload that can still be emitted as
 sidecar output. `app_id + receipt_kind + receipt_key` is unique so replaying the same command or
 marker returns the existing receipt instead of creating an ambiguous duplicate.
@@ -100,6 +100,17 @@ This is intentionally narrower than an audit log or event-sourcing framework. It
 shell enough local facts to replay, reject, diagnose crashes, and correlate staged updates, while
 leaving media libraries, game save data, editor documents, and sync semantics to the validation app
 that actually needs them.
+
+## Recovery Replay
+
+`receipt_by_key(...)` reads a single stable receipt by `app_id`, `receipt_kind`, and `receipt_key`.
+`replay_receipts(...)` pages one receipt kind after a receipt id cursor with a bounded limit.
+`recovery_replay_trace(...)` assembles the recent generic trajectory a host shell needs at startup:
+snapshots, command contexts, command events, and recovery/update markers.
+
+This is a startup diagnostic and replay substrate, not an audit-log query language, sync engine, or
+domain state model. The validation app still owns how to interpret a snapshot payload, whether an
+event can be replayed, and which recovery action is safe.
 
 ## App Boundaries
 

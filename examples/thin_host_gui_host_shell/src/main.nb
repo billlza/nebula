@@ -78,6 +78,10 @@ fn app_local_command_id(kind: String, correlation_id: String) -> String {
   return text_join(kind, text_join(":", correlation_id))
 }
 
+fn app_local_snapshot_id(correlation_id: String) -> String {
+  return text_join("snapshot:", correlation_id)
+}
+
 fn publish_app_local_context(context: AppLocalCommandContext) -> Void {
   print(text_join("app-local-context:", stringify(context.as_json())))
 }
@@ -151,10 +155,20 @@ ui OpsShell(state: ShellState) {
   }
 }
 
-fn render_state(state: ShellState) -> Void {
+fn render_state(state: ShellState, correlation_id: String) -> Result<Bool, String> {
   let tree = OpsShell(state)
+  let snapshot_text = encode_snapshot_text_with_revision("local_ops_console", tree, state.revision)
   host_shell_render_tree(stringify(tree))
-  host_shell_publish_snapshot(encode_snapshot_text_with_revision("local_ops_console", tree, state.revision))
+  host_shell_publish_snapshot(snapshot_text)
+  record_snapshot_receipt(receipt_db_path(),
+                          app_id(),
+                          app_local_snapshot_id(correlation_id),
+                          correlation_id,
+                          state.revision,
+                          "thin-host-bridge.snapshot.v1",
+                          parse(snapshot_text)?,
+                          1777431000000)?
+  return Ok(true)
 }
 
 fn applied_event_text(step: ShellStep) -> String {
@@ -230,7 +244,7 @@ fn handle_applied_step(step: ShellStep) -> Result<Bool, String> {
                              step.previous_revision,
                              step.event_kind,
                              "thin-host command applied")?
-  render_state(step.state)
+  render_state(step.state, step.correlation_id)?
   if step.terminal {
     publish_app_local_shutdown(step.correlation_id, step.state.revision)?
     host_shell_end()
@@ -246,7 +260,7 @@ fn handle_rejected_command(state: ShellState, command_text: String, reason: Stri
                              correlation_id,
                              state.revision,
                              reason)?
-  render_state(state)
+  render_state(state, correlation_id)?
   return Ok(true)
 }
 
@@ -277,7 +291,12 @@ fn main() -> Int {
                                                           false,
                                                           "boot",
                                                           state.revision))
-  render_state(state)
+  match render_state(state, "boot") {
+    Ok(_) => {}
+    Err(msg) => {
+      return fail_app_local(msg)
+    }
+  }
   while host_shell_open() {
     let command_text = host_shell_next_command_text()
     match handle_command(state, command_text) {

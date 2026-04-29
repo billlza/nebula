@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "d26c765b01a799a3"
-source_fingerprint = "e20bba78df5a8e88"
-integrity_fingerprint = "ca84321d5d43c177"
+source_fingerprint = "970903a0e47caaab"
+integrity_fingerprint = "b3b467b5fd010270"
 is_root = 1
 host_cxx = ["host.cpp"]
 dependencies = ["app_local=nebula-app-local", "bridge=nebula-thin-host-bridge", "ui=nebula-ui"]
@@ -32,8 +32,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-app-local"
 resolved_rev = ""
 manifest_hash = "7d9da0d8783d3383"
-source_fingerprint = "7f2f9646e2138efa"
-integrity_fingerprint = "8c976afb9cd65a20"
+source_fingerprint = "dcee2811cd674e15"
+integrity_fingerprint = "3d9407242c0ba181"
 is_root = 0
 dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs=nebula-jobs", "observe=nebula-observe"]
 

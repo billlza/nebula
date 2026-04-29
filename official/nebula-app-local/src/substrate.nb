@@ -112,6 +112,34 @@ struct AppLocalReceiptData {
   created_unix_ms: Int
 }
 
+struct AppLocalReceiptReplayBatch {
+  app_id: String
+  receipt_kind: String
+  after_receipt_id: Int
+  next_after_receipt_id: Int
+  limit: Int
+  receipts: Json
+  has_more: Bool
+}
+
+struct AppLocalReplayCursor {
+  receipts: Json
+  next_after_receipt_id: Int
+  has_more: Bool
+}
+
+struct AppLocalReplayTrace {
+  app_id: String
+  latest_state_revision: Int
+  latest_correlation_id: String
+  receipt_count: Int
+  receipts: Json
+  snapshots: Json
+  command_contexts: Json
+  events: Json
+  markers: Json
+}
+
 fn app_local_config(app_id: String,
                     data_backend: String,
                     sqlite_path: String,
@@ -498,9 +526,55 @@ fn AppLocalReceipt_as_json(self: AppLocalReceipt) -> Json {
                  int_value(self.created_unix_ms))
 }
 
+fn AppLocalReceiptReplayBatch_as_json(self: AppLocalReceiptReplayBatch) -> Json {
+  return object7("app_id",
+                 string_value(self.app_id),
+                 "receipt_kind",
+                 string_value(self.receipt_kind),
+                 "after_receipt_id",
+                 int_value(self.after_receipt_id),
+                 "next_after_receipt_id",
+                 int_value(self.next_after_receipt_id),
+                 "limit",
+                 int_value(self.limit),
+                 "has_more",
+                 bool_value(self.has_more),
+                 "receipts",
+                 self.receipts)
+}
+
+fn AppLocalReplayTrace_as_json(self: AppLocalReplayTrace) -> Json {
+  return object6("schema",
+                 string_value("nebula.app-local.replay-trace.v1"),
+                 "app_id",
+                 string_value(self.app_id),
+                 "latest_state_revision",
+                 int_value(self.latest_state_revision),
+                 "latest_correlation_id",
+                 string_value(self.latest_correlation_id),
+                 "receipt_count",
+                 int_value(self.receipt_count),
+                 "trajectory",
+                 replay_trace_trajectory_json(self))
+}
+
+fn replay_trace_trajectory_json(self: AppLocalReplayTrace) -> Json {
+  return object5("receipts",
+                 self.receipts,
+                 "snapshots",
+                 self.snapshots,
+                 "command_contexts",
+                 self.command_contexts,
+                 "events",
+                 self.events,
+                 "markers",
+                 self.markers)
+}
+
 fn ensure_receipt_schema(conn: Connection) -> Result<Bool, String> {
   conn.execute0("CREATE TABLE IF NOT EXISTS app_local_runtime_receipts (receipt_id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT NOT NULL, receipt_kind TEXT NOT NULL, receipt_key TEXT NOT NULL, correlation_id TEXT NOT NULL, state_revision INTEGER NOT NULL, schema TEXT NOT NULL, payload TEXT NOT NULL, created_unix_ms INTEGER NOT NULL, UNIQUE(app_id, receipt_kind, receipt_key))")?
   conn.execute0("CREATE INDEX IF NOT EXISTS idx_app_local_runtime_receipts_lookup ON app_local_runtime_receipts(app_id, receipt_kind, correlation_id, state_revision)")?
+  conn.execute0("CREATE INDEX IF NOT EXISTS idx_app_local_runtime_receipts_replay ON app_local_runtime_receipts(app_id, receipt_kind, receipt_id)")?
   return Ok(true)
 }
 
@@ -558,6 +632,36 @@ fn receipt_lookup_params(app_id: String, receipt_kind: String, correlation_id: S
   return array_build(builder4)
 }
 
+fn receipt_limit_params(app_id: String, limit: Int) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  let builder3 = array_push(builder2, int_value(limit))
+  return array_build(builder3)
+}
+
+fn receipt_kind_limit_params(app_id: String, receipt_kind: String, limit: Int) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  let builder3 = array_push(builder2, string_value(receipt_kind))
+  let builder4 = array_push(builder3, int_value(limit))
+  return array_build(builder4)
+}
+
+fn receipt_replay_params(app_id: String, receipt_kind: String, after_receipt_id: Int, limit: Int) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  let builder3 = array_push(builder2, string_value(receipt_kind))
+  let builder4 = array_push(builder3, int_value(after_receipt_id))
+  let builder5 = array_push(builder4, int_value(limit))
+  return array_build(builder5)
+}
+
+fn receipt_app_params(app_id: String) -> Json {
+  let builder = array_builder()
+  let builder2 = array_push(builder, string_value(app_id))
+  return array_build(builder2)
+}
+
 fn validate_receipt_scope(app_id: String, receipt_kind: String) -> Result<Bool, String> {
   if app_id == "" {
     return Err("app-local substrate receipt app_id is required")
@@ -566,6 +670,27 @@ fn validate_receipt_scope(app_id: String, receipt_kind: String) -> Result<Bool, 
     return Err("app-local substrate receipt_kind is required")
   }
   return Ok(true)
+}
+
+fn validate_replay_request(app_id: String, limit: Int) -> Result<Bool, String> {
+  if app_id == "" {
+    return Err("app-local substrate replay app_id is required")
+  }
+  if limit <= 0 {
+    return Err("app-local substrate replay limit must be positive")
+  }
+  if limit > 500 {
+    return Err("app-local substrate replay limit must be <= 500")
+  }
+  return Ok(true)
+}
+
+fn validate_receipt_replay_request(app_id: String, receipt_kind: String, after_receipt_id: Int, limit: Int) -> Result<Bool, String> {
+  validate_receipt_scope(app_id, receipt_kind)?
+  if after_receipt_id < 0 {
+    return Err("app-local substrate replay after_receipt_id must be non-negative")
+  }
+  return validate_replay_request(app_id, limit)
 }
 
 fn validate_receipt_input(draft: AppLocalReceiptWrite) -> Result<Bool, String> {
@@ -655,6 +780,25 @@ fn record_event_receipt(path: String, app_id: String, event_value: AppLocalEvent
                         created_unix_ms)
 }
 
+fn record_snapshot_receipt(path: String,
+                           app_id: String,
+                           receipt_key: String,
+                           correlation_id: String,
+                           state_revision: Int,
+                           schema: String,
+                           payload: Json,
+                           created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_receipt(path,
+                        app_id,
+                        "snapshot",
+                        receipt_key,
+                        correlation_id,
+                        state_revision,
+                        schema,
+                        payload,
+                        created_unix_ms)
+}
+
 fn record_recovery_marker_receipt(path: String, marker: AppLocalRecoveryMarker, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
   return record_receipt(path,
                         marker.app_id,
@@ -692,6 +836,11 @@ fn receipt_count_conn(conn: Connection, app_id: String, receipt_kind: String) ->
   return rows.row(0)?.get_int_at(0)
 }
 
+fn receipt_total_count_conn(conn: Connection, app_id: String) -> Result<Int, String> {
+  let rows = conn.query("SELECT COUNT(*) AS count FROM app_local_runtime_receipts WHERE app_id = ?", receipt_app_params(app_id))?
+  return rows.row(0)?.get_int_at(0)
+}
+
 fn load_receipt_by_key(conn: Connection, app_id: String, receipt_kind: String, receipt_key: String) -> Result<AppLocalReceipt, String> {
   let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? AND receipt_kind = ? AND receipt_key = ? LIMIT 1",
                         receipt_identity_params(app_id, receipt_kind, receipt_key))?
@@ -699,6 +848,17 @@ fn load_receipt_by_key(conn: Connection, app_id: String, receipt_kind: String, r
     return Err("app-local substrate receipt not found")
   }
   return receipt_from_row(rows.row(0)?)
+}
+
+fn receipt_by_key(path: String, app_id: String, receipt_kind: String, receipt_key: String) -> Result<AppLocalReceipt, String> {
+  validate_receipt_scope(app_id, receipt_kind)?
+  if receipt_key == "" {
+    return Err("app-local substrate receipt_key is required")
+  }
+  let conn = open_receipt_store(path)?
+  let receipt = load_receipt_by_key(conn, app_id, receipt_kind, receipt_key)?
+  conn.close()?
+  return Ok(receipt)
 }
 
 fn receipt_from_row(row: Row) -> Result<AppLocalReceipt, String> {
@@ -748,6 +908,151 @@ fn latest_receipt_conn(conn: Connection, app_id: String, receipt_kind: String, c
     return Err("app-local substrate receipt not found")
   }
   return receipt_from_row(rows.row(0)?)
+}
+
+fn receipt_placeholder(app_id: String) -> AppLocalReceipt {
+  return AppLocalReceipt(0, app_id, "", "", "", 0, "", object1("kind", string_value("empty")), 0)
+}
+
+fn latest_app_receipt_conn(conn: Connection, app_id: String) -> Result<AppLocalReceipt, String> {
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? ORDER BY receipt_id DESC LIMIT 1",
+                        receipt_app_params(app_id))?
+  if rows.len()? == 0 {
+    return Ok(receipt_placeholder(app_id))
+  }
+  return receipt_from_row(rows.row(0)?)
+}
+
+fn receipts_from_rows(rows: ResultSet) -> Result<Json, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  while index < count {
+    let receipt = receipt_from_row(rows.row(index)?)?
+    builder = array_push(builder, receipt.as_json())
+    index += 1
+  }
+  return Ok(array_build(builder))
+}
+
+fn recent_receipts(path: String, app_id: String, limit: Int) -> Result<Json, String> {
+  validate_replay_request(app_id, limit)?
+  let conn = open_receipt_store(path)?
+  let receipts = recent_receipts_conn(conn, app_id, limit)?
+  conn.close()?
+  return Ok(receipts)
+}
+
+fn recent_receipts_conn(conn: Connection, app_id: String, limit: Int) -> Result<Json, String> {
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM (SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? ORDER BY receipt_id DESC LIMIT ?) ORDER BY receipt_id ASC",
+                        receipt_limit_params(app_id, limit))?
+  return receipts_from_rows(rows)
+}
+
+fn replay_receipts(path: String,
+                   app_id: String,
+                   receipt_kind: String,
+                   after_receipt_id: Int,
+                   limit: Int) -> Result<AppLocalReceiptReplayBatch, String> {
+  validate_receipt_replay_request(app_id, receipt_kind, after_receipt_id, limit)?
+  let conn = open_receipt_store(path)?
+  let batch = replay_receipts_conn(conn, app_id, receipt_kind, after_receipt_id, limit)?
+  conn.close()?
+  return Ok(batch)
+}
+
+fn replay_receipts_conn(conn: Connection,
+                        app_id: String,
+                        receipt_kind: String,
+                        after_receipt_id: Int,
+                        limit: Int) -> Result<AppLocalReceiptReplayBatch, String> {
+  let query_limit = limit + 1
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? AND receipt_kind = ? AND receipt_id > ? ORDER BY receipt_id ASC LIMIT ?",
+                        receipt_replay_params(app_id, receipt_kind, after_receipt_id, query_limit))?
+  return replay_batch_from_rows(app_id, receipt_kind, after_receipt_id, limit, rows)
+}
+
+fn replay_batch_from_rows(app_id: String,
+                          receipt_kind: String,
+                          after_receipt_id: Int,
+                          limit: Int,
+                          rows: ResultSet) -> Result<AppLocalReceiptReplayBatch, String> {
+  let cursor = replay_cursor_from_rows(rows, limit)?
+  return Ok(AppLocalReceiptReplayBatch(app_id,
+                                       receipt_kind,
+                                       after_receipt_id,
+                                       replay_next_after(cursor, after_receipt_id),
+                                       limit,
+                                       cursor.receipts,
+                                       cursor.has_more))
+}
+
+fn replay_next_after(cursor: AppLocalReplayCursor, after_receipt_id: Int) -> Int {
+  if cursor.next_after_receipt_id == 0 {
+    return after_receipt_id
+  }
+  return cursor.next_after_receipt_id
+}
+
+fn replay_cursor_from_rows(rows: ResultSet, limit: Int) -> Result<AppLocalReplayCursor, String> {
+  let builder = array_builder()
+  let count = rows.len()?
+  let index = 0
+  let next_after_receipt_id = 0
+  let has_more = false
+  while index < count {
+    let receipt = receipt_from_row(rows.row(index)?)?
+    if index < limit {
+      builder = array_push(builder, receipt.as_json())
+      next_after_receipt_id = receipt.receipt_id
+    } else {
+      has_more = true
+    }
+    index += 1
+  }
+  return Ok(AppLocalReplayCursor(array_build(builder), next_after_receipt_id, has_more))
+}
+
+fn recent_receipts_by_kind(path: String, app_id: String, receipt_kind: String, limit: Int) -> Result<Json, String> {
+  validate_receipt_scope(app_id, receipt_kind)?
+  validate_replay_request(app_id, limit)?
+  let conn = open_receipt_store(path)?
+  let receipts = recent_receipts_by_kind_conn(conn, app_id, receipt_kind, limit)?
+  conn.close()?
+  return Ok(receipts)
+}
+
+fn recent_receipts_by_kind_conn(conn: Connection, app_id: String, receipt_kind: String, limit: Int) -> Result<Json, String> {
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM (SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? AND receipt_kind = ? ORDER BY receipt_id DESC LIMIT ?) ORDER BY receipt_id ASC",
+                        receipt_kind_limit_params(app_id, receipt_kind, limit))?
+  return receipts_from_rows(rows)
+}
+
+fn recent_marker_receipts_conn(conn: Connection, app_id: String, limit: Int) -> Result<Json, String> {
+  let rows = conn.query("SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM (SELECT receipt_id, app_id, receipt_kind, receipt_key, correlation_id, state_revision, schema, payload, created_unix_ms FROM app_local_runtime_receipts WHERE app_id = ? AND (receipt_kind = 'recovery_marker' OR receipt_kind = 'update_marker') ORDER BY receipt_id DESC LIMIT ?) ORDER BY receipt_id ASC",
+                        receipt_limit_params(app_id, limit))?
+  return receipts_from_rows(rows)
+}
+
+fn recovery_replay_trace(path: String, app_id: String, limit: Int) -> Result<AppLocalReplayTrace, String> {
+  validate_replay_request(app_id, limit)?
+  let conn = open_receipt_store(path)?
+  let trace = recovery_replay_trace_conn(conn, app_id, limit)?
+  conn.close()?
+  return Ok(trace)
+}
+
+fn recovery_replay_trace_conn(conn: Connection, app_id: String, limit: Int) -> Result<AppLocalReplayTrace, String> {
+  let latest = latest_app_receipt_conn(conn, app_id)?
+  return Ok(AppLocalReplayTrace(app_id,
+                                latest.state_revision,
+                                latest.correlation_id,
+                                receipt_total_count_conn(conn, app_id)?,
+                                recent_receipts_conn(conn, app_id, limit)?,
+                                recent_receipts_by_kind_conn(conn, app_id, "snapshot", limit)?,
+                                recent_receipts_by_kind_conn(conn, app_id, "command_context", limit)?,
+                                recent_receipts_by_kind_conn(conn, app_id, "event", limit)?,
+                                recent_marker_receipts_conn(conn, app_id, limit)?))
 }
 
 fn validate_background_stages(stages: Json) -> Result<Bool, String> {

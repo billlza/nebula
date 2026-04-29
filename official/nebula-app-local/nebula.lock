@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "7d9da0d8783d3383"
-source_fingerprint = "7f2f9646e2138efa"
-integrity_fingerprint = "a21445dfd6c53c55"
+source_fingerprint = "dcee2811cd674e15"
+integrity_fingerprint = "a7035524f3eae53c"
 is_root = 1
 dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "db_sqlite=nebula-db-sqlite", "jobs=nebula-jobs", "observe=nebula-observe"]
 
