@@ -390,9 +390,9 @@ Result<TlsTrustStore, std::string> make_trust_store_from_pem(std::string_view pe
                                                              std::string_view source_name) {
   auto state = std::make_shared<TlsTrustStoreState>();
   auto parsed = parse_certificate_chain(state->ca_chain, pem_text, source_name);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(parsed.data)) {
+  if (result_is_err(parsed)) {
     return err_result<TlsTrustStore>(
-        std::get<typename Result<void, std::string>::Err>(std::move(parsed.data)).value);
+        result_err_move(parsed));
   }
   return nebula::rt::ok_result(TlsTrustStore{std::move(state)});
 }
@@ -409,25 +409,25 @@ Result<TlsClientIdentity, std::string> make_client_identity_from_pem(std::string
     mbedtls_entropy_free(&entropy);
   };
   auto seeded = seed_rng(entropy, ctr_drbg, "nebula-tls-client-identity");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(seeded.data)) {
+  if (result_is_err(seeded)) {
     const auto message =
-        std::get<typename Result<void, std::string>::Err>(std::move(seeded.data)).value;
+        result_err_move(seeded);
     cleanup();
     return err_result<TlsClientIdentity>(message);
   }
   auto parsed_cert =
       parse_certificate_chain(state->certificate_chain, certificate_pem, "provided client certificate");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(parsed_cert.data)) {
+  if (result_is_err(parsed_cert)) {
     const auto message =
-        std::get<typename Result<void, std::string>::Err>(std::move(parsed_cert.data)).value;
+        result_err_move(parsed_cert);
     cleanup();
     return err_result<TlsClientIdentity>(message);
   }
   auto parsed_key =
       parse_private_key(state->private_key, ctr_drbg, private_key_pem, "provided client private key");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(parsed_key.data)) {
+  if (result_is_err(parsed_key)) {
     const auto message =
-        std::get<typename Result<void, std::string>::Err>(std::move(parsed_key.data)).value;
+        result_err_move(parsed_key);
     cleanup();
     return err_result<TlsClientIdentity>(message);
   }
@@ -447,25 +447,25 @@ Result<TlsServerIdentity, std::string> make_server_identity_from_pem(std::string
     mbedtls_entropy_free(&entropy);
   };
   auto seeded = seed_rng(entropy, ctr_drbg, "nebula-tls-server-identity");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(seeded.data)) {
+  if (result_is_err(seeded)) {
     const auto message =
-        std::get<typename Result<void, std::string>::Err>(std::move(seeded.data)).value;
+        result_err_move(seeded);
     cleanup();
     return err_result<TlsServerIdentity>(message);
   }
   auto parsed_cert =
       parse_certificate_chain(state->certificate_chain, certificate_pem, "provided server certificate");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(parsed_cert.data)) {
+  if (result_is_err(parsed_cert)) {
     const auto message =
-        std::get<typename Result<void, std::string>::Err>(std::move(parsed_cert.data)).value;
+        result_err_move(parsed_cert);
     cleanup();
     return err_result<TlsServerIdentity>(message);
   }
   auto parsed_key =
       parse_private_key(state->private_key, ctr_drbg, private_key_pem, "provided server private key");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(parsed_key.data)) {
+  if (result_is_err(parsed_key)) {
     const auto message =
-        std::get<typename Result<void, std::string>::Err>(std::move(parsed_key.data)).value;
+        result_err_move(parsed_key);
     cleanup();
     return err_result<TlsServerIdentity>(message);
   }
@@ -496,9 +496,9 @@ Result<std::shared_ptr<TlsClientConfigState>, std::string> make_client_config_st
   state->alpn_policy = default_alpn_policy_state();
   state->personal = "nebula-tls-client";
   auto seeded = seed_rng(state->entropy, state->ctr_drbg, state->personal);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(seeded.data)) {
+  if (result_is_err(seeded)) {
     return err_result<std::shared_ptr<TlsClientConfigState>>(
-        std::get<typename Result<void, std::string>::Err>(std::move(seeded.data)).value);
+        result_err_move(seeded));
   }
   return nebula::rt::ok_result(std::move(state));
 }
@@ -508,17 +508,12 @@ Result<std::shared_ptr<TlsClientConfigState>, std::string> clone_client_config_s
     return err_result<std::shared_ptr<TlsClientConfigState>>("tls client config is uninitialized");
   }
   auto cloned = make_client_config_state(base.state->trust_store);
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return err_result<std::shared_ptr<TlsClientConfigState>>(
-        std::get<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Err>(
-            std::move(cloned.data))
-            .value);
+        result_err_move(cloned));
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->client_identity = base.state->client_identity;
   state->version_policy = base.state->version_policy;
   state->alpn_policy = base.state->alpn_policy;
@@ -536,9 +531,9 @@ Result<std::shared_ptr<TlsServerConfigState>, std::string> make_server_config_st
   state->alpn_policy = default_alpn_policy_state();
   state->personal = "nebula-tls-server";
   auto seeded = seed_rng(state->entropy, state->ctr_drbg, state->personal);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(seeded.data)) {
+  if (result_is_err(seeded)) {
     return err_result<std::shared_ptr<TlsServerConfigState>>(
-        std::get<typename Result<void, std::string>::Err>(std::move(seeded.data)).value);
+        result_err_move(seeded));
   }
   return nebula::rt::ok_result(std::move(state));
 }
@@ -548,17 +543,12 @@ Result<std::shared_ptr<TlsServerConfigState>, std::string> clone_server_config_s
     return err_result<std::shared_ptr<TlsServerConfigState>>("tls server config is uninitialized");
   }
   auto cloned = make_server_config_state(base.state->server_identity);
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return err_result<std::shared_ptr<TlsServerConfigState>>(
-        std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-            std::move(cloned.data))
-            .value);
+        result_err_move(cloned));
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->client_trust_store = base.state->client_trust_store;
   state->version_policy = base.state->version_policy;
   state->alpn_policy = base.state->alpn_policy;
@@ -1160,9 +1150,9 @@ Future<Result<TlsClientStream, std::string>> tls_handshake_client_async(TcpStrea
 
   apply_version_policy(state->ssl_config, state->config->version_policy);
   auto alpn = apply_alpn_policy(state->ssl_config, state->config->alpn_policy);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(alpn.data)) {
+  if (result_is_err(alpn)) {
     co_return err_result<TlsClientStream>(
-        std::get<typename Result<void, std::string>::Err>(std::move(alpn.data)).value);
+        result_err_move(alpn));
   }
 
   mbedtls_ssl_conf_authmode(&state->ssl_config, MBEDTLS_SSL_VERIFY_REQUIRED);
@@ -1358,17 +1348,12 @@ Future<Result<HttpClientResponse, std::string>> tls_read_http_response_async(
                                                                         static_cast<std::size_t>(max_header_bytes),
                                                                         static_cast<std::size_t>(max_body_bytes),
                                                                         request_method);
-    if (std::holds_alternative<typename Result<nebula::rt::HttpClientResponseReadResult, std::string>::Err>(
-            parsed.data)) {
+    if (result_is_err(parsed)) {
       co_return err_result<HttpClientResponse>(
-          std::get<typename Result<nebula::rt::HttpClientResponseReadResult, std::string>::Err>(
-              std::move(parsed.data))
-              .value);
+          result_err_move(parsed));
     }
     auto parsed_result =
-        std::get<typename Result<nebula::rt::HttpClientResponseReadResult, std::string>::Ok>(
-            std::move(parsed.data))
-            .value;
+        result_ok_move(parsed);
     if (parsed_result.action == nebula::rt::HttpClientResponseReadAction::ReturnResponse) {
       co_return nebula::rt::ok_result(std::move(parsed_result.response));
     }
@@ -1391,17 +1376,12 @@ Future<Result<HttpClientResponse, std::string>> tls_read_http_response_async(
                                                                            static_cast<std::size_t>(max_header_bytes),
                                                                            static_cast<std::size_t>(max_body_bytes),
                                                                            request_method);
-        if (std::holds_alternative<typename Result<nebula::rt::HttpClientResponseReadResult, std::string>::Err>(
-                final.data)) {
+        if (result_is_err(final)) {
           co_return err_result<HttpClientResponse>(
-              std::get<typename Result<nebula::rt::HttpClientResponseReadResult, std::string>::Err>(
-                  std::move(final.data))
-                  .value);
+              result_err_move(final));
         }
         auto final_result =
-            std::get<typename Result<nebula::rt::HttpClientResponseReadResult, std::string>::Ok>(
-                std::move(final.data))
-                .value;
+            result_ok_move(final);
         if (final_result.action == nebula::rt::HttpClientResponseReadAction::ReturnResponse) {
           co_return nebula::rt::ok_result(std::move(final_result.response));
         }
@@ -1456,12 +1436,12 @@ Future<Result<HttpRequest, std::string>> tls_read_http_request_async(TlsServerSt
         }
         auto framing = nebula::rt::parse_http_request_framing(std::string_view(buffer).substr(0, header_end),
                                                               static_cast<std::size_t>(max_body_bytes));
-        if (std::holds_alternative<typename Result<HttpRequestFraming, std::string>::Err>(framing.data)) {
+        if (result_is_err(framing)) {
           co_return err_result<HttpRequest>(
-              std::get<typename Result<HttpRequestFraming, std::string>::Err>(std::move(framing.data)).value);
+              result_err_move(framing));
         }
         const auto parsed_framing =
-            std::get<typename Result<HttpRequestFraming, std::string>::Ok>(std::move(framing.data)).value;
+            result_ok_move(framing);
         expected_total = header_end + 4 + parsed_framing.content_length;
         if (buffer.size() >= *expected_total) {
           if (buffer.size() > *expected_total) {
@@ -2066,7 +2046,7 @@ Future<Result<void, std::string>> write_frame_async(StatePtr state,
                                                     const char* closed_message) {
   const std::string encoded = build_frame(type, flags, stream_id, payload);
   auto wrote = co_await tls_write_http_payload_async(state, encoded, closed_message);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote.data)) {
+  if (result_is_err(wrote)) {
     co_return wrote;
   }
   append_http2_debug_event(session,
@@ -2085,12 +2065,12 @@ Future<Result<Frame, std::string>> read_frame_async(StatePtr state,
                                                     const char* closed_message) {
   while (true) {
     auto parsed = try_parse_frame(session.read_buffer);
-    if (std::holds_alternative<typename Result<std::optional<ParsedFrame>, std::string>::Err>(parsed.data)) {
+    if (result_is_err(parsed)) {
       co_return err_result<Frame>(
-          std::get<typename Result<std::optional<ParsedFrame>, std::string>::Err>(std::move(parsed.data)).value);
+          result_err_move(parsed));
     }
     auto maybe_frame =
-        std::get<typename Result<std::optional<ParsedFrame>, std::string>::Ok>(std::move(parsed.data)).value;
+        result_ok_move(parsed);
     if (maybe_frame.has_value()) {
       Frame frame = std::move(maybe_frame->frame);
       session.read_buffer.erase(0, maybe_frame->consumed);
@@ -2104,12 +2084,12 @@ Future<Result<Frame, std::string>> read_frame_async(StatePtr state,
       co_return nebula::rt::ok_result(std::move(frame));
     }
     auto read = co_await read_more_async(state, session.read_buffer, closed_message);
-    if (std::holds_alternative<typename Result<std::size_t, std::string>::Err>(read.data)) {
+    if (result_is_err(read)) {
       co_return err_result<Frame>(
-          std::get<typename Result<std::size_t, std::string>::Err>(std::move(read.data)).value);
+          result_err_move(read));
     }
     const auto bytes =
-        std::get<typename Result<std::size_t, std::string>::Ok>(std::move(read.data)).value;
+        result_ok_move(read);
     if (bytes == 0) {
       co_return err_result<Frame>("unexpected EOF while reading HTTP/2 frame");
     }
@@ -2176,12 +2156,12 @@ Result<std::string, std::string> decode_hpack_string(std::string_view data, std:
   }
   const bool huffman = (static_cast<std::uint8_t>(data[cursor]) & 0x80) != 0;
   auto length = decode_prefixed_int(data, cursor, 7);
-  if (std::holds_alternative<typename Result<std::uint32_t, std::string>::Err>(length.data)) {
+  if (result_is_err(length)) {
     return err_result<std::string>(
-        std::get<typename Result<std::uint32_t, std::string>::Err>(std::move(length.data)).value);
+        result_err_move(length));
   }
   const auto size =
-      std::get<typename Result<std::uint32_t, std::string>::Ok>(std::move(length.data)).value;
+      result_ok_move(length);
   if (huffman) {
     return err_result<std::string>("HPACK Huffman strings are unsupported");
   }
@@ -2242,30 +2222,30 @@ Result<std::vector<HeaderField>, std::string> decode_header_block(std::string_vi
     const std::uint8_t byte = static_cast<std::uint8_t>(block[cursor]);
     if ((byte & 0x80) != 0) {
       auto index = decode_prefixed_int(block, cursor, 7);
-      if (std::holds_alternative<typename Result<std::uint32_t, std::string>::Err>(index.data)) {
+      if (result_is_err(index)) {
         return err_result<std::vector<HeaderField>>(
-            std::get<typename Result<std::uint32_t, std::string>::Err>(std::move(index.data)).value);
+            result_err_move(index));
       }
       auto entry = static_entry(
-          std::get<typename Result<std::uint32_t, std::string>::Ok>(std::move(index.data)).value);
-      if (std::holds_alternative<typename Result<HpackStaticEntry, std::string>::Err>(entry.data)) {
+          result_ok_move(index));
+      if (result_is_err(entry)) {
         return err_result<std::vector<HeaderField>>(
-            std::get<typename Result<HpackStaticEntry, std::string>::Err>(std::move(entry.data)).value);
+            result_err_move(entry));
       }
       const auto value =
-          std::get<typename Result<HpackStaticEntry, std::string>::Ok>(std::move(entry.data)).value;
+          result_ok_move(entry);
       out.push_back(HeaderField{std::string(value.name), std::string(value.value)});
       continue;
     }
 
     if ((byte & 0x20) != 0) {
       auto size = decode_prefixed_int(block, cursor, 5);
-      if (std::holds_alternative<typename Result<std::uint32_t, std::string>::Err>(size.data)) {
+      if (result_is_err(size)) {
         return err_result<std::vector<HeaderField>>(
-            std::get<typename Result<std::uint32_t, std::string>::Err>(std::move(size.data)).value);
+            result_err_move(size));
       }
       const auto value =
-          std::get<typename Result<std::uint32_t, std::string>::Ok>(std::move(size.data)).value;
+          result_ok_move(size);
       if (value != 0) {
         return err_result<std::vector<HeaderField>>("HPACK dynamic table size updates are unsupported");
       }
@@ -2274,38 +2254,38 @@ Result<std::vector<HeaderField>, std::string> decode_header_block(std::string_vi
 
     const auto prefix_bits = (byte & 0x40) != 0 ? 6u : 4u;
     auto name_index = decode_prefixed_int(block, cursor, prefix_bits);
-    if (std::holds_alternative<typename Result<std::uint32_t, std::string>::Err>(name_index.data)) {
+    if (result_is_err(name_index)) {
       return err_result<std::vector<HeaderField>>(
-          std::get<typename Result<std::uint32_t, std::string>::Err>(std::move(name_index.data)).value);
+          result_err_move(name_index));
     }
     const auto index =
-        std::get<typename Result<std::uint32_t, std::string>::Ok>(std::move(name_index.data)).value;
+        result_ok_move(name_index);
     std::string name;
     if (index == 0) {
       auto decoded_name = decode_hpack_string(block, cursor);
-      if (std::holds_alternative<typename Result<std::string, std::string>::Err>(decoded_name.data)) {
+      if (result_is_err(decoded_name)) {
         return err_result<std::vector<HeaderField>>(
-            std::get<typename Result<std::string, std::string>::Err>(std::move(decoded_name.data)).value);
+            result_err_move(decoded_name));
       }
-      name = std::get<typename Result<std::string, std::string>::Ok>(std::move(decoded_name.data)).value;
+      name = result_ok_move(decoded_name);
     } else {
       auto entry = static_entry(index);
-      if (std::holds_alternative<typename Result<HpackStaticEntry, std::string>::Err>(entry.data)) {
+      if (result_is_err(entry)) {
         return err_result<std::vector<HeaderField>>(
-            std::get<typename Result<HpackStaticEntry, std::string>::Err>(std::move(entry.data)).value);
+            result_err_move(entry));
       }
       name =
-          std::string(std::get<typename Result<HpackStaticEntry, std::string>::Ok>(std::move(entry.data)).value.name);
+          std::string(result_ok_move(entry).name);
     }
 
     auto value = decode_hpack_string(block, cursor);
-    if (std::holds_alternative<typename Result<std::string, std::string>::Err>(value.data)) {
+    if (result_is_err(value)) {
       return err_result<std::vector<HeaderField>>(
-          std::get<typename Result<std::string, std::string>::Err>(std::move(value.data)).value);
+          result_err_move(value));
     }
     out.push_back(HeaderField{
         std::move(name),
-        std::get<typename Result<std::string, std::string>::Ok>(std::move(value.data)).value,
+        result_ok_move(value),
     });
   }
   return nebula::rt::ok_result(std::move(out));
@@ -2384,12 +2364,12 @@ std::string build_headers_text(const std::vector<HeaderField>& headers) {
 
 Result<DecodedRequestHead, std::string> decode_request_head(std::string_view block) {
   auto decoded = decode_header_block(block);
-  if (std::holds_alternative<typename Result<std::vector<HeaderField>, std::string>::Err>(decoded.data)) {
+  if (result_is_err(decoded)) {
     return err_result<DecodedRequestHead>(
-        std::get<typename Result<std::vector<HeaderField>, std::string>::Err>(std::move(decoded.data)).value);
+        result_err_move(decoded));
   }
   auto fields =
-      std::get<typename Result<std::vector<HeaderField>, std::string>::Ok>(std::move(decoded.data)).value;
+      result_ok_move(decoded);
 
   bool saw_regular = false;
   std::optional<std::string> method_text;
@@ -2422,16 +2402,16 @@ Result<DecodedRequestHead, std::string> decode_request_head(std::string_view blo
     return err_result<DecodedRequestHead>("HTTP/2 request missing required pseudo-headers");
   }
   auto method = nebula::rt::parse_http_method(*method_text);
-  if (std::holds_alternative<typename Result<HttpMethod, std::string>::Err>(method.data)) {
+  if (result_is_err(method)) {
     return err_result<DecodedRequestHead>(
-        std::get<typename Result<HttpMethod, std::string>::Err>(std::move(method.data)).value);
+        result_err_move(method));
   }
   if (!nebula::rt::http_request_path_is_valid(*path)) {
     return err_result<DecodedRequestHead>("invalid HTTP/2 request path");
   }
 
   DecodedRequestHead out;
-  out.method = std::get<typename Result<HttpMethod, std::string>::Ok>(std::move(method.data)).value;
+  out.method = result_ok_move(method);
   out.path = *path;
   out.authority = authority.value_or("");
   for (const auto& field : fields) {
@@ -2448,12 +2428,12 @@ Result<DecodedRequestHead, std::string> decode_request_head(std::string_view blo
 
 Result<DecodedResponseHead, std::string> decode_response_head(std::string_view block) {
   auto decoded = decode_header_block(block);
-  if (std::holds_alternative<typename Result<std::vector<HeaderField>, std::string>::Err>(decoded.data)) {
+  if (result_is_err(decoded)) {
     return err_result<DecodedResponseHead>(
-        std::get<typename Result<std::vector<HeaderField>, std::string>::Err>(std::move(decoded.data)).value);
+        result_err_move(decoded));
   }
   auto fields =
-      std::get<typename Result<std::vector<HeaderField>, std::string>::Ok>(std::move(decoded.data)).value;
+      result_ok_move(decoded);
 
   bool saw_regular = false;
   std::optional<std::string> status_text;
@@ -2520,9 +2500,9 @@ Result<std::vector<HeaderField>, std::string> encode_request_headers(const HttpC
     return err_result<std::vector<HeaderField>>("invalid Content-Type header");
   }
   auto extras = parse_raw_headers(request.headers);
-  if (std::holds_alternative<typename Result<std::vector<HeaderField>, std::string>::Err>(extras.data)) {
+  if (result_is_err(extras)) {
     return err_result<std::vector<HeaderField>>(
-        std::get<typename Result<std::vector<HeaderField>, std::string>::Err>(std::move(extras.data)).value);
+        result_err_move(extras));
   }
 
   std::vector<HeaderField> out;
@@ -2536,7 +2516,7 @@ Result<std::vector<HeaderField>, std::string> encode_request_headers(const HttpC
   out.push_back(HeaderField{"content-length", std::to_string(request.body.data.size())});
 
   for (auto& header :
-       std::get<typename Result<std::vector<HeaderField>, std::string>::Ok>(std::move(extras.data)).value) {
+       result_ok_move(extras)) {
     if (header.name == "host") {
       if (!nebula::rt::ascii_ieq(header.value, request.authority)) {
         return err_result<std::vector<HeaderField>>("Host header does not match request authority");
@@ -2562,9 +2542,9 @@ Result<std::vector<HeaderField>, std::string> encode_request_headers(const HttpC
 
 Result<std::vector<HeaderField>, std::string> encode_response_headers(const HttpResponse& response) {
   auto extras = parse_raw_headers(response.headers);
-  if (std::holds_alternative<typename Result<std::vector<HeaderField>, std::string>::Err>(extras.data)) {
+  if (result_is_err(extras)) {
     return err_result<std::vector<HeaderField>>(
-        std::get<typename Result<std::vector<HeaderField>, std::string>::Err>(std::move(extras.data)).value);
+        result_err_move(extras));
   }
 
   std::vector<HeaderField> out;
@@ -2575,7 +2555,7 @@ Result<std::vector<HeaderField>, std::string> encode_response_headers(const Http
   out.push_back(HeaderField{"content-length", std::to_string(response.body.data.size())});
 
   for (auto& header :
-       std::get<typename Result<std::vector<HeaderField>, std::string>::Ok>(std::move(extras.data)).value) {
+       result_ok_move(extras)) {
     if (header.name == "content-length") {
       if (header.value != std::to_string(response.body.data.size())) {
         return err_result<std::vector<HeaderField>>("Content-Length header does not match response body");
@@ -2605,11 +2585,11 @@ Future<Result<std::string, std::string>> read_header_block_async(StatePtr state,
   std::string block = std::move(first.payload);
   while ((first.flags & kFlagEndHeaders) == 0) {
     auto next = co_await read_frame_async(state, session, closed_message);
-    if (std::holds_alternative<typename Result<Frame, std::string>::Err>(next.data)) {
+    if (result_is_err(next)) {
       co_return err_result<std::string>(
-          std::get<typename Result<Frame, std::string>::Err>(std::move(next.data)).value);
+          result_err_move(next));
     }
-    first = std::get<typename Result<Frame, std::string>::Ok>(std::move(next.data)).value;
+    first = result_ok_move(next);
     if (first.type != FrameType::Continuation || first.stream_id != stream_id) {
       co_return err_result<std::string>("invalid HTTP/2 CONTINUATION sequence");
     }
@@ -2680,16 +2660,16 @@ Future<Result<bool, std::string>> process_control_frame_async(StatePtr state,
             (static_cast<std::uint32_t>(static_cast<unsigned char>(frame.payload[i + 4])) << 8) |
             static_cast<std::uint32_t>(static_cast<unsigned char>(frame.payload[i + 5]));
         auto applied = apply_setting(session, id, value);
-        if (std::holds_alternative<typename Result<void, std::string>::Err>(applied.data)) {
+        if (result_is_err(applied)) {
           co_return err_result<bool>(
-              std::get<typename Result<void, std::string>::Err>(std::move(applied.data)).value);
+              result_err_move(applied));
         }
       }
       session.remote_settings_seen = true;
       auto ack = co_await write_frame_async(state, session, FrameType::Settings, kFlagAck, 0, "", closed_message);
-      if (std::holds_alternative<typename Result<void, std::string>::Err>(ack.data)) {
+      if (result_is_err(ack)) {
         co_return err_result<bool>(
-            std::get<typename Result<void, std::string>::Err>(std::move(ack.data)).value);
+            result_err_move(ack));
       }
       co_return nebula::rt::ok_result(true);
     }
@@ -2705,9 +2685,9 @@ Future<Result<bool, std::string>> process_control_frame_async(StatePtr state,
                                               0,
                                               frame.payload,
                                               closed_message);
-        if (std::holds_alternative<typename Result<void, std::string>::Err>(ack.data)) {
+        if (result_is_err(ack)) {
           co_return err_result<bool>(
-              std::get<typename Result<void, std::string>::Err>(std::move(ack.data)).value);
+              result_err_move(ack));
         }
       }
       co_return nebula::rt::ok_result(true);
@@ -2806,9 +2786,9 @@ Future<Result<void, std::string>> ensure_client_started_async(StatePtr state,
     payload.append(kClientConnectionPreface);
     payload.append(build_frame(FrameType::Settings, 0, 0, ""));
     auto wrote = co_await tls_write_http_payload_async(state, payload, closed_message);
-    if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote.data)) {
+    if (result_is_err(wrote)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<void, std::string>::Err>(std::move(wrote.data)).value);
+          result_err_move(wrote));
     }
     session.client_preface_sent = true;
     session.local_settings_sent = true;
@@ -2825,12 +2805,12 @@ Future<Result<void, std::string>> ensure_server_started_async(StatePtr state,
   if (!session.client_preface_received) {
     while (session.read_buffer.size() < kClientConnectionPreface.size()) {
       auto read = co_await read_more_async(state, session.read_buffer, closed_message);
-      if (std::holds_alternative<typename Result<std::size_t, std::string>::Err>(read.data)) {
+      if (result_is_err(read)) {
         co_return nebula::rt::err_void_result(
-            std::get<typename Result<std::size_t, std::string>::Err>(std::move(read.data)).value);
+            result_err_move(read));
       }
       const auto bytes =
-          std::get<typename Result<std::size_t, std::string>::Ok>(std::move(read.data)).value;
+          result_ok_move(read);
       if (bytes == 0) {
         co_return nebula::rt::err_void_result("unexpected EOF while reading HTTP/2 connection preface");
       }
@@ -2845,9 +2825,9 @@ Future<Result<void, std::string>> ensure_server_started_async(StatePtr state,
   }
   if (!session.local_settings_sent) {
     auto wrote = co_await write_frame_async(state, session, FrameType::Settings, 0, 0, "", closed_message);
-    if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote.data)) {
+    if (result_is_err(wrote)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<void, std::string>::Err>(std::move(wrote.data)).value);
+          result_err_move(wrote));
     }
     session.local_settings_sent = true;
   }
@@ -2898,9 +2878,9 @@ Future<Result<void, std::string>> write_header_frames_async(StatePtr state,
                                           stream_id,
                                           block.substr(0, first_size),
                                           closed_message);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(first.data)) {
+  if (result_is_err(first)) {
     co_return nebula::rt::err_void_result(
-        std::get<typename Result<void, std::string>::Err>(std::move(first.data)).value);
+        result_err_move(first));
   }
   offset = first_size;
   while (offset < block.size()) {
@@ -2913,9 +2893,9 @@ Future<Result<void, std::string>> write_header_frames_async(StatePtr state,
                                            stream_id,
                                            block.substr(offset, chunk),
                                            closed_message);
-    if (std::holds_alternative<typename Result<void, std::string>::Err>(next.data)) {
+    if (result_is_err(next)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<void, std::string>::Err>(std::move(next.data)).value);
+          result_err_move(next));
     }
     offset += chunk;
   }
@@ -2928,17 +2908,17 @@ Future<Result<void, std::string>> await_send_window_async(StatePtr state,
                                                           const char* closed_message) {
   while (session.peer_connection_window <= 0 || session.peer_stream_window <= 0) {
     auto frame = co_await read_frame_async(state, session, closed_message);
-    if (std::holds_alternative<typename Result<Frame, std::string>::Err>(frame.data)) {
+    if (result_is_err(frame)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<Frame, std::string>::Err>(std::move(frame.data)).value);
+          result_err_move(frame));
     }
-    auto current = std::get<typename Result<Frame, std::string>::Ok>(std::move(frame.data)).value;
+    auto current = result_ok_move(frame);
     auto handled = co_await process_control_frame_async(state, session, current, closed_message);
-    if (std::holds_alternative<typename Result<bool, std::string>::Err>(handled.data)) {
+    if (result_is_err(handled)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<bool, std::string>::Err>(std::move(handled.data)).value);
+          result_err_move(handled));
     }
-    if (!std::get<typename Result<bool, std::string>::Ok>(std::move(handled.data)).value) {
+    if (!result_ok_move(handled)) {
       co_return nebula::rt::err_void_result(flow_control_wait_error(session, current));
     }
   }
@@ -2951,17 +2931,17 @@ Future<Result<void, std::string>> await_remote_settings_async(StatePtr state,
                                                               const char* closed_message) {
   while (!session.remote_settings_seen) {
     auto frame = co_await read_frame_async(state, session, closed_message);
-    if (std::holds_alternative<typename Result<Frame, std::string>::Err>(frame.data)) {
+    if (result_is_err(frame)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<Frame, std::string>::Err>(std::move(frame.data)).value);
+          result_err_move(frame));
     }
-    auto current = std::get<typename Result<Frame, std::string>::Ok>(std::move(frame.data)).value;
+    auto current = result_ok_move(frame);
     auto handled = co_await process_control_frame_async(state, session, current, closed_message);
-    if (std::holds_alternative<typename Result<bool, std::string>::Err>(handled.data)) {
+    if (result_is_err(handled)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<bool, std::string>::Err>(std::move(handled.data)).value);
+          result_err_move(handled));
     }
-    if (!std::get<typename Result<bool, std::string>::Ok>(std::move(handled.data)).value) {
+    if (!result_ok_move(handled)) {
       co_return nebula::rt::err_void_result("expected HTTP/2 SETTINGS before request, got frame_type=" +
                                             frame_type_name(current.type) +
                                             " stream_id=" + std::to_string(current.stream_id));
@@ -2979,7 +2959,7 @@ Future<Result<void, std::string>> write_data_frames_async(StatePtr state,
   std::size_t offset = 0;
   while (offset < body.size()) {
     auto ready = co_await await_send_window_async(state, session, closed_message);
-    if (std::holds_alternative<typename Result<void, std::string>::Err>(ready.data)) {
+    if (result_is_err(ready)) {
       co_return ready;
     }
     std::size_t chunk = body.size() - offset;
@@ -2994,9 +2974,9 @@ Future<Result<void, std::string>> write_data_frames_async(StatePtr state,
                                             stream_id,
                                             body.substr(offset, chunk),
                                             closed_message);
-    if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote.data)) {
+    if (result_is_err(wrote)) {
       co_return nebula::rt::err_void_result(
-          std::get<typename Result<void, std::string>::Err>(std::move(wrote.data)).value);
+          result_err_move(wrote));
     }
     session.peer_connection_window -= static_cast<std::int64_t>(chunk);
     session.peer_stream_window -= static_cast<std::int64_t>(chunk);
@@ -3007,12 +2987,12 @@ Future<Result<void, std::string>> write_data_frames_async(StatePtr state,
 
 Result<HttpRequest, std::string> build_request(const DecodedRequestHead& head, std::string body) {
   auto headers = request_headers_text(head, body);
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpRequest>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   std::string header_text =
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value;
+      result_ok_move(headers);
   return nebula::rt::ok_result(HttpRequest{
       head.method,
       head.path,
@@ -3024,12 +3004,12 @@ Result<HttpRequest, std::string> build_request(const DecodedRequestHead& head, s
 
 Result<HttpClientResponse, std::string> build_response(const DecodedResponseHead& head, std::string body) {
   auto headers = response_headers_text(head, body);
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpClientResponse>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   std::string header_text =
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value;
+      result_ok_move(headers);
   std::string content_type;
   if (auto value = nebula::rt::parse_http_header_value(header_text, "content-type"); value.has_value()) {
     content_type = *value;
@@ -3055,9 +3035,9 @@ Future<Result<void, std::string>> write_goaway_and_close_async(StatePtr state,
   payload.push_back(static_cast<char>(sid & 0xff));
   payload.append(4, '\0');
   auto wrote = co_await write_frame_async(state, state->http2, FrameType::Goaway, 0, 0, payload, closed_message);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote.data)) {
+  if (result_is_err(wrote)) {
     co_return nebula::rt::err_void_result(
-        std::get<typename Result<void, std::string>::Err>(std::move(wrote.data)).value);
+        result_err_move(wrote));
   }
   state->http2.goaway_sent = true;
   append_http2_phase_event(
@@ -3075,12 +3055,12 @@ Future<Result<void, std::string>> client_write_request_async(TlsClientStream sel
     co_return nebula::rt::err_void_result(protocol_error);
   }
   auto started = co_await ensure_client_started_async(self.state, self.state->http2, "tls stream is closed");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(started.data)) {
-    co_return std::get<typename Result<void, std::string>::Err>(std::move(started.data));
+  if (result_is_err(started)) {
+    co_return result_err_variant_move(started);
   }
   auto settings = co_await await_remote_settings_async(self.state, self.state->http2, "tls stream is closed");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(settings.data)) {
-    co_return std::get<typename Result<void, std::string>::Err>(std::move(settings.data));
+  if (result_is_err(settings)) {
+    co_return result_err_variant_move(settings);
   }
   if (self.state->http2.goaway_received) {
     co_return nebula::rt::err_void_result("HTTP/2 peer sent GOAWAY: last_stream_id=" +
@@ -3095,14 +3075,12 @@ Future<Result<void, std::string>> client_write_request_async(TlsClientStream sel
         std::to_string(self.state->http2.active_stream_id));
   }
   auto headers = encode_request_headers(request);
-  if (std::holds_alternative<typename Result<std::vector<HeaderField>, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     co_return nebula::rt::err_void_result(
-        std::get<typename Result<std::vector<HeaderField>, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   const std::string block =
-      encode_header_block(std::get<typename Result<std::vector<HeaderField>, std::string>::Ok>(
-                              std::move(headers.data))
-                              .value);
+      encode_header_block(result_ok_move(headers));
   const auto stream_id = self.state->http2.next_local_stream_id;
   self.state->http2.next_local_stream_id += 2;
   self.state->http2.active_stream_id = stream_id;
@@ -3116,8 +3094,8 @@ Future<Result<void, std::string>> client_write_request_async(TlsClientStream sel
                                                           block,
                                                           end_stream,
                                                           "tls stream is closed");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote_headers.data)) {
-    co_return std::get<typename Result<void, std::string>::Err>(std::move(wrote_headers.data));
+  if (result_is_err(wrote_headers)) {
+    co_return result_err_variant_move(wrote_headers);
   }
   append_http2_phase_event(self.state->http2,
                            "stream_open",
@@ -3163,17 +3141,17 @@ Future<Result<HttpClientResponse, std::string>> client_read_response_async(
   std::string body;
   while (true) {
     auto next = co_await read_frame_async(self.state, self.state->http2, "tls stream is closed");
-    if (std::holds_alternative<typename Result<Frame, std::string>::Err>(next.data)) {
+    if (result_is_err(next)) {
       co_return err_result<HttpClientResponse>(
-          std::get<typename Result<Frame, std::string>::Err>(std::move(next.data)).value);
+          result_err_move(next));
     }
-    auto frame = std::get<typename Result<Frame, std::string>::Ok>(std::move(next.data)).value;
+    auto frame = result_ok_move(next);
     auto handled = co_await process_control_frame_async(self.state, self.state->http2, frame, "tls stream is closed");
-    if (std::holds_alternative<typename Result<bool, std::string>::Err>(handled.data)) {
+    if (result_is_err(handled)) {
       co_return err_result<HttpClientResponse>(
-          std::get<typename Result<bool, std::string>::Err>(std::move(handled.data)).value);
+          result_err_move(handled));
     }
-    if (std::get<typename Result<bool, std::string>::Ok>(std::move(handled.data)).value) {
+    if (result_ok_move(handled)) {
       continue;
     }
 
@@ -3192,22 +3170,22 @@ Future<Result<HttpClientResponse, std::string>> client_read_response_async(
       }
       auto block =
           co_await read_header_block_async(self.state, self.state->http2, active_stream_id, frame, "tls stream is closed");
-      if (std::holds_alternative<typename Result<std::string, std::string>::Err>(block.data)) {
+      if (result_is_err(block)) {
         co_return err_result<HttpClientResponse>(
-            std::get<typename Result<std::string, std::string>::Err>(std::move(block.data)).value);
+            result_err_move(block));
       }
       const auto header_block =
-          std::get<typename Result<std::string, std::string>::Ok>(std::move(block.data)).value;
+          result_ok_move(block);
       if (header_block.size() > static_cast<std::size_t>(max_header_bytes)) {
         co_return err_result<HttpClientResponse>("HTTP/2 headers exceed configured limit");
       }
       auto decoded = decode_response_head(header_block);
-      if (std::holds_alternative<typename Result<DecodedResponseHead, std::string>::Err>(decoded.data)) {
+      if (result_is_err(decoded)) {
         co_return err_result<HttpClientResponse>(
-            std::get<typename Result<DecodedResponseHead, std::string>::Err>(std::move(decoded.data)).value);
+            result_err_move(decoded));
       }
       auto current_head =
-          std::get<typename Result<DecodedResponseHead, std::string>::Ok>(std::move(decoded.data)).value;
+          result_ok_move(decoded);
       if (current_head.status == 101) {
         co_return err_result<HttpClientResponse>("HTTP/2 upgrade responses are unsupported");
       }
@@ -3283,15 +3261,15 @@ Future<Result<HttpClientResponse, std::string>> client_read_response_async(
       body.append(frame.payload);
       auto conn_window = co_await write_window_update_async(
           self.state, self.state->http2, 0, static_cast<std::uint32_t>(frame.payload.size()), "tls stream is closed");
-      if (std::holds_alternative<typename Result<void, std::string>::Err>(conn_window.data)) {
+      if (result_is_err(conn_window)) {
         co_return err_result<HttpClientResponse>(
-            std::get<typename Result<void, std::string>::Err>(std::move(conn_window.data)).value);
+            result_err_move(conn_window));
       }
       auto stream_window = co_await write_window_update_async(
           self.state, self.state->http2, active_stream_id, static_cast<std::uint32_t>(frame.payload.size()), "tls stream is closed");
-      if (std::holds_alternative<typename Result<void, std::string>::Err>(stream_window.data)) {
+      if (result_is_err(stream_window)) {
         co_return err_result<HttpClientResponse>(
-            std::get<typename Result<void, std::string>::Err>(std::move(stream_window.data)).value);
+            result_err_move(stream_window));
       }
       if ((frame.flags & kFlagEndStream) != 0) {
         append_http2_phase_event(self.state->http2,
@@ -3337,9 +3315,9 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
     co_return err_result<HttpRequest>(protocol_error);
   }
   auto started = co_await ensure_server_started_async(self.state, self.state->http2, "tls stream is closed");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(started.data)) {
+  if (result_is_err(started)) {
     co_return err_result<HttpRequest>(
-        std::get<typename Result<void, std::string>::Err>(std::move(started.data)).value);
+        result_err_move(started));
   }
   if (self.state->http2.active_stream_id != 0) {
     co_return err_result<HttpRequest>(
@@ -3349,17 +3327,17 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
 
   while (true) {
     auto next = co_await read_frame_async(self.state, self.state->http2, "tls stream is closed");
-    if (std::holds_alternative<typename Result<Frame, std::string>::Err>(next.data)) {
+    if (result_is_err(next)) {
       co_return err_result<HttpRequest>(
-          std::get<typename Result<Frame, std::string>::Err>(std::move(next.data)).value);
+          result_err_move(next));
     }
-    auto frame = std::get<typename Result<Frame, std::string>::Ok>(std::move(next.data)).value;
+    auto frame = result_ok_move(next);
     auto handled = co_await process_control_frame_async(self.state, self.state->http2, frame, "tls stream is closed");
-    if (std::holds_alternative<typename Result<bool, std::string>::Err>(handled.data)) {
+    if (result_is_err(handled)) {
       co_return err_result<HttpRequest>(
-          std::get<typename Result<bool, std::string>::Err>(std::move(handled.data)).value);
+          result_err_move(handled));
     }
-    if (std::get<typename Result<bool, std::string>::Ok>(std::move(handled.data)).value) {
+    if (result_ok_move(handled)) {
       continue;
     }
 
@@ -3376,40 +3354,40 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
     }
     auto block =
         co_await read_header_block_async(self.state, self.state->http2, frame.stream_id, frame, "tls stream is closed");
-    if (std::holds_alternative<typename Result<std::string, std::string>::Err>(block.data)) {
+    if (result_is_err(block)) {
       co_return err_result<HttpRequest>(
-          std::get<typename Result<std::string, std::string>::Err>(std::move(block.data)).value);
+          result_err_move(block));
     }
     const auto header_block =
-        std::get<typename Result<std::string, std::string>::Ok>(std::move(block.data)).value;
+        result_ok_move(block);
     if (header_block.size() > static_cast<std::size_t>(max_header_bytes)) {
       co_return err_result<HttpRequest>("HTTP/2 headers exceed configured limit");
     }
     auto decoded = decode_request_head(header_block);
-    if (std::holds_alternative<typename Result<DecodedRequestHead, std::string>::Err>(decoded.data)) {
+    if (result_is_err(decoded)) {
       co_return err_result<HttpRequest>(
-          std::get<typename Result<DecodedRequestHead, std::string>::Err>(std::move(decoded.data)).value);
+          result_err_move(decoded));
     }
     auto request_head =
-        std::get<typename Result<DecodedRequestHead, std::string>::Ok>(std::move(decoded.data)).value;
+        result_ok_move(decoded);
 
     std::string body;
     bool end_stream = (frame.flags & kFlagEndStream) != 0;
     while (!end_stream) {
       auto body_frame = co_await read_frame_async(self.state, self.state->http2, "tls stream is closed");
-      if (std::holds_alternative<typename Result<Frame, std::string>::Err>(body_frame.data)) {
+      if (result_is_err(body_frame)) {
         co_return err_result<HttpRequest>(
-            std::get<typename Result<Frame, std::string>::Err>(std::move(body_frame.data)).value);
+            result_err_move(body_frame));
       }
       auto current =
-          std::get<typename Result<Frame, std::string>::Ok>(std::move(body_frame.data)).value;
+          result_ok_move(body_frame);
       auto body_handled =
           co_await process_control_frame_async(self.state, self.state->http2, current, "tls stream is closed");
-      if (std::holds_alternative<typename Result<bool, std::string>::Err>(body_handled.data)) {
+      if (result_is_err(body_handled)) {
         co_return err_result<HttpRequest>(
-            std::get<typename Result<bool, std::string>::Err>(std::move(body_handled.data)).value);
+            result_err_move(body_handled));
       }
-      if (std::get<typename Result<bool, std::string>::Ok>(std::move(body_handled.data)).value) {
+      if (result_ok_move(body_handled)) {
         continue;
       }
       if (current.type != FrameType::Data || current.stream_id != frame.stream_id) {
@@ -3423,21 +3401,21 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
       body.append(current.payload);
       auto conn_window = co_await write_window_update_async(
           self.state, self.state->http2, 0, static_cast<std::uint32_t>(current.payload.size()), "tls stream is closed");
-      if (std::holds_alternative<typename Result<void, std::string>::Err>(conn_window.data)) {
+      if (result_is_err(conn_window)) {
         co_return err_result<HttpRequest>(
-            std::get<typename Result<void, std::string>::Err>(std::move(conn_window.data)).value);
+            result_err_move(conn_window));
       }
       auto stream_window = co_await write_window_update_async(
           self.state, self.state->http2, frame.stream_id, static_cast<std::uint32_t>(current.payload.size()), "tls stream is closed");
-      if (std::holds_alternative<typename Result<void, std::string>::Err>(stream_window.data)) {
+      if (result_is_err(stream_window)) {
         co_return err_result<HttpRequest>(
-            std::get<typename Result<void, std::string>::Err>(std::move(stream_window.data)).value);
+            result_err_move(stream_window));
       }
       end_stream = (current.flags & kFlagEndStream) != 0;
     }
 
     auto built = build_request(request_head, std::move(body));
-    if (std::holds_alternative<typename Result<HttpRequest, std::string>::Err>(built.data)) {
+    if (result_is_err(built)) {
       co_return built;
     }
     self.state->http2.active_stream_id = frame.stream_id;
@@ -3450,7 +3428,7 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
                              frame.stream_id,
                              "request_start",
                              "peer_request_ready");
-    co_return std::get<typename Result<HttpRequest, std::string>::Ok>(std::move(built.data));
+    co_return result_ok_variant_move(built);
   }
 }
 
@@ -3471,14 +3449,12 @@ Future<Result<void, std::string>> server_write_response_async(TlsServerStream se
     co_return nebula::rt::err_void_result("invalid Content-Type header");
   }
   auto headers = encode_response_headers(response);
-  if (std::holds_alternative<typename Result<std::vector<HeaderField>, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     co_return nebula::rt::err_void_result(
-        std::get<typename Result<std::vector<HeaderField>, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   const std::string block =
-      encode_header_block(std::get<typename Result<std::vector<HeaderField>, std::string>::Ok>(
-                              std::move(headers.data))
-                              .value);
+      encode_header_block(result_ok_move(headers));
   const auto stream_id = self.state->http2.active_stream_id;
   const std::string_view body =
       nebula::rt::http_response_status_forbids_body(response.status) ? std::string_view{} : response.body.data;
@@ -3489,8 +3465,8 @@ Future<Result<void, std::string>> server_write_response_async(TlsServerStream se
                                                           block,
                                                           body.empty(),
                                                           "tls stream is closed");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote_headers.data)) {
-    co_return std::get<typename Result<void, std::string>::Err>(std::move(wrote_headers.data));
+  if (result_is_err(wrote_headers)) {
+    co_return result_err_variant_move(wrote_headers);
   }
   append_http2_phase_event(self.state->http2,
                            "response_headers_sent",
@@ -3502,7 +3478,7 @@ Future<Result<void, std::string>> server_write_response_async(TlsServerStream se
   if (!body.empty()) {
     auto wrote_body =
         co_await write_data_frames_async(self.state, self.state->http2, stream_id, body, "tls stream is closed");
-    if (std::holds_alternative<typename Result<void, std::string>::Err>(wrote_body.data)) {
+    if (result_is_err(wrote_body)) {
       co_return wrote_body;
     }
   }
@@ -3589,27 +3565,21 @@ TlsAlpnPolicy __nebula_tls_alpn_http2_only() {
 
 TlsClientConfig __nebula_tls_client_config(TlsTrustStore trust_store) {
   auto config_state = make_client_config_state(trust_store.state);
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Err>(
-          config_state.data)) {
+  if (result_is_err(config_state)) {
     return TlsClientConfig{};
   }
   return TlsClientConfig{
-      std::get<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Ok>(
-          std::move(config_state.data))
-          .value};
+      result_ok_move(config_state)};
 }
 
 TlsClientConfig __nebula_tls_client_config_with_identity(TlsClientConfig self,
                                                          TlsClientIdentity identity) {
   auto cloned = clone_client_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsClientConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->client_identity = std::move(identity.state);
   return TlsClientConfig{std::move(state)};
 }
@@ -3617,14 +3587,11 @@ TlsClientConfig __nebula_tls_client_config_with_identity(TlsClientConfig self,
 TlsClientConfig __nebula_tls_client_config_with_version_policy(TlsClientConfig self,
                                                                TlsVersionPolicy policy) {
   auto cloned = clone_client_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsClientConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->version_policy = std::move(policy.state);
   return TlsClientConfig{std::move(state)};
 }
@@ -3632,14 +3599,11 @@ TlsClientConfig __nebula_tls_client_config_with_version_policy(TlsClientConfig s
 TlsClientConfig __nebula_tls_client_config_with_alpn_policy(TlsClientConfig self,
                                                             TlsAlpnPolicy policy) {
   auto cloned = clone_client_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsClientConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsClientConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->alpn_policy = std::move(policy.state);
   return TlsClientConfig{std::move(state)};
 }
@@ -3714,12 +3678,12 @@ Future<Result<void, std::string>> __nebula_tls_http_write_request(TlsClientStrea
     co_return nebula::rt::err_void_result(protocol_error);
   }
   auto encoded = nebula::rt::build_http_request_message(request);
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(encoded.data)) {
+  if (result_is_err(encoded)) {
     co_return nebula::rt::err_void_result(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(encoded.data)).value);
+        result_err_move(encoded));
   }
   std::string payload =
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(encoded.data)).value;
+      result_ok_move(encoded);
   co_return co_await tls_write_http_payload_async(self.state, payload, "tls stream is closed");
 }
 
@@ -3770,27 +3734,21 @@ Result<TlsServerIdentity, std::string> __nebula_tls_server_identity_from_pem(Byt
 
 TlsServerConfig __nebula_tls_server_config(TlsServerIdentity identity) {
   auto config_state = make_server_config_state(identity.state);
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          config_state.data)) {
+  if (result_is_err(config_state)) {
     return TlsServerConfig{};
   }
   return TlsServerConfig{
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(config_state.data))
-          .value};
+      result_ok_move(config_state)};
 }
 
 TlsServerConfig __nebula_tls_server_config_with_version_policy(TlsServerConfig self,
                                                                TlsVersionPolicy policy) {
   auto cloned = clone_server_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsServerConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->version_policy = std::move(policy.state);
   return TlsServerConfig{std::move(state)};
 }
@@ -3798,28 +3756,22 @@ TlsServerConfig __nebula_tls_server_config_with_version_policy(TlsServerConfig s
 TlsServerConfig __nebula_tls_server_config_with_alpn_policy(TlsServerConfig self,
                                                             TlsAlpnPolicy policy) {
   auto cloned = clone_server_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsServerConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->alpn_policy = std::move(policy.state);
   return TlsServerConfig{std::move(state)};
 }
 
 TlsServerConfig __nebula_tls_server_config_client_auth_disabled(TlsServerConfig self) {
   auto cloned = clone_server_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsServerConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->client_auth_mode = TlsServerClientAuthMode::Disabled;
   state->client_trust_store.reset();
   return TlsServerConfig{std::move(state)};
@@ -3828,14 +3780,11 @@ TlsServerConfig __nebula_tls_server_config_client_auth_disabled(TlsServerConfig 
 TlsServerConfig __nebula_tls_server_config_client_auth_optional(TlsServerConfig self,
                                                                 TlsTrustStore trust_store) {
   auto cloned = clone_server_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsServerConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->client_auth_mode = TlsServerClientAuthMode::Optional;
   state->client_trust_store = std::move(trust_store.state);
   return TlsServerConfig{std::move(state)};
@@ -3844,14 +3793,11 @@ TlsServerConfig __nebula_tls_server_config_client_auth_optional(TlsServerConfig 
 TlsServerConfig __nebula_tls_server_config_client_auth_required(TlsServerConfig self,
                                                                 TlsTrustStore trust_store) {
   auto cloned = clone_server_config_state(std::move(self));
-  if (std::holds_alternative<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Err>(
-          cloned.data)) {
+  if (result_is_err(cloned)) {
     return TlsServerConfig{};
   }
   auto state =
-      std::get<typename Result<std::shared_ptr<TlsServerConfigState>, std::string>::Ok>(
-          std::move(cloned.data))
-          .value;
+      result_ok_move(cloned);
   state->client_auth_mode = TlsServerClientAuthMode::Required;
   state->client_trust_store = std::move(trust_store.state);
   return TlsServerConfig{std::move(state)};
@@ -3870,12 +3816,12 @@ Future<Result<TlsServerListener, std::string>> __nebula_tls_bind(SocketAddr addr
   }
 
   auto bound = co_await nebula::rt::bind_listener(addr);
-  if (std::holds_alternative<typename Result<TcpListener, std::string>::Err>(bound.data)) {
+  if (result_is_err(bound)) {
     co_return err_result<TlsServerListener>(
-        std::get<typename Result<TcpListener, std::string>::Err>(std::move(bound.data)).value);
+        result_err_move(bound));
   }
   auto listener =
-      std::get<typename Result<TcpListener, std::string>::Ok>(std::move(bound.data)).value;
+      result_ok_move(bound);
 
   auto state = std::make_shared<TlsServerListenerState>();
   state->handle = listener.handle;
@@ -3892,9 +3838,9 @@ Future<Result<TlsServerListener, std::string>> __nebula_tls_bind(SocketAddr addr
 
   apply_version_policy(state->ssl_config, state->config->version_policy);
   auto alpn = apply_alpn_policy(state->ssl_config, state->config->alpn_policy);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(alpn.data)) {
+  if (result_is_err(alpn)) {
     co_return err_result<TlsServerListener>(
-        std::get<typename Result<void, std::string>::Err>(std::move(alpn.data)).value);
+        result_err_move(alpn));
   }
 
   mbedtls_ssl_conf_rng(&state->ssl_config,
@@ -3933,12 +3879,12 @@ Future<Result<TlsServerStream, std::string>> __nebula_tls_listener_accept(TlsSer
   }
   while (true) {
     auto accepted = co_await nebula::rt::accept_stream(TcpListener{listener.state->handle});
-    if (std::holds_alternative<typename Result<TcpStream, std::string>::Err>(accepted.data)) {
+    if (result_is_err(accepted)) {
       co_return err_result<TlsServerStream>(
-          std::get<typename Result<TcpStream, std::string>::Err>(std::move(accepted.data)).value);
+          result_err_move(accepted));
     }
     auto stream =
-        std::get<typename Result<TcpStream, std::string>::Ok>(std::move(accepted.data)).value;
+        result_ok_move(accepted);
     auto outcome = co_await tls_handshake_server_async(listener, std::move(stream));
     if (outcome.kind == TlsServerHandshakeOutcomeKind::Established) {
       co_return nebula::rt::ok_result(std::move(outcome.stream));
@@ -3957,12 +3903,12 @@ Future<Result<TlsServerStream, std::string>> __nebula_tls_listener_accept_timeou
   while (true) {
     auto accepted =
         co_await nebula::rt::accept_stream_timeout(TcpListener{listener.state->handle}, timeout_ms);
-    if (std::holds_alternative<typename Result<TcpStream, std::string>::Err>(accepted.data)) {
+    if (result_is_err(accepted)) {
       co_return err_result<TlsServerStream>(
-          std::get<typename Result<TcpStream, std::string>::Err>(std::move(accepted.data)).value);
+          result_err_move(accepted));
     }
     auto stream =
-        std::get<typename Result<TcpStream, std::string>::Ok>(std::move(accepted.data)).value;
+        result_ok_move(accepted);
     auto outcome = co_await tls_handshake_server_async(listener, std::move(stream));
     if (outcome.kind == TlsServerHandshakeOutcomeKind::Established) {
       co_return nebula::rt::ok_result(std::move(outcome.stream));

@@ -30,6 +30,9 @@ namespace {
 using RtBytes = nebula::rt::Bytes;
 template <typename T>
 using RtResult = nebula::rt::Result<T, std::string>;
+using nebula::rt::result_err_ptr;
+using nebula::rt::result_is_err;
+using nebula::rt::result_ok_ptr;
 using nebula::crypto_native::SecretBytesOwner;
 using nebula::crypto_native::secure_zeroize;
 
@@ -66,10 +69,10 @@ struct StringZeroizer {
 };
 
 RtResult<RtBytes> export_secret_owner_result(RtResult<SecretBytesOwner> owner_result) {
-  if (auto* err = std::get_if<typename RtResult<SecretBytesOwner>::Err>(&owner_result.data)) {
+  if (auto* err = result_err_ptr(owner_result)) {
     return make_err<RtBytes>(err->value);
   }
-  auto* ok = std::get_if<typename RtResult<SecretBytesOwner>::Ok>(&owner_result.data);
+  auto* ok = result_ok_ptr(owner_result);
   if (ok == nullptr) {
     nebula::rt::panic("secret owner result is in an invalid state");
   }
@@ -426,7 +429,7 @@ RtResult<RtBytes> chacha20_poly1305_seal_result(const RtBytes& key_bytes,
       key_bytes, NEBULA_CRYPTO_CHACHA20_POLY1305_KEY_BYTES, "ChaCha20Poly1305Key");
   auto nonce = validate_exact_input_bytes(
       nonce_bytes, NEBULA_CRYPTO_CHACHA20_POLY1305_NONCE_BYTES, "ChaCha20Poly1305 nonce");
-  if (std::holds_alternative<typename RtResult<RtBytes>::Err>(nonce.data)) {
+  if (result_is_err(nonce)) {
     return nonce;
   }
   try {
@@ -468,7 +471,7 @@ RtResult<RtBytes> chacha20_poly1305_open_result(const RtBytes& key_bytes,
       key_bytes, NEBULA_CRYPTO_CHACHA20_POLY1305_KEY_BYTES, "ChaCha20Poly1305Key");
   auto nonce = validate_exact_input_bytes(
       nonce_bytes, NEBULA_CRYPTO_CHACHA20_POLY1305_NONCE_BYTES, "ChaCha20Poly1305 nonce");
-  if (std::holds_alternative<typename RtResult<RtBytes>::Err>(nonce.data)) {
+  if (result_is_err(nonce)) {
     return nonce;
   }
   if (ciphertext.data.size() < NEBULA_CRYPTO_CHACHA20_POLY1305_TAG_BYTES) {

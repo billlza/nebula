@@ -195,6 +195,30 @@ inline bool result_is_err(const Result<T, E>& result) {
 }
 
 template <typename T, typename E>
+inline typename Result<T, E>::Ok* result_ok_ptr(Result<T, E>& result) {
+  if (!result.ok) return nullptr;
+  return std::get_if<typename Result<T, E>::Ok>(&result.data);
+}
+
+template <typename T, typename E>
+inline const typename Result<T, E>::Ok* result_ok_ptr(const Result<T, E>& result) {
+  if (!result.ok) return nullptr;
+  return std::get_if<typename Result<T, E>::Ok>(&result.data);
+}
+
+template <typename T, typename E>
+inline typename Result<T, E>::Err* result_err_ptr(Result<T, E>& result) {
+  if (result.ok) return nullptr;
+  return std::get_if<typename Result<T, E>::Err>(&result.data);
+}
+
+template <typename T, typename E>
+inline const typename Result<T, E>::Err* result_err_ptr(const Result<T, E>& result) {
+  if (result.ok) return nullptr;
+  return std::get_if<typename Result<T, E>::Err>(&result.data);
+}
+
+template <typename T, typename E>
 inline decltype(auto) result_ok_ref(Result<T, E>& result) {
   return (std::get<typename Result<T, E>::Ok>(result.data).value);
 }
@@ -206,12 +230,22 @@ inline decltype(auto) result_ok_ref(const Result<T, E>& result) {
 
 template <typename T, typename E>
 inline decltype(auto) result_ok_move(Result<T, E>& result) {
-  return std::move(std::get<typename Result<T, E>::Ok>(result.data).value);
+  return std::move(result_ok_ref(result));
+}
+
+template <typename T, typename E>
+inline typename Result<T, E>::Ok result_ok_variant_move(Result<T, E>& result) {
+  return std::get<typename Result<T, E>::Ok>(std::move(result.data));
 }
 
 template <typename E>
 inline void result_ok_move(Result<void, E>& result) {
   std::get<typename Result<void, E>::Ok>(result.data);
+}
+
+template <typename E>
+inline typename Result<void, E>::Ok result_ok_variant_move(Result<void, E>& result) {
+  return std::get<typename Result<void, E>::Ok>(std::move(result.data));
 }
 
 template <typename E>
@@ -236,12 +270,22 @@ inline decltype(auto) result_err_ref(const Result<T, E>& result) {
 
 template <typename T, typename E>
 inline decltype(auto) result_err_move(Result<T, E>& result) {
-  return std::move(std::get<typename Result<T, E>::Err>(result.data).value);
+  return std::move(result_err_ref(result));
+}
+
+template <typename T, typename E>
+inline typename Result<T, E>::Err result_err_variant_move(Result<T, E>& result) {
+  return std::get<typename Result<T, E>::Err>(std::move(result.data));
 }
 
 template <typename E>
 inline decltype(auto) result_err_move(Result<void, E>& result) {
   return std::move(std::get<typename Result<void, E>::Err>(result.data).value);
+}
+
+template <typename E>
+inline typename Result<void, E>::Err result_err_variant_move(Result<void, E>& result) {
+  return std::get<typename Result<void, E>::Err>(std::move(result.data));
 }
 
 struct Bytes {
@@ -1473,11 +1517,11 @@ inline Result<std::int64_t, std::string> parse_env_int(const std::string& text) 
 
 inline Result<std::int64_t, std::string> env_get_int(const std::string& name) {
   auto value = env_get(name);
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(value.data)) {
+  if (result_is_err(value)) {
     return err_result<std::int64_t>(
-        std::get<typename Result<std::string, std::string>::Err>(value.data).value);
+        result_err_ref(value));
   }
-  return parse_env_int(std::get<typename Result<std::string, std::string>::Ok>(value.data).value);
+  return parse_env_int(result_ok_ref(value));
 }
 
 inline Result<std::int64_t, std::string> env_get_int_or(const std::string& name,
@@ -1623,11 +1667,11 @@ inline Result<Bytes, std::string> fs_read_bytes(const std::string& path) {
 
 inline Result<std::string, std::string> fs_read_string(const std::string& path) {
   auto bytes = fs_read_bytes(path);
-  if (std::holds_alternative<typename Result<Bytes, std::string>::Err>(bytes.data)) {
+  if (result_is_err(bytes)) {
     return err_result<std::string>(
-        std::get<typename Result<Bytes, std::string>::Err>(bytes.data).value);
+        result_err_ref(bytes));
   }
-  auto data = std::get<typename Result<Bytes, std::string>::Ok>(bytes.data).value.data;
+  auto data = result_ok_ref(bytes).data;
   if (!is_valid_utf8(data)) return err_result<std::string>("file is not valid UTF-8: " + path);
   return ok_result(std::move(data));
 }
@@ -2099,13 +2143,13 @@ inline std::shared_ptr<SocketHandle> require_open_handle(const std::shared_ptr<S
 inline Future<Result<TcpListener, std::string>> bind_listener(SocketAddr addr) {
   ensure_socket_runtime_initialized();
   auto family = socketaddr_family(addr);
-  if (std::holds_alternative<typename Result<int, std::string>::Err>(family.data)) {
+  if (result_is_err(family)) {
     co_return err_result<TcpListener>(
-        std::get<typename Result<int, std::string>::Err>(std::move(family.data)).value);
+        result_err_move(family));
   }
 
   NativeSocket fd =
-      ::socket(std::get<typename Result<int, std::string>::Ok>(family.data).value, SOCK_STREAM, IPPROTO_TCP);
+      ::socket(result_ok_ref(family), SOCK_STREAM, IPPROTO_TCP);
   if (!native_socket_valid(fd)) {
     co_return err_result<TcpListener>("socket failed: " + socket_error_message(last_socket_error_code()));
   }
@@ -2135,13 +2179,13 @@ inline Future<Result<TcpListener, std::string>> bind_listener(SocketAddr addr) {
 inline Future<Result<TcpStream, std::string>> connect_stream(SocketAddr addr) {
   ensure_socket_runtime_initialized();
   auto family = socketaddr_family(addr);
-  if (std::holds_alternative<typename Result<int, std::string>::Err>(family.data)) {
+  if (result_is_err(family)) {
     co_return err_result<TcpStream>(
-        std::get<typename Result<int, std::string>::Err>(std::move(family.data)).value);
+        result_err_move(family));
   }
 
   NativeSocket fd =
-      ::socket(std::get<typename Result<int, std::string>::Ok>(family.data).value, SOCK_STREAM, IPPROTO_TCP);
+      ::socket(result_ok_ref(family), SOCK_STREAM, IPPROTO_TCP);
   if (!native_socket_valid(fd)) {
     co_return err_result<TcpStream>("socket failed: " + socket_error_message(last_socket_error_code()));
   }
@@ -2183,11 +2227,11 @@ inline Future<Result<SocketAddr, std::string>> resolve_socketaddr(std::string ho
   };
 
   auto wake_pair = create_wake_socket_pair();
-  if (std::holds_alternative<typename Result<WakeSocketPair, std::string>::Err>(wake_pair.data)) {
+  if (result_is_err(wake_pair)) {
     co_return err_result<SocketAddr>(
-        std::get<typename Result<WakeSocketPair, std::string>::Err>(std::move(wake_pair.data)).value);
+        result_err_move(wake_pair));
   }
-  auto pair = std::get<typename Result<WakeSocketPair, std::string>::Ok>(std::move(wake_pair.data)).value;
+  auto pair = result_ok_move(wake_pair);
   auto reader = std::shared_ptr<SocketHandle>(new SocketHandle(pair.reader));
   auto writer = std::shared_ptr<SocketHandle>(new SocketHandle(pair.writer));
   auto state = std::make_shared<ResolveState>();
@@ -2200,8 +2244,8 @@ inline Future<Result<SocketAddr, std::string>> resolve_socketaddr(std::string ho
 
   while (true) {
     auto wake_result = wait_for_wake_socket(reader);
-    if (std::holds_alternative<typename Result<void, std::string>::Ok>(wake_result.data)) break;
-    auto error = std::get<typename Result<void, std::string>::Err>(std::move(wake_result.data)).value;
+    if (result_is_ok(wake_result)) break;
+    auto error = result_err_move(wake_result);
     if (error == "resolver wake pending") {
       co_await IoAwaitable{reader->fd, Reactor::Interest::Read};
       continue;
@@ -2216,12 +2260,12 @@ inline Future<Result<SocketAddr, std::string>> resolve_socketaddr(std::string ho
 
 inline Future<Result<TcpStream, std::string>> connect_stream_host(std::string host, std::int64_t port) {
   auto resolved = co_await resolve_socketaddr(std::move(host), port);
-  if (std::holds_alternative<typename Result<SocketAddr, std::string>::Err>(resolved.data)) {
+  if (result_is_err(resolved)) {
     co_return err_result<TcpStream>(
-        std::get<typename Result<SocketAddr, std::string>::Err>(std::move(resolved.data)).value);
+        result_err_move(resolved));
   }
   co_return co_await connect_stream(
-      std::get<typename Result<SocketAddr, std::string>::Ok>(std::move(resolved.data)).value);
+      result_ok_move(resolved));
 }
 
 inline Future<Result<TcpStream, std::string>> accept_stream(TcpListener listener) {
@@ -3763,7 +3807,7 @@ inline Result<void, std::string> fs_write_bytes_atomic(const std::string& path, 
     if (!out) return err_void_result("failed to flush file: " + temp_path.string());
   }
   auto replaced = fs_replace_file_atomic(temp_path, file_path);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(replaced.data)) {
+  if (result_is_err(replaced)) {
     std::error_code cleanup_ec;
     hostfs::remove(temp_path, cleanup_ec);
     return replaced;
@@ -3821,59 +3865,59 @@ inline Result<JsonValue, std::string> fs_list_dir(const std::string& path) {
 inline Result<std::vector<std::string>, std::string> json_string_array(const JsonValue& value,
                                                                        std::string_view label) {
   auto count_result = json_array_len(value);
-  if (std::holds_alternative<typename Result<std::int64_t, std::string>::Err>(count_result.data)) {
+  if (result_is_err(count_result)) {
     return err_result<std::vector<std::string>>(std::string(label) + " must be a JSON array");
   }
-  const auto count = std::get<typename Result<std::int64_t, std::string>::Ok>(count_result.data).value;
+  const auto count = result_ok_ref(count_result);
   std::vector<std::string> out;
   out.reserve(static_cast<std::size_t>(count));
   for (std::int64_t i = 0; i < count; ++i) {
     auto item = json_array_get(value, i);
-    if (std::holds_alternative<typename Result<JsonValue, std::string>::Err>(item.data)) {
+    if (result_is_err(item)) {
       return err_result<std::vector<std::string>>(
-          std::get<typename Result<JsonValue, std::string>::Err>(item.data).value);
+          result_err_ref(item));
     }
-    auto text = json_as_string(std::get<typename Result<JsonValue, std::string>::Ok>(std::move(item.data)).value);
-    if (std::holds_alternative<typename Result<std::string, std::string>::Err>(text.data)) {
+    auto text = json_as_string(result_ok_move(item));
+    if (result_is_err(text)) {
       return err_result<std::vector<std::string>>(std::string(label) + " entries must be strings");
     }
-    out.push_back(std::get<typename Result<std::string, std::string>::Ok>(std::move(text.data)).value);
+    out.push_back(result_ok_move(text));
   }
   return ok_result(std::move(out));
 }
 
 inline Result<std::vector<std::string>, std::string> json_env_array(const JsonValue& value) {
   auto count_result = json_array_len(value);
-  if (std::holds_alternative<typename Result<std::int64_t, std::string>::Err>(count_result.data)) {
+  if (result_is_err(count_result)) {
     return err_result<std::vector<std::string>>("process env must be a JSON array");
   }
-  const auto count = std::get<typename Result<std::int64_t, std::string>::Ok>(count_result.data).value;
+  const auto count = result_ok_ref(count_result);
   std::vector<std::string> out;
   out.reserve(static_cast<std::size_t>(count));
   for (std::int64_t i = 0; i < count; ++i) {
     auto item_result = json_array_get(value, i);
-    if (std::holds_alternative<typename Result<JsonValue, std::string>::Err>(item_result.data)) {
+    if (result_is_err(item_result)) {
       return err_result<std::vector<std::string>>(
-          std::get<typename Result<JsonValue, std::string>::Err>(item_result.data).value);
+          result_err_ref(item_result));
     }
-    const auto item = std::get<typename Result<JsonValue, std::string>::Ok>(std::move(item_result.data)).value;
+    const auto item = result_ok_move(item_result);
     auto name_json = json_get_value(item, "name");
     auto value_json = json_get_value(item, "value");
-    if (std::holds_alternative<typename Result<JsonValue, std::string>::Err>(name_json.data) ||
-        std::holds_alternative<typename Result<JsonValue, std::string>::Err>(value_json.data)) {
+    if (result_is_err(name_json) ||
+        result_is_err(value_json)) {
       return err_result<std::vector<std::string>>("process env entries must contain string name/value");
     }
-    auto name = json_as_string(std::get<typename Result<JsonValue, std::string>::Ok>(std::move(name_json.data)).value);
-    auto value_text = json_as_string(std::get<typename Result<JsonValue, std::string>::Ok>(std::move(value_json.data)).value);
-    if (std::holds_alternative<typename Result<std::string, std::string>::Err>(name.data) ||
-        std::holds_alternative<typename Result<std::string, std::string>::Err>(value_text.data)) {
+    auto name = json_as_string(result_ok_move(name_json));
+    auto value_text = json_as_string(result_ok_move(value_json));
+    if (result_is_err(name) ||
+        result_is_err(value_text)) {
       return err_result<std::vector<std::string>>("process env entries must contain string name/value");
     }
-    auto name_text = std::get<typename Result<std::string, std::string>::Ok>(std::move(name.data)).value;
+    auto name_text = result_ok_move(name);
     if (name_text.empty() || name_text.find('=') != std::string::npos || name_text.find('\0') != std::string::npos) {
       return err_result<std::vector<std::string>>("process env name must be non-empty and must not contain '=' or NUL");
     }
-    auto val = std::get<typename Result<std::string, std::string>::Ok>(std::move(value_text.data)).value;
+    auto val = result_ok_move(value_text);
     if (val.find('\0') != std::string::npos) {
       return err_result<std::vector<std::string>>("process env value must not contain NUL");
     }
@@ -3936,23 +3980,23 @@ inline Result<void, std::string> set_fd_cloexec(int fd, std::string_view label) 
 
 inline Result<void, std::string> process_prepare_parent_pipes(ProcessPipeSet& pipes) {
   auto rc = make_pipe_pair(pipes.stdin_read, pipes.stdin_write, "stdin");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = make_pipe_pair(pipes.stdout_read, pipes.stdout_write, "stdout");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = make_pipe_pair(pipes.stderr_read, pipes.stderr_write, "stderr");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = make_pipe_pair(pipes.exec_error_read, pipes.exec_error_write, "exec-error");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = set_fd_cloexec(pipes.exec_error_write, "exec-error");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = set_fd_nonblocking(pipes.stdin_write, "stdin");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = set_fd_nonblocking(pipes.stdout_read, "stdout");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = set_fd_nonblocking(pipes.stderr_read, "stderr");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   rc = set_fd_nonblocking(pipes.exec_error_read, "exec-error");
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(rc.data)) return rc;
+  if (result_is_err(rc)) return rc;
   return ok_void_result();
 }
 
@@ -4170,29 +4214,29 @@ inline Result<ProcessOutput, std::string> process_run_parent(ProcessCommand comm
 
 inline Result<ProcessOutput, std::string> process_run(ProcessCommand command) {
   auto valid = validate_process_command(command);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(valid.data)) {
-    return err_result<ProcessOutput>(std::get<typename Result<void, std::string>::Err>(valid.data).value);
+  if (result_is_err(valid)) {
+    return err_result<ProcessOutput>(result_err_ref(valid));
   }
   auto args_result = json_string_array(command.args, "process args");
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(args_result.data)) {
+  if (result_is_err(args_result)) {
     return err_result<ProcessOutput>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(args_result.data)).value);
+        result_err_move(args_result));
   }
   auto env_result = json_env_array(command.env);
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(env_result.data)) {
+  if (result_is_err(env_result)) {
     return err_result<ProcessOutput>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(env_result.data)).value);
+        result_err_move(env_result));
   }
 
   ProcessPipeSet pipes;
   auto pipe_status = process_prepare_parent_pipes(pipes);
-  if (std::holds_alternative<typename Result<void, std::string>::Err>(pipe_status.data)) {
+  if (result_is_err(pipe_status)) {
     process_close_all(pipes);
-    return err_result<ProcessOutput>(std::get<typename Result<void, std::string>::Err>(pipe_status.data).value);
+    return err_result<ProcessOutput>(result_err_ref(pipe_status));
   }
 
-  auto args = std::get<typename Result<std::vector<std::string>, std::string>::Ok>(std::move(args_result.data)).value;
-  auto env = std::get<typename Result<std::vector<std::string>, std::string>::Ok>(std::move(env_result.data)).value;
+  auto args = result_ok_move(args_result);
+  auto env = result_ok_move(env_result);
   const pid_t child = fork();
   if (child < 0) {
     process_close_all(pipes);
@@ -4577,18 +4621,18 @@ inline Result<std::string, std::string> build_http_extra_header_block2(std::stri
                                                                        std::string name2,
                                                                        std::string value2) {
   auto first = build_http_extra_header_block1(std::move(name1), std::move(value1));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(first.data)) {
+  if (result_is_err(first)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(first.data)).value);
+        result_err_move(first));
   }
   auto second = build_http_extra_header_block1(std::move(name2), std::move(value2));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(second.data)) {
+  if (result_is_err(second)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(second.data)).value);
+        result_err_move(second));
   }
   return ok_result(
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(first.data)).value +
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(second.data)).value);
+      result_ok_move(first) +
+      result_ok_move(second));
 }
 
 inline Result<std::string, std::string> build_http_extra_header_block3(std::string name1,
@@ -4599,18 +4643,18 @@ inline Result<std::string, std::string> build_http_extra_header_block3(std::stri
                                                                        std::string value3) {
   auto first_two =
       build_http_extra_header_block2(std::move(name1), std::move(value1), std::move(name2), std::move(value2));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(first_two.data)) {
+  if (result_is_err(first_two)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(first_two.data)).value);
+        result_err_move(first_two));
   }
   auto third = build_http_extra_header_block1(std::move(name3), std::move(value3));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(third.data)) {
+  if (result_is_err(third)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(third.data)).value);
+        result_err_move(third));
   }
   return ok_result(
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(first_two.data)).value +
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(third.data)).value);
+      result_ok_move(first_two) +
+      result_ok_move(third));
 }
 
 inline Result<std::string, std::string> build_http_extra_response_header_block1(std::string name1,
@@ -4632,18 +4676,18 @@ inline Result<std::string, std::string> build_http_extra_response_header_block2(
                                                                                 std::string name2,
                                                                                 std::string value2) {
   auto first = build_http_extra_response_header_block1(std::move(name1), std::move(value1));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(first.data)) {
+  if (result_is_err(first)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(first.data)).value);
+        result_err_move(first));
   }
   auto second = build_http_extra_response_header_block1(std::move(name2), std::move(value2));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(second.data)) {
+  if (result_is_err(second)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(second.data)).value);
+        result_err_move(second));
   }
   return ok_result(
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(first.data)).value +
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(second.data)).value);
+      result_ok_move(first) +
+      result_ok_move(second));
 }
 
 inline Result<std::string, std::string> build_http_extra_response_header_block3(std::string name1,
@@ -4656,18 +4700,18 @@ inline Result<std::string, std::string> build_http_extra_response_header_block3(
                                                            std::move(value1),
                                                            std::move(name2),
                                                            std::move(value2));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(first_two.data)) {
+  if (result_is_err(first_two)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(first_two.data)).value);
+        result_err_move(first_two));
   }
   auto third = build_http_extra_response_header_block1(std::move(name3), std::move(value3));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(third.data)) {
+  if (result_is_err(third)) {
     return err_result<std::string>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(third.data)).value);
+        result_err_move(third));
   }
   return ok_result(
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(first_two.data)).value +
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(third.data)).value);
+      result_ok_move(first_two) +
+      result_ok_move(third));
 }
 
 inline HttpResponse http_text_response(std::int64_t status, std::string body) {
@@ -4995,19 +5039,19 @@ struct HttpRequestFraming {
 inline Result<HttpRequestFraming, std::string> parse_http_request_framing(std::string_view request_head,
                                                                           std::size_t max_body_bytes) {
   auto transfer_encoding = parse_http_transfer_codings(request_head);
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(transfer_encoding.data)) {
+  if (result_is_err(transfer_encoding)) {
     return err_result<HttpRequestFraming>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(transfer_encoding.data)).value);
+        result_err_move(transfer_encoding));
   }
   auto transfer_codings =
-      std::get<typename Result<std::vector<std::string>, std::string>::Ok>(std::move(transfer_encoding.data)).value;
+      result_ok_move(transfer_encoding);
   auto content_length = parse_http_content_length_values(request_head);
-  if (std::holds_alternative<typename Result<std::optional<std::size_t>, std::string>::Err>(content_length.data)) {
+  if (result_is_err(content_length)) {
     return err_result<HttpRequestFraming>(
-        std::get<typename Result<std::optional<std::size_t>, std::string>::Err>(std::move(content_length.data)).value);
+        result_err_move(content_length));
   }
   const auto maybe_length =
-      std::get<typename Result<std::optional<std::size_t>, std::string>::Ok>(std::move(content_length.data)).value;
+      result_ok_move(content_length);
 
   if (!transfer_codings.empty() && maybe_length.has_value()) {
     return err_result<HttpRequestFraming>(
@@ -5056,18 +5100,18 @@ inline Result<HttpRequest, std::string> parse_http_request_message(const std::st
   }
 
   auto method = parse_http_method(method_text);
-  if (std::holds_alternative<typename Result<HttpMethod, std::string>::Err>(method.data)) {
+  if (result_is_err(method)) {
     return err_result<HttpRequest>(
-        std::get<typename Result<HttpMethod, std::string>::Err>(std::move(method.data)).value);
+        result_err_move(method));
   }
 
   auto framing = parse_http_request_framing(request_head, max_body_bytes);
-  if (std::holds_alternative<typename Result<HttpRequestFraming, std::string>::Err>(framing.data)) {
+  if (result_is_err(framing)) {
     return err_result<HttpRequest>(
-        std::get<typename Result<HttpRequestFraming, std::string>::Err>(std::move(framing.data)).value);
+        result_err_move(framing));
   }
   const auto parsed_framing =
-      std::get<typename Result<HttpRequestFraming, std::string>::Ok>(std::move(framing.data)).value;
+      result_ok_move(framing);
   if (body.size() != parsed_framing.content_length) {
     if (body.size() > parsed_framing.content_length) {
       return err_result<HttpRequest>("unexpected extra bytes after HTTP request body");
@@ -5076,13 +5120,13 @@ inline Result<HttpRequest, std::string> parse_http_request_message(const std::st
   }
 
   auto connection_tokens = parse_http_connection_tokens(headers);
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(connection_tokens.data)) {
+  if (result_is_err(connection_tokens)) {
     return err_result<HttpRequest>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(connection_tokens.data)).value);
+        result_err_move(connection_tokens));
   }
   bool close_connection = version == "HTTP/1.0";
   for (const auto& token :
-       std::get<typename Result<std::vector<std::string>, std::string>::Ok>(connection_tokens.data).value) {
+       result_ok_ref(connection_tokens)) {
     if (token == "close") {
       close_connection = true;
     } else if (token == "keep-alive") {
@@ -5094,7 +5138,7 @@ inline Result<HttpRequest, std::string> parse_http_request_message(const std::st
   std::string owned_headers(headers);
   std::string owned_body(body);
   return ok_result(HttpRequest{
-      std::get<typename Result<HttpMethod, std::string>::Ok>(std::move(method.data)).value,
+      result_ok_move(method),
       std::move(owned_path),
       Bytes{std::move(owned_body)},
       std::move(owned_headers),
@@ -5112,12 +5156,12 @@ inline Result<std::string, std::string> http_header(const HttpRequest& request, 
 
 inline Result<std::string, std::string> http_unique_header(const HttpRequest& request, std::string_view name) {
   auto value = parse_http_unique_header_value(request.headers, name);
-  if (std::holds_alternative<typename Result<std::optional<std::string>, std::string>::Err>(value.data)) {
+  if (result_is_err(value)) {
     return err_result<std::string>(
-        std::get<typename Result<std::optional<std::string>, std::string>::Err>(std::move(value.data)).value);
+        result_err_move(value));
   }
   auto maybe_value =
-      std::get<typename Result<std::optional<std::string>, std::string>::Ok>(std::move(value.data)).value;
+      result_ok_move(value);
   if (!maybe_value.has_value()) {
     return err_result<std::string>("HTTP header not found: " + std::string(name));
   }
@@ -5239,9 +5283,9 @@ inline Result<HttpClientRequest, std::string> http_request1(HttpMethod method,
                                                             std::string name1,
                                                             std::string value1) {
   auto headers = build_http_extra_header_block1(std::move(name1), std::move(value1));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpClientRequest>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   return ok_result(HttpClientRequest{
       std::move(method),
@@ -5249,7 +5293,7 @@ inline Result<HttpClientRequest, std::string> http_request1(HttpMethod method,
       std::move(path),
       std::move(content_type),
       std::move(body),
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value,
+      result_ok_move(headers),
   });
 }
 
@@ -5266,9 +5310,9 @@ inline Result<HttpClientRequest, std::string> http_request2(HttpMethod method,
                                                 std::move(value1),
                                                 std::move(name2),
                                                 std::move(value2));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpClientRequest>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   return ok_result(HttpClientRequest{
       std::move(method),
@@ -5276,7 +5320,7 @@ inline Result<HttpClientRequest, std::string> http_request2(HttpMethod method,
       std::move(path),
       std::move(content_type),
       std::move(body),
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value,
+      result_ok_move(headers),
   });
 }
 
@@ -5297,9 +5341,9 @@ inline Result<HttpClientRequest, std::string> http_request3(HttpMethod method,
                                                 std::move(value2),
                                                 std::move(name3),
                                                 std::move(value3));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpClientRequest>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   return ok_result(HttpClientRequest{
       std::move(method),
@@ -5307,7 +5351,7 @@ inline Result<HttpClientRequest, std::string> http_request3(HttpMethod method,
       std::move(path),
       std::move(content_type),
       std::move(body),
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value,
+      result_ok_move(headers),
   });
 }
 
@@ -5317,15 +5361,15 @@ inline Result<HttpResponse, std::string> http_response1(std::int64_t status,
                                                         std::string name1,
                                                         std::string value1) {
   auto headers = build_http_extra_response_header_block1(std::move(name1), std::move(value1));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpResponse>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   return ok_result(HttpResponse{
       status,
       std::move(content_type),
       std::move(body),
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value,
+      result_ok_move(headers),
   });
 }
 
@@ -5340,15 +5384,15 @@ inline Result<HttpResponse, std::string> http_response2(std::int64_t status,
                                                          std::move(value1),
                                                          std::move(name2),
                                                          std::move(value2));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpResponse>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   return ok_result(HttpResponse{
       status,
       std::move(content_type),
       std::move(body),
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value,
+      result_ok_move(headers),
   });
 }
 
@@ -5367,15 +5411,15 @@ inline Result<HttpResponse, std::string> http_response3(std::int64_t status,
                                                          std::move(value2),
                                                          std::move(name3),
                                                          std::move(value3));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(headers.data)) {
+  if (result_is_err(headers)) {
     return err_result<HttpResponse>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(headers.data)).value);
+        result_err_move(headers));
   }
   return ok_result(HttpResponse{
       status,
       std::move(content_type),
       std::move(body),
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(headers.data)).value,
+      result_ok_move(headers),
   });
 }
 
@@ -5383,11 +5427,11 @@ inline Result<HttpResponse, std::string> http_response_with_header(HttpResponse 
                                                                    std::string name,
                                                                    std::string value) {
   auto header = build_http_extra_response_header_block1(std::move(name), std::move(value));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(header.data)) {
+  if (result_is_err(header)) {
     return err_result<HttpResponse>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(header.data)).value);
+        result_err_move(header));
   }
-  response.headers += std::get<typename Result<std::string, std::string>::Ok>(std::move(header.data)).value;
+  response.headers += result_ok_move(header);
   return ok_result(std::move(response));
 }
 
@@ -5433,20 +5477,20 @@ inline Result<HttpClientResponseHead, std::string> parse_http_client_response_he
   }
 
   auto transfer_encoding = parse_http_transfer_codings(headers);
-  if (std::holds_alternative<typename Result<std::vector<std::string>, std::string>::Err>(transfer_encoding.data)) {
+  if (result_is_err(transfer_encoding)) {
     return err_result<HttpClientResponseHead>(
-        std::get<typename Result<std::vector<std::string>, std::string>::Err>(std::move(transfer_encoding.data)).value);
+        result_err_move(transfer_encoding));
   }
   const auto transfer_codings =
-      std::get<typename Result<std::vector<std::string>, std::string>::Ok>(std::move(transfer_encoding.data)).value;
+      result_ok_move(transfer_encoding);
 
   auto content_length = parse_http_content_length_values(headers);
-  if (std::holds_alternative<typename Result<std::optional<std::size_t>, std::string>::Err>(content_length.data)) {
+  if (result_is_err(content_length)) {
     return err_result<HttpClientResponseHead>(
-        std::get<typename Result<std::optional<std::size_t>, std::string>::Err>(std::move(content_length.data)).value);
+        result_err_move(content_length));
   }
   const auto opt_len =
-      std::get<typename Result<std::optional<std::size_t>, std::string>::Ok>(content_length.data).value;
+      result_ok_ref(content_length);
 
   if (!transfer_codings.empty() && opt_len.has_value()) {
     return err_result<HttpClientResponseHead>(
@@ -5521,12 +5565,12 @@ inline Result<HttpChunkedDecodeProgress, std::string> advance_http_chunked_body_
         size_text = size_text.substr(0, semi);
       }
       auto parsed_chunk_size = parse_http_chunk_size_token(size_text);
-      if (std::holds_alternative<typename Result<std::size_t, std::string>::Err>(parsed_chunk_size.data)) {
+      if (result_is_err(parsed_chunk_size)) {
         return err_result<HttpChunkedDecodeProgress>(
-            std::get<typename Result<std::size_t, std::string>::Err>(std::move(parsed_chunk_size.data)).value);
+            result_err_move(parsed_chunk_size));
       }
       state.current_chunk_size =
-          std::get<typename Result<std::size_t, std::string>::Ok>(std::move(parsed_chunk_size.data)).value;
+          result_ok_move(parsed_chunk_size);
       state.cursor = line_end + 2;
       if (state.current_chunk_size > max_body_bytes ||
           state.decoded_body.size() > max_body_bytes - state.current_chunk_size) {
@@ -5579,12 +5623,12 @@ inline Result<std::optional<HttpChunkDecode>, std::string> try_decode_http_chunk
     std::size_t max_body_bytes) {
   HttpChunkedDecodeState state;
   auto advanced = advance_http_chunked_body_decode(state, wire_body, max_body_bytes);
-  if (std::holds_alternative<typename Result<HttpChunkedDecodeProgress, std::string>::Err>(advanced.data)) {
+  if (result_is_err(advanced)) {
     return err_result<std::optional<HttpChunkDecode>>(
-        std::get<typename Result<HttpChunkedDecodeProgress, std::string>::Err>(std::move(advanced.data)).value);
+        result_err_move(advanced));
   }
   const auto progress =
-      std::get<typename Result<HttpChunkedDecodeProgress, std::string>::Ok>(std::move(advanced.data)).value;
+      result_ok_move(advanced);
   if (progress.action != HttpChunkedDecodeAction::Complete) {
     return ok_result(std::optional<HttpChunkDecode>{});
   }
@@ -5644,12 +5688,12 @@ inline Result<HttpClientResponseReadResult, std::string> try_read_http_client_re
   const std::string_view buffer_view = buffer;
   const std::string_view response_head = buffer_view.substr(0, header_end);
   auto head = parse_http_client_response_head(response_head, max_body_bytes, request_method);
-  if (std::holds_alternative<typename Result<HttpClientResponseHead, std::string>::Err>(head.data)) {
+  if (result_is_err(head)) {
     return err_result<HttpClientResponseReadResult>(
-        std::get<typename Result<HttpClientResponseHead, std::string>::Err>(std::move(head.data)).value);
+        result_err_move(head));
   }
   HttpClientResponseHead parsed_head =
-      std::get<typename Result<HttpClientResponseHead, std::string>::Ok>(std::move(head.data)).value;
+      result_ok_move(head);
   const std::size_t body_offset = header_end + 4;
   const std::string_view wire_body = buffer_view.substr(body_offset);
 
@@ -5664,13 +5708,13 @@ inline Result<HttpClientResponseReadResult, std::string> try_read_http_client_re
       return ok_result(out);
     }
     auto response = build_http_client_response(std::move(parsed_head), std::string_view{}, max_body_bytes);
-    if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+    if (result_is_err(response)) {
       return err_result<HttpClientResponseReadResult>(
-          std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+          result_err_move(response));
     }
     HttpClientResponseReadResult out;
     out.action = HttpClientResponseReadAction::ReturnResponse;
-    out.response = std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value;
+    out.response = result_ok_move(response);
     return ok_result(out);
   }
 
@@ -5681,13 +5725,13 @@ inline Result<HttpClientResponseReadResult, std::string> try_read_http_client_re
       auto response = build_http_client_response(std::move(parsed_head),
                                                  wire_body.substr(0, content_length),
                                                  max_body_bytes);
-      if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+      if (result_is_err(response)) {
         return err_result<HttpClientResponseReadResult>(
-            std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+            result_err_move(response));
       }
       HttpClientResponseReadResult out;
       out.action = HttpClientResponseReadAction::ReturnResponse;
-      out.response = std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value;
+      out.response = result_ok_move(response);
       return ok_result(out);
     }
     if (eof) {
@@ -5701,22 +5745,22 @@ inline Result<HttpClientResponseReadResult, std::string> try_read_http_client_re
 
   if (parsed_head.body_mode == HttpClientBodyMode::Chunked) {
     auto decoded = try_decode_http_chunked_body(wire_body, max_body_bytes);
-    if (std::holds_alternative<typename Result<std::optional<HttpChunkDecode>, std::string>::Err>(decoded.data)) {
+    if (result_is_err(decoded)) {
       return err_result<HttpClientResponseReadResult>(
-          std::get<typename Result<std::optional<HttpChunkDecode>, std::string>::Err>(std::move(decoded.data)).value);
+          result_err_move(decoded));
     }
     const auto maybe_decoded =
-        std::get<typename Result<std::optional<HttpChunkDecode>, std::string>::Ok>(std::move(decoded.data)).value;
+        result_ok_move(decoded);
     if (maybe_decoded.has_value()) {
       auto response =
           build_http_client_response(std::move(parsed_head), std::move(maybe_decoded->decoded_body), max_body_bytes);
-      if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+      if (result_is_err(response)) {
         return err_result<HttpClientResponseReadResult>(
-            std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+            result_err_move(response));
       }
       HttpClientResponseReadResult out;
       out.action = HttpClientResponseReadAction::ReturnResponse;
-      out.response = std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value;
+      out.response = result_ok_move(response);
       return ok_result(out);
     }
     if (eof) {
@@ -5739,13 +5783,13 @@ inline Result<HttpClientResponseReadResult, std::string> try_read_http_client_re
       return ok_result(out);
     }
     auto response = build_http_client_response(std::move(parsed_head), wire_body, max_body_bytes);
-    if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+    if (result_is_err(response)) {
       return err_result<HttpClientResponseReadResult>(
-          std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+          result_err_move(response));
     }
     HttpClientResponseReadResult out;
     out.action = HttpClientResponseReadAction::ReturnResponse;
-    out.response = std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value;
+    out.response = result_ok_move(response);
     return ok_result(out);
   }
 
@@ -5782,12 +5826,12 @@ inline Future<Result<std::string, std::string>> read_http_message(const std::sha
         }
         auto framing = parse_http_request_framing(std::string_view(buffer).substr(0, header_end),
                                                  max_body_bytes);
-        if (std::holds_alternative<typename Result<HttpRequestFraming, std::string>::Err>(framing.data)) {
+        if (result_is_err(framing)) {
           co_return err_result<std::string>(
-              std::get<typename Result<HttpRequestFraming, std::string>::Err>(std::move(framing.data)).value);
+              result_err_move(framing));
         }
         const auto parsed_framing =
-            std::get<typename Result<HttpRequestFraming, std::string>::Ok>(std::move(framing.data)).value;
+            result_ok_move(framing);
         expected_total = header_end + 4 + parsed_framing.content_length;
         if (buffer.size() >= *expected_total) {
           if (buffer.size() > *expected_total) {
@@ -5839,12 +5883,12 @@ inline Future<Result<HttpRequest, std::string>> http_read_request(TcpStream stre
   auto message = co_await read_http_message(handle,
                                             static_cast<std::size_t>(max_header_bytes),
                                             static_cast<std::size_t>(max_body_bytes));
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(message.data)) {
+  if (result_is_err(message)) {
     co_return err_result<HttpRequest>(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(message.data)).value);
+        result_err_move(message));
   }
   co_return parse_http_request_message(
-      std::get<typename Result<std::string, std::string>::Ok>(std::move(message.data)).value,
+      result_ok_move(message),
       static_cast<std::size_t>(max_body_bytes));
 }
 
@@ -5862,13 +5906,13 @@ inline Future<Result<void, std::string>> http_write_response_with_connection(Tcp
 
 inline Future<Result<void, std::string>> http_write_request(TcpStream stream, HttpClientRequest request) {
   auto encoded = build_http_request_message(request);
-  if (std::holds_alternative<typename Result<std::string, std::string>::Err>(encoded.data)) {
+  if (result_is_err(encoded)) {
     co_return err_void_result(
-        std::get<typename Result<std::string, std::string>::Err>(std::move(encoded.data)).value);
+        result_err_move(encoded));
   }
   co_return co_await write_stream_all(
       stream,
-      Bytes{std::get<typename Result<std::string, std::string>::Ok>(std::move(encoded.data)).value});
+      Bytes{result_ok_move(encoded)});
 }
 
 inline Future<Result<HttpClientResponse, std::string>> http_read_response_with_context(
@@ -5900,34 +5944,34 @@ inline Future<Result<HttpClientResponse, std::string>> http_read_response_with_c
           auto response =
               build_http_client_response(std::move(*active_head), wire_body.substr(0, content_length),
                                          static_cast<std::size_t>(max_body_bytes));
-          if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+          if (result_is_err(response)) {
             co_return err_result<HttpClientResponse>(
-                std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+                result_err_move(response));
           }
           co_return ok_result(
-              std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value);
+              result_ok_move(response));
         }
       } else if (active_head->body_mode == HttpClientBodyMode::Chunked) {
         if (!active_chunked_state.has_value()) active_chunked_state.emplace();
         auto advanced = advance_http_chunked_body_decode(*active_chunked_state,
                                                          wire_body,
                                                          static_cast<std::size_t>(max_body_bytes));
-        if (std::holds_alternative<typename Result<HttpChunkedDecodeProgress, std::string>::Err>(advanced.data)) {
+        if (result_is_err(advanced)) {
           co_return err_result<HttpClientResponse>(
-              std::get<typename Result<HttpChunkedDecodeProgress, std::string>::Err>(std::move(advanced.data)).value);
+              result_err_move(advanced));
         }
         const auto progress =
-            std::get<typename Result<HttpChunkedDecodeProgress, std::string>::Ok>(std::move(advanced.data)).value;
+            result_ok_move(advanced);
         if (progress.action == HttpChunkedDecodeAction::Complete) {
           auto response = build_http_client_response(std::move(*active_head),
                                                      std::move(active_chunked_state->decoded_body),
                                                      static_cast<std::size_t>(max_body_bytes));
-          if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+          if (result_is_err(response)) {
             co_return err_result<HttpClientResponse>(
-                std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+                result_err_move(response));
           }
           co_return ok_result(
-              std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value);
+              result_ok_move(response));
         }
       }
     } else {
@@ -5936,12 +5980,12 @@ inline Future<Result<HttpClientResponse, std::string>> http_read_response_with_c
                                                               static_cast<std::size_t>(max_header_bytes),
                                                               static_cast<std::size_t>(max_body_bytes),
                                                               request_method);
-      if (std::holds_alternative<typename Result<HttpClientResponseReadResult, std::string>::Err>(parsed.data)) {
+      if (result_is_err(parsed)) {
         co_return err_result<HttpClientResponse>(
-            std::get<typename Result<HttpClientResponseReadResult, std::string>::Err>(std::move(parsed.data)).value);
+            result_err_move(parsed));
       }
       auto parsed_result =
-          std::get<typename Result<HttpClientResponseReadResult, std::string>::Ok>(std::move(parsed.data)).value;
+          result_ok_move(parsed);
       if (parsed_result.action == HttpClientResponseReadAction::ReturnResponse) {
         co_return ok_result(std::move(parsed_result.response));
       }
@@ -5980,34 +6024,34 @@ inline Future<Result<HttpClientResponse, std::string>> http_read_response_with_c
           auto response =
               build_http_client_response(std::move(*active_head), wire_body,
                                          static_cast<std::size_t>(max_body_bytes));
-          if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+          if (result_is_err(response)) {
             co_return err_result<HttpClientResponse>(
-                std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+                result_err_move(response));
           }
           co_return ok_result(
-              std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value);
+              result_ok_move(response));
         }
         if (active_head->body_mode == HttpClientBodyMode::Chunked) {
           if (!active_chunked_state.has_value()) active_chunked_state.emplace();
           auto advanced = advance_http_chunked_body_decode(*active_chunked_state,
                                                            wire_body,
                                                            static_cast<std::size_t>(max_body_bytes));
-          if (std::holds_alternative<typename Result<HttpChunkedDecodeProgress, std::string>::Err>(advanced.data)) {
+          if (result_is_err(advanced)) {
             co_return err_result<HttpClientResponse>(
-                std::get<typename Result<HttpChunkedDecodeProgress, std::string>::Err>(std::move(advanced.data)).value);
+                result_err_move(advanced));
           }
           const auto progress =
-              std::get<typename Result<HttpChunkedDecodeProgress, std::string>::Ok>(std::move(advanced.data)).value;
+              result_ok_move(advanced);
           if (progress.action == HttpChunkedDecodeAction::Complete) {
             auto response = build_http_client_response(std::move(*active_head),
                                                        std::move(active_chunked_state->decoded_body),
                                                        static_cast<std::size_t>(max_body_bytes));
-            if (std::holds_alternative<typename Result<HttpClientResponse, std::string>::Err>(response.data)) {
+            if (result_is_err(response)) {
               co_return err_result<HttpClientResponse>(
-                  std::get<typename Result<HttpClientResponse, std::string>::Err>(std::move(response.data)).value);
+                  result_err_move(response));
             }
             co_return ok_result(
-                std::get<typename Result<HttpClientResponse, std::string>::Ok>(std::move(response.data)).value);
+                result_ok_move(response));
           }
         }
         co_return err_result<HttpClientResponse>("unexpected EOF while reading HTTP response");
@@ -6018,12 +6062,12 @@ inline Future<Result<HttpClientResponse, std::string>> http_read_response_with_c
                                                                static_cast<std::size_t>(max_header_bytes),
                                                                static_cast<std::size_t>(max_body_bytes),
                                                                request_method);
-        if (std::holds_alternative<typename Result<HttpClientResponseReadResult, std::string>::Err>(final.data)) {
+        if (result_is_err(final)) {
           co_return err_result<HttpClientResponse>(
-              std::get<typename Result<HttpClientResponseReadResult, std::string>::Err>(std::move(final.data)).value);
+              result_err_move(final));
         }
         auto final_result =
-            std::get<typename Result<HttpClientResponseReadResult, std::string>::Ok>(std::move(final.data)).value;
+            result_ok_move(final);
         if (final_result.action == HttpClientResponseReadAction::ReturnResponse) {
           co_return ok_result(std::move(final_result.response));
         }
