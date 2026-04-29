@@ -55,6 +55,11 @@ A substrate startup preflight should report:
 - observe log/correlation settings
 - update/recovery manifest path when the host shell stages one
 
+`official/nebula-app-local` provides `config_from_env(...)` for the shared environment contract:
+`APP_LOCAL_APP_ID`, `APP_DATA_BACKEND`, `APP_SQLITE_PATH`, `APP_POSTGRES_PREVIEW`,
+`APP_POSTGRES_DSN` / `APP_POSTGRES_DSN_FILE`, `APP_AUTH_REQUIRED`, `APP_AUTH_MODE`,
+`APP_PRINCIPAL_SUBJECT`, and `APP_OBSERVE_SERVICE`.
+
 Secrets must never appear in stdout, stderr, observe logs, or preflight JSON. Diagnostics should show
 presence, source, and status, not secret payloads.
 

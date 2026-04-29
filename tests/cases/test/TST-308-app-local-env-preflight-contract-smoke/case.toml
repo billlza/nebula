@@ -1,0 +1,218 @@
+id = "TST-308-app-local-env-preflight-contract-smoke"
+suite = "test"
+description = "nebula-app-local loads generic app-local config from env and rejects unsafe preview combinations"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_env_preflight_contract")
+app = root / "app"
+secret_file = root / "postgres.dsn"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+secret_file.parent.mkdir(parents=True, exist_ok=True)
+secret_file.write_text("postgresql://user:pass@127.0.0.1:5432/app_local\\n", encoding="utf-8")
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-env-preflight-contract"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_config_error(config_value: AppLocalConfig, expected: String) -> Void {
+  match validate_config(config_value) {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn env_config_shape(config_value: AppLocalConfig) -> Bool {
+  if config_value.app_id != "env-app" {
+    return false
+  }
+  if config_value.data_backend != "sqlite" || config_value.sqlite_path != "state/env.db" {
+    return false
+  }
+  if !config_value.auth_required || config_value.auth_mode != "internal" {
+    return false
+  }
+  if config_value.principal_subject != "local-operator" || config_value.observe_service != "app-local-env" {
+    return false
+  }
+  return true
+}
+
+fn env_preflight_shape(config_value: AppLocalConfig) -> Result<Bool, String> {
+  let report = preflight(config_value)?
+  let value = report.as_json()
+  let schema = get_string(value, "schema")?
+  let backend = get_string(value, "data_backend")?
+  return Ok(schema == "nebula.app-local.preflight.v1" && backend == "sqlite")
+}
+
+fn verify_env_loader() -> Result<Bool, String> {
+  let config_value = config_from_env("default-app", "state/default.db", "default-principal", "default-observe")?
+  if !env_config_shape(config_value) {
+    return Ok(false)
+  }
+  return env_preflight_shape(config_value)
+}
+
+fn verify_negative_contracts() -> Void {
+  expect_config_error(AppLocalConfig("app", "mysql", "state/app.db", false, "", false, "internal", "", "svc"),
+                      "app-local substrate data_backend must be sqlite or postgres")
+  expect_config_error(AppLocalConfig("app", "sqlite", "", false, "", false, "internal", "", "svc"),
+                      "app-local substrate sqlite_path is required for sqlite backend")
+  expect_config_error(AppLocalConfig("app", "postgres", "state/app.db", false, "dsn", true, "internal", "operator", "svc"),
+                      "app-local substrate postgres backend requires postgres_preview=true")
+  expect_config_error(AppLocalConfig("app", "postgres", "state/app.db", true, "", true, "internal", "operator", "svc"),
+                      "app-local substrate postgres backend requires postgres_dsn")
+  expect_config_error(AppLocalConfig("app", "postgres", "state/app.db", true, "dsn", false, "internal", "", "svc"),
+                      "app-local substrate postgres backend requires auth_required=true")
+  expect_config_error(AppLocalConfig("app", "sqlite", "state/app.db", false, "", true, "internal", "", "svc"),
+                      "app-local substrate auth_required requires principal_subject")
+  expect_config_error(AppLocalConfig("app", "sqlite", "state/app.db", false, "", false, "browser", "", "svc"),
+                      "app-local substrate auth_mode must be internal, token, or jwt")
+}
+
+fn verify_postgres_secret_loader() -> Result<Bool, String> {
+  let config_value = config_from_env("default-app", "state/default.db", "default-principal", "default-observe")?
+  if config_value.data_backend != "sqlite" {
+    return Ok(false)
+  }
+  if config_value.postgres_dsn != "postgresql://user:pass@127.0.0.1:5432/app_local" {
+    return Ok(false)
+  }
+  let report = preflight(config_value)?
+  let value = report.as_json()
+  let rendered = stringify(value)
+  print(rendered)
+  if rendered == config_value.postgres_dsn {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn main() -> Int {
+  match verify_env_loader() {
+    Ok(ok) => {
+      if !ok {
+        print("env-loader-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_negative_contracts()
+  match verify_postgres_secret_loader() {
+    Ok(ok) => {
+      if ok {
+        print("app-local-env-preflight-contract-ok")
+        return 0
+      }
+      print("postgres-secret-loader-bad")
+      return 1
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+''', encoding="utf-8")
+
+env = {
+    **os.environ,
+    "APP_LOCAL_APP_ID": "env-app",
+    "APP_DATA_BACKEND": "sqlite",
+    "APP_SQLITE_PATH": "state/env.db",
+    "APP_POSTGRES_DSN_FILE": str(secret_file.resolve()),
+    "APP_AUTH_REQUIRED": "true",
+    "APP_AUTH_MODE": "internal",
+    "APP_PRINCIPAL_SUBJECT": "local-operator",
+    "APP_OBSERVE_SERVICE": "app-local-env",
+}
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True, env=env)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True, env=env)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local env preflight check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, env=env)
+if run.returncode != 0 or "app-local-env-preflight-contract-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local env preflight smoke failed")
+if "postgresql://user:pass@127.0.0.1:5432/app_local" in (run.stdout + run.stderr):
+    raise SystemExit("app-local env preflight leaked postgres DSN")
+print("app-local-env-preflight-contract-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-env-preflight-contract-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+required = [
+    "config_from_env",
+    "APP_LOCAL_APP_ID",
+    "APP_DATA_BACKEND=sqlite|postgres",
+    "APP_POSTGRES_DSN` / `APP_POSTGRES_DSN_FILE",
+    "APP_AUTH_REQUIRED",
+    "APP_AUTH_MODE=internal|token|jwt",
+    "APP_OBSERVE_SERVICE",
+]
+for marker in required:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing env marker: {marker}")
+for marker in ["config_from_env", "APP_POSTGRES_DSN", "APP_PRINCIPAL_SUBJECT"]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing env marker: {marker}")
+print("app-local-env-preflight-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-env-preflight-docs-ok"]

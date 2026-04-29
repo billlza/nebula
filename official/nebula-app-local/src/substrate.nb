@@ -60,6 +60,30 @@ fn app_local_config(app_id: String,
   return Ok(config_value)
 }
 
+fn config_from_env(default_app_id: String,
+                   default_sqlite_path: String,
+                   default_principal_subject: String,
+                   default_observe_service: String) -> Result<AppLocalConfig, String> {
+  let app_id = optional_env("APP_LOCAL_APP_ID", default_app_id)
+  let data_backend = optional_env("APP_DATA_BACKEND", "sqlite")
+  let sqlite_path = optional_env("APP_SQLITE_PATH", default_sqlite_path)
+  let postgres_preview = bool_env_or("APP_POSTGRES_PREVIEW", false)?
+  let postgres_dsn = optional_secret_value("APP_POSTGRES_DSN", "APP_POSTGRES_DSN_FILE")?
+  let auth_required = bool_env_or("APP_AUTH_REQUIRED", false)?
+  let auth_mode = optional_env("APP_AUTH_MODE", "internal")
+  let principal_subject = optional_env("APP_PRINCIPAL_SUBJECT", default_principal_subject)
+  let observe_service = optional_env("APP_OBSERVE_SERVICE", default_observe_service)
+  return app_local_config(app_id,
+                          data_backend,
+                          sqlite_path,
+                          postgres_preview,
+                          postgres_dsn,
+                          auth_required,
+                          auth_mode,
+                          principal_subject,
+                          observe_service)
+}
+
 fn validate_data_backend(config_value: AppLocalConfig) -> Result<Bool, String> {
   if config_value.data_backend != "sqlite" && config_value.data_backend != "postgres" {
     return Err("app-local substrate data_backend must be sqlite or postgres")
