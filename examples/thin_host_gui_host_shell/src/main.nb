@@ -35,6 +35,11 @@ struct ShellCommandOutcome {
   terminal: Bool
 }
 
+struct ShellRuntime {
+  config: AppLocalConfig,
+  preflight: AppLocalPreflight
+}
+
 fn text_join(lhs: String, rhs: String) -> String {
   return to_string(concat(from_string(lhs), from_string(rhs)))
 }
@@ -49,6 +54,16 @@ fn receipt_db_path() -> String {
 
 fn app_id() -> String {
   return "thin-host-gui-host-shell"
+}
+
+fn observe_service() -> String {
+  return "thin-host-gui-host-shell"
+}
+
+fn shell_runtime() -> Result<ShellRuntime, String> {
+  let config_value = config_from_env(app_id(), receipt_db_path(), "local-operator", observe_service())?
+  let report = preflight(config_value)?
+  return Ok(ShellRuntime(config_value, report))
 }
 
 fn initial_state() -> ShellState {
@@ -66,12 +81,12 @@ fn state_payload(state: ShellState) -> Json {
                  int_value(state.revision))
 }
 
-fn shell_principal() -> AppLocalPrincipal {
-  return AppLocalPrincipal("local-operator", "app.local.gui", "internal")
+fn shell_principal(runtime: ShellRuntime) -> AppLocalPrincipal {
+  return AppLocalPrincipal(runtime.config.principal_subject, "app.local.gui", runtime.config.auth_mode)
 }
 
-fn app_local_context(command_id: String, correlation_id: String, revision: Int) -> Result<AppLocalCommandContext, String> {
-  return command_context(command_id, correlation_id, revision, shell_principal(), 1777431000000)
+fn app_local_context(runtime: ShellRuntime, command_id: String, correlation_id: String, revision: Int) -> Result<AppLocalCommandContext, String> {
+  return command_context(command_id, correlation_id, revision, shell_principal(runtime), 1777431000000)
 }
 
 fn app_local_command_id(kind: String, correlation_id: String) -> String {
@@ -98,6 +113,10 @@ fn publish_app_local_update(marker: AppLocalUpdateMarker) -> Void {
   print(text_join("app-local-update:", stringify(marker.as_json())))
 }
 
+fn publish_app_local_preflight(report: AppLocalPreflight) -> Void {
+  print(text_join("app-local-preflight:", stringify(report.as_json())))
+}
+
 fn publish_app_local_startup_policy(policy: AppLocalStartupRecoveryPolicy) -> Void {
   print(text_join("app-local-startup-policy:", stringify(policy.as_json())))
 }
@@ -106,55 +125,63 @@ fn publish_app_local_error(msg: String) -> Void {
   print(text_join("app-local-error:", msg))
 }
 
-fn publish_startup_recovery_policy() -> Result<Bool, String> {
-  let policy = startup_recovery_policy(receipt_db_path(), app_id(), 10)?
+fn publish_runtime_preflight(runtime: ShellRuntime) -> Result<Bool, String> {
+  publish_app_local_preflight(runtime.preflight)
+  emit_preflight_observe(runtime.config, runtime.preflight)
+  return Ok(true)
+}
+
+fn publish_startup_recovery_policy(runtime: ShellRuntime) -> Result<Bool, String> {
+  let policy = startup_recovery_policy(runtime.config.sqlite_path, runtime.config.app_id, 10)?
   publish_app_local_startup_policy(policy)
   return Ok(true)
 }
 
-fn publish_app_local_accepted(command_id: String,
+fn publish_app_local_accepted(runtime: ShellRuntime,
+                              command_id: String,
                               correlation_id: String,
                               previous_revision: Int,
                               event_kind: String,
                               message: String) -> Result<Bool, String> {
-  let context = app_local_context(command_id, correlation_id, previous_revision)?
+  let context = app_local_context(runtime, command_id, correlation_id, previous_revision)?
   publish_app_local_context(context)
-  record_command_context_receipt(receipt_db_path(), app_id(), context, 1777431000000)?
+  record_command_context_receipt(runtime.config.sqlite_path, runtime.config.app_id, context, 1777431000000)?
   let event_value = command_accepted_event(context, event_kind, message)?
   publish_app_local_event(event_value)
-  record_event_receipt(receipt_db_path(), app_id(), event_value, 1777431000000)?
+  record_event_receipt(runtime.config.sqlite_path, runtime.config.app_id, event_value, 1777431000000)?
   return Ok(true)
 }
 
-fn publish_app_local_rejected(command_id: String,
+fn publish_app_local_rejected(runtime: ShellRuntime,
+                              command_id: String,
                               correlation_id: String,
                               revision: Int,
                               reason: String) -> Result<Bool, String> {
-  let context = app_local_context(command_id, correlation_id, revision)?
+  let context = app_local_context(runtime, command_id, correlation_id, revision)?
   publish_app_local_context(context)
-  record_command_context_receipt(receipt_db_path(), app_id(), context, 1777431000000)?
+  record_command_context_receipt(runtime.config.sqlite_path, runtime.config.app_id, context, 1777431000000)?
   let event_value = command_rejected_event(context, reason)?
   publish_app_local_event(event_value)
-  record_event_receipt(receipt_db_path(), app_id(), event_value, 1777431000000)?
+  record_event_receipt(runtime.config.sqlite_path, runtime.config.app_id, event_value, 1777431000000)?
   return Ok(true)
 }
 
-fn publish_app_local_shutdown(correlation_id: String, revision: Int) -> Result<Bool, String> {
-  let recovery = recovery_marker(app_id(),
+fn publish_app_local_shutdown(runtime: ShellRuntime, correlation_id: String, revision: Int) -> Result<Bool, String> {
+  let recovery = recovery_marker(runtime.config.app_id,
                                  correlation_id,
                                  revision,
                                  "manual-preview",
                                  "logs/thin-host-gui-host-shell.ndjson")?
   publish_app_local_recovery(recovery)
-  record_recovery_marker_receipt(receipt_db_path(), recovery, 1777431000000)?
-  let update = update_marker(app_id(),
+  record_recovery_marker_receipt(runtime.config.sqlite_path, recovery, 1777431000000)?
+  let update = update_marker(runtime.config.app_id,
                              correlation_id,
                              revision,
                              "staged-preview",
                              "deploy/update/manifest.preview.json",
                              "52457a884a25b45c67e40519907515393af3b7c6ac451baca974285987a4766c")?
   publish_app_local_update(update)
-  record_update_marker_receipt(receipt_db_path(), update, 1777431000000)?
+  record_update_marker_receipt(runtime.config.sqlite_path, update, 1777431000000)?
   return Ok(true)
 }
 
@@ -165,13 +192,13 @@ ui OpsShell(state: ShellState) {
   }
 }
 
-fn render_state(state: ShellState, correlation_id: String) -> Result<Bool, String> {
+fn render_state(runtime: ShellRuntime, state: ShellState, correlation_id: String) -> Result<Bool, String> {
   let tree = OpsShell(state)
   let snapshot_text = encode_snapshot_text_with_revision("local_ops_console", tree, state.revision)
   host_shell_render_tree(stringify(tree))
   host_shell_publish_snapshot(snapshot_text)
-  record_snapshot_receipt(receipt_db_path(),
-                          app_id(),
+  record_snapshot_receipt(runtime.config.sqlite_path,
+                          runtime.config.app_id,
                           app_local_snapshot_id(correlation_id),
                           correlation_id,
                           state.revision,
@@ -247,41 +274,43 @@ fn apply_command(state: ShellState, command_text: String) -> Result<ShellStep, S
   return Err("unknown thin-host GUI command kind")
 }
 
-fn handle_applied_step(step: ShellStep) -> Result<Bool, String> {
+fn handle_applied_step(runtime: ShellRuntime, step: ShellStep) -> Result<Bool, String> {
   host_shell_publish_event(applied_event_text(step))
-  publish_app_local_accepted(step.command_id,
+  publish_app_local_accepted(runtime,
+                             step.command_id,
                              step.correlation_id,
                              step.previous_revision,
                              step.event_kind,
                              "thin-host command applied")?
-  render_state(step.state, step.correlation_id)?
+  render_state(runtime, step.state, step.correlation_id)?
   if step.terminal {
-    publish_app_local_shutdown(step.correlation_id, step.state.revision)?
+    publish_app_local_shutdown(runtime, step.correlation_id, step.state.revision)?
     host_shell_end()
     return Ok(true)
   }
   return Ok(false)
 }
 
-fn handle_rejected_command(state: ShellState, command_text: String, reason: String) -> Result<Bool, String> {
+fn handle_rejected_command(runtime: ShellRuntime, state: ShellState, command_text: String, reason: String) -> Result<Bool, String> {
   let correlation_id = command_correlation_id_or(command_text, "gui-command-rejected")
   host_shell_publish_event(rejected_event_text(state, correlation_id, reason))
-  publish_app_local_rejected(app_local_command_id("thin-host-command", correlation_id),
+  publish_app_local_rejected(runtime,
+                             app_local_command_id("thin-host-command", correlation_id),
                              correlation_id,
                              state.revision,
                              reason)?
-  render_state(state, correlation_id)?
+  render_state(runtime, state, correlation_id)?
   return Ok(true)
 }
 
-fn handle_command(state: ShellState, command_text: String) -> Result<ShellCommandOutcome, String> {
+fn handle_command(runtime: ShellRuntime, state: ShellState, command_text: String) -> Result<ShellCommandOutcome, String> {
   match apply_command(state, command_text) {
     Ok(step) => {
-      let done = handle_applied_step(step)?
+      let done = handle_applied_step(runtime, step)?
       return Ok(ShellCommandOutcome(step.state, done))
     }
     Err(msg) => {
-      handle_rejected_command(state, command_text, msg)?
+      handle_rejected_command(runtime, state, command_text, msg)?
       return Ok(ShellCommandOutcome(state, false))
     }
   }
@@ -293,40 +322,67 @@ fn fail_app_local(msg: String) -> Int {
   return 1
 }
 
-fn main() -> Int {
-  let state = initial_state()
-  host_shell_begin()
-  match publish_startup_recovery_policy() {
-    Ok(_) => {}
-    Err(msg) => {
-      return fail_app_local(msg)
-    }
-  }
+fn publish_startup_diagnostics(runtime: ShellRuntime) -> Result<Bool, String> {
+  publish_runtime_preflight(runtime)?
+  return publish_startup_recovery_policy(runtime)
+}
+
+fn publish_boot_event(state: ShellState) -> Void {
   host_shell_publish_event(encode_event_text_with_context("ui_shell_booted",
                                                           state_payload(state),
                                                           false,
                                                           "boot",
                                                           state.revision))
-  match render_state(state, "boot") {
+}
+
+fn boot_shell(runtime: ShellRuntime, state: ShellState) -> Result<Bool, String> {
+  publish_startup_diagnostics(runtime)?
+  publish_boot_event(state)
+  return render_state(runtime, state, "boot")
+}
+
+fn run_command_loop(runtime: ShellRuntime, state: ShellState) -> Result<Bool, String> {
+  while host_shell_open() {
+    let command_text = host_shell_next_command_text()
+    let outcome = handle_command(runtime, state, command_text)?
+    state = outcome.state
+    if outcome.terminal {
+      return Ok(true)
+    }
+  }
+  return Ok(false)
+}
+
+fn run_shell(runtime: ShellRuntime, state: ShellState) -> Int {
+  match boot_shell(runtime, state) {
     Ok(_) => {}
     Err(msg) => {
       return fail_app_local(msg)
     }
   }
-  while host_shell_open() {
-    let command_text = host_shell_next_command_text()
-    match handle_command(state, command_text) {
-      Ok(outcome) => {
-        state = outcome.state
-        if outcome.terminal {
-          return 0
-        }
+  match run_command_loop(runtime, state) {
+    Ok(done) => {
+      if done {
+        return 0
       }
-      Err(msg) => {
-        return fail_app_local(msg)
-      }
+    }
+    Err(msg) => {
+      return fail_app_local(msg)
     }
   }
   host_shell_end()
   return 0
+}
+
+fn main() -> Int {
+  let state = initial_state()
+  host_shell_begin()
+  match shell_runtime() {
+    Ok(runtime) => {
+      return run_shell(runtime, state)
+    }
+    Err(msg) => {
+      return fail_app_local(msg)
+    }
+  }
 }

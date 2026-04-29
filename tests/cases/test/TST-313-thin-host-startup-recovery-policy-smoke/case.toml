@@ -121,7 +121,7 @@ for marker in [
 for marker in [
     "app-local-startup-policy:",
     "nebula.app-local.startup-recovery-policy.v1",
-    "diagnostic-only startup input",
+    "diagnostic startup inputs",
     "remain app-owned",
 ]:
     if marker not in doc:

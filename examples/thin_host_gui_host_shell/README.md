@@ -18,6 +18,8 @@ Preview closure markers:
   `close-requested`, `closed`
 - accessibility summary: `Window` maps to `window`, `Input.accessibility_label` maps to `textbox`,
   and `Button.text` maps to `button`
+- runtime preflight: `app-local-preflight:` publishes `nebula.app-local.preflight.v1` from the
+  app-local env/config contract before receipt replay or new commands
 - bundle preview manifest: `deploy/bundle/manifest.preview.json` records the host API version,
   entry binary name, staged assets, update-manifest checksum, telemetry correlation source, and
   crash-report marker schema

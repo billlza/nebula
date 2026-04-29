@@ -28,6 +28,7 @@ output = run.stdout
 required = [
     "thin-host-gui-shell-begin",
     "thin-host-gui-shell-telemetry-session=thin-host-gui-preview-session-0001",
+    "app-local-preflight:",
     "app-local-startup-policy:",
     "nebula-ui-tree-title=Local Ops Shell",
     "nebula-ui-tree-button-action=targets.refresh",
@@ -53,6 +54,7 @@ app_contexts = []
 app_events = []
 app_recovery = []
 app_updates = []
+app_preflights = []
 app_startup_policies = []
 for line in output.splitlines():
     if line.startswith("event:"):
@@ -67,9 +69,18 @@ for line in output.splitlines():
         app_recovery.append(json.loads(line[len("app-local-recovery:"):]))
     if line.startswith("app-local-update:"):
         app_updates.append(json.loads(line[len("app-local-update:"):]))
+    if line.startswith("app-local-preflight:"):
+        app_preflights.append(json.loads(line[len("app-local-preflight:"):]))
     if line.startswith("app-local-startup-policy:"):
         app_startup_policies.append(json.loads(line[len("app-local-startup-policy:"):]))
 
+if len(app_preflights) != 1:
+    raise SystemExit(f"unexpected app-local preflights: {app_preflights!r}")
+preflight = app_preflights[0]
+if preflight["schema"] != "nebula.app-local.preflight.v1" or preflight["data_backend"] != "sqlite":
+    raise SystemExit(f"bad app-local preflight: {preflight!r}")
+if preflight["sqlite_path"] != str(receipt_db) or preflight["principal_subject"] != "local-operator":
+    raise SystemExit(f"bad app-local preflight identity/path: {preflight!r}")
 if len(app_startup_policies) != 1:
     raise SystemExit(f"unexpected app-local startup policies: {app_startup_policies!r}")
 startup_policy = app_startup_policies[0]

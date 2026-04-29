@@ -71,11 +71,13 @@ staged asset list, update-manifest checksum, telemetry correlation source, and c
 It is still only a staging contract: the host shell can be built and launched by tests, but Nebula is
 not yet providing store packaging, notarization, auto-update, or crash-upload infrastructure.
 
-The host shell also emits `app-local-startup-policy:` before processing new commands. That line is
-`nebula.app-local.startup-recovery-policy.v1` generated from the local receipt DB: it explains the
-latest revision evidence, prior snapshot, accepted/rejected command events, and recovery/update
-markers. It is a diagnostic-only startup input; concrete resume, rollback, replay, or update actions
-remain app-owned.
+The host shell also emits `app-local-preflight:` and `app-local-startup-policy:` before processing
+new commands. The preflight is `nebula.app-local.preflight.v1` from the app-local env/config contract,
+including the selected app id, SQLite receipt path, auth mode, principal subject, and optional
+PostgreSQL preview gate. The startup policy is `nebula.app-local.startup-recovery-policy.v1`
+generated from the local receipt DB: it explains the latest revision evidence, prior snapshot,
+accepted/rejected command events, and recovery/update markers. Both are diagnostic startup inputs;
+concrete resume, rollback, replay, or update actions remain app-owned.
 
 The next validation probe is a thin-host media player, tracked in
 `docs/media_player_validation_app.md`. That app should prove app-core state, app-local storage,

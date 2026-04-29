@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "d26c765b01a799a3"
-source_fingerprint = "c85d446dfcaa3a34"
-integrity_fingerprint = "baaeb712078b4b81"
+source_fingerprint = "2b0871dfe77cc0fb"
+integrity_fingerprint = "d6cf4c670b1bfa72"
 is_root = 1
 host_cxx = ["host.cpp"]
 dependencies = ["app_local=nebula-app-local", "bridge=nebula-thin-host-bridge", "ui=nebula-ui"]
