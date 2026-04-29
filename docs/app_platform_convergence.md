@@ -231,6 +231,10 @@ The measurement contract for this lane is:
 
 - comparisons stay split into `Nebula-owned`, `Host-owned`, and `Ops-owned` responsibility
 - host-renderer speed is not treated as a Nebula runtime win/loss
+- `state_sync_latency` measures the typed internal state-sync path plus terminal snapshot output;
+  public command JSON wire parsing remains covered by bridge round-trip contracts
+- `ui_snapshot_render` measures typed view-model to stable `nebula-ui.tree.v1` JSON materialization,
+  not a complete native renderer
 - C++ reference results are measurement-only baselines until each workload has a matching runnable
   reference implementation and explicit comparison output
 - public app-platform maturity claims stay blocked until the internal-app standard and thin-host

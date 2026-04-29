@@ -23,7 +23,10 @@ Current V1 shape:
   emits `ui.patch.v1` smoke operations for small state changes
 - typed fast path preview: internal benchmark/workload helpers can use `TypedUiViewModel`,
   `TypedActionSlot`, `TypedActionIndex`, and `TypedUiLayout` for action dispatch, hit-test, and
-  patch classification without JSON parse/stringify in the hot path. The older
+  patch classification without JSON parse/stringify in the hot path. `typed_snapshot_text(...)`
+  validates a typed model before materializing stable `nebula-ui.tree.v1` JSON, while
+  `typed_snapshot_text_unchecked(...)` is the repeat-render path for an already validated model.
+  The older
   `FastPreviewTree`/`FastPreviewLayout`/`FastActionIndex` helpers remain compatibility wrappers for
   current Local Ops benchmarks, while the external adapter contract remains the JSON
   `nebula-ui.tree.v1` tree.

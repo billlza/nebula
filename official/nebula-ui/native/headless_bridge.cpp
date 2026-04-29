@@ -39,6 +39,24 @@ RtResult err_string(std::string value) {
   return nebula::rt::err_result<std::string>(std::move(value));
 }
 
+void append_json_string(std::string& out, std::string_view value) {
+  out.push_back('"');
+  nebula::rt::json_append_escaped_string(out, value);
+  out.push_back('"');
+}
+
+void append_json_string_field(std::string& out, std::string_view key, std::string_view value) {
+  append_json_string(out, key);
+  out.push_back(':');
+  append_json_string(out, value);
+}
+
+void append_json_int_text_field(std::string& out, std::string_view key, std::string_view value) {
+  append_json_string(out, key);
+  out.push_back(':');
+  out += value;
+}
+
 bool set_error(std::string* error, std::string value) {
   if (error != nullptr) *error = std::move(value);
   return false;
@@ -234,4 +252,37 @@ RtResult __nebula_ui_headless_dispatch_action_summary_wire(const RtJson& summary
     }
   }
   return err_string("action not found: " + action);
+}
+
+std::string __nebula_ui_typed_snapshot_text(std::string title,
+                                            std::string text,
+                                            std::string editable_value,
+                                            std::int64_t spacing,
+                                            std::string primary_action,
+                                            std::string primary_accessibility_label,
+                                            std::string secondary_action,
+                                            std::string secondary_accessibility_label) {
+  const std::string spacing_text = std::to_string(spacing);
+  std::string out;
+  out.reserve(310 + title.size() + text.size() + editable_value.size() + spacing_text.size() +
+              primary_action.size() + primary_accessibility_label.size() +
+              secondary_action.size() + secondary_accessibility_label.size());
+  out += "{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Window\",\"props\":{";
+  append_json_string_field(out, "title", title);
+  out += "},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Column\",\"props\":{";
+  append_json_int_text_field(out, "spacing", spacing_text);
+  out += "},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Text\",\"props\":{";
+  append_json_string_field(out, "text", text);
+  out += "},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Input\",\"props\":{";
+  append_json_string_field(out, "value", editable_value);
+  out.push_back(',');
+  append_json_string_field(out, "action", primary_action);
+  out.push_back(',');
+  append_json_string_field(out, "accessibility_label", primary_accessibility_label);
+  out += "},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Button\",\"props\":{";
+  append_json_string_field(out, "text", secondary_accessibility_label);
+  out.push_back(',');
+  append_json_string_field(out, "action", secondary_action);
+  out += "},\"children\":[]}]}]}";
+  return out;
 }

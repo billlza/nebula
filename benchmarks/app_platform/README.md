@@ -18,7 +18,7 @@ the fixed workloads and reference stacks that future APP-platform maturity claim
 - `thin_host_bridge_roundtrip`
   - host<->core command/query/event bridge round-trip path
 - `state_sync_latency`
-  - state transition plus snapshot/update propagation path
+  - typed internal command/state transition plus terminal snapshot/update propagation path
 - `resident_memory`
   - steady-state memory footprint for a representative long-lived internal app service
 - `nebula_ui_startup`
@@ -26,7 +26,7 @@ the fixed workloads and reference stacks that future APP-platform maturity claim
 - `ui_action_roundtrip`
   - typed action-index extraction and validation without JSON wire reparse
 - `ui_snapshot_render`
-  - UI JSON IR stringify/render handoff path
+  - typed view-model to stable `nebula-ui.tree.v1` JSON handoff path
 - `ui_layout_pass`
   - deterministic Nebula-owned layout derivation for the UI IR
 - `ui_render_list_build`

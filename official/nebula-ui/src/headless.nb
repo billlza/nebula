@@ -7,6 +7,14 @@ extern fn __nebula_rt_string_len(value: String) -> Int
 extern fn __nebula_ui_headless_action_summary_wire(tree: Json) -> Result<Json, String>
 extern fn __nebula_ui_headless_dispatch_action_wire(tree: Json, action: String) -> Result<String, String>
 extern fn __nebula_ui_headless_dispatch_action_summary_wire(summary: Json, action: String) -> Result<String, String>
+extern fn __nebula_ui_typed_snapshot_text(title: String,
+                                          text: String,
+                                          editable_value: String,
+                                          spacing: Int,
+                                          primary_action: String,
+                                          primary_accessibility_label: String,
+                                          secondary_action: String,
+                                          secondary_accessibility_label: String) -> String
 
 fn text_concat(lhs: String, rhs: String) -> String {
   return to_string(concat(from_string(lhs), from_string(rhs)))
@@ -1121,6 +1129,25 @@ fn patch_code_from_kind(kind_code: Int) -> Int {
 
 fn typed_patch_code(old_model: TypedUiViewModel, new_model: TypedUiViewModel) -> Int {
   return patch_code_from_kind(typed_patch_kind_code(old_model, new_model))
+}
+
+fn typed_snapshot_text_unchecked(model: TypedUiViewModel) -> String {
+  return __nebula_ui_typed_snapshot_text(model.title,
+                                         model.text,
+                                         model.editable_value,
+                                         model.spacing,
+                                         model.primary_action.action_id,
+                                         model.primary_action.accessibility_label,
+                                         model.secondary_action.action_id,
+                                         model.secondary_action.accessibility_label)
+}
+
+fn typed_snapshot_text(model: TypedUiViewModel) -> Result<String, String> {
+  if model.spacing < 0 {
+    return Err("typed UI view model requires non-negative spacing")
+  }
+  typed_action_index(model)?
+  return Ok(typed_snapshot_text_unchecked(model))
 }
 
 fn fast_preview_tree(title: String,

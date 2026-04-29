@@ -16,11 +16,11 @@ fn verify_snapshot_text(snapshot_text: String) -> Void {
 
 fn state_after_sync_tape() -> Result<CounterState, String> {
   let state0 = initial_state()
-  let step1 = apply_command_text(state0, command_text_at_revision("increment", "sync-1", state0.revision()))?
+  let step1 = apply_command_code_envelope(state0, command_code_at_revision(increment_command_code(), "sync-1", state0.revision()))?
   let state1 = step1.state()
-  let step2 = apply_command_text(state1, command_text_at_revision("increment", "sync-2", state1.revision()))?
+  let step2 = apply_command_code_envelope(state1, command_code_at_revision(increment_command_code(), "sync-2", state1.revision()))?
   let state2 = step2.state()
-  let step3 = apply_command_text(state2, command_text_at_revision("decrement", "sync-3", state2.revision()))?
+  let step3 = apply_command_code_envelope(state2, command_code_at_revision(decrement_command_code(), "sync-3", state2.revision()))?
   return Ok(step3.state())
 }
 

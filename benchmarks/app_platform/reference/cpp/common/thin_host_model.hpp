@@ -19,6 +19,18 @@ struct Step {
   std::string correlation_id;
 };
 
+struct CommandEnvelope {
+  std::string kind;
+  std::string correlation_id;
+  int state_revision;
+};
+
+struct CommandCodeEnvelope {
+  int kind_code;
+  std::string correlation_id;
+  int state_revision;
+};
+
 inline std::string bool_text(bool value) {
   return value ? "true" : "false";
 }
@@ -130,6 +142,58 @@ inline Step apply_command_text(const State& state, const std::string& command_te
   return reduce_command(state, kind, correlation_id);
 }
 
+inline CommandEnvelope command_at_revision(std::string kind, std::string correlation_id, int state_revision) {
+  return CommandEnvelope{std::move(kind), std::move(correlation_id), state_revision};
+}
+
+inline int increment_command_code() {
+  return 1;
+}
+
+inline int decrement_command_code() {
+  return 2;
+}
+
+inline int quit_command_code() {
+  return 3;
+}
+
+inline CommandCodeEnvelope command_code_at_revision(int kind_code, std::string correlation_id, int state_revision) {
+  return CommandCodeEnvelope{kind_code, std::move(correlation_id), state_revision};
+}
+
+inline Step apply_command_envelope(const State& state, const CommandEnvelope& command) {
+  expect_eq(command.state_revision, state.revision, "command state_revision");
+  return reduce_command(state, command.kind, command.correlation_id);
+}
+
+inline Step reduce_command_code(const State& state, int kind_code, const std::string& correlation_id) {
+  if (kind_code == increment_command_code()) {
+    return Step{State{state.counter + 1, "increment", state.revision + 1},
+                false,
+                "increment_applied",
+                correlation_id};
+  }
+  if (kind_code == decrement_command_code()) {
+    if (state.counter <= 0) {
+      fail("invalid counter transition: cannot decrement below zero");
+    }
+    return Step{State{state.counter - 1, "decrement", state.revision + 1},
+                false,
+                "decrement_applied",
+                correlation_id};
+  }
+  if (kind_code == quit_command_code()) {
+    return Step{State{state.counter, "quit", state.revision + 1}, true, "quit_requested", correlation_id};
+  }
+  fail("unknown thin-host command kind");
+}
+
+inline Step apply_command_code_envelope(const State& state, const CommandCodeEnvelope& command) {
+  expect_eq(command.state_revision, state.revision, "command state_revision");
+  return reduce_command_code(state, command.kind_code, command.correlation_id);
+}
+
 inline std::string event_text(const Step& step) {
   return encode_event(step.event_kind,
                       counter_payload(step.state),
@@ -164,11 +228,11 @@ inline std::uint64_t run_increment_roundtrip() {
 
 inline std::uint64_t run_state_sync_tape() {
   State state = initial_state();
-  Step step1 = apply_command_text(state, encode_command("increment", "sync-1", state.revision));
+  Step step1 = apply_command_code_envelope(state, command_code_at_revision(increment_command_code(), "sync-1", state.revision));
   state = step1.state;
-  Step step2 = apply_command_text(state, encode_command("increment", "sync-2", state.revision));
+  Step step2 = apply_command_code_envelope(state, command_code_at_revision(increment_command_code(), "sync-2", state.revision));
   state = step2.state;
-  Step step3 = apply_command_text(state, encode_command("decrement", "sync-3", state.revision));
+  Step step3 = apply_command_code_envelope(state, command_code_at_revision(decrement_command_code(), "sync-3", state.revision));
   state = step3.state;
   const std::string snapshot = snapshot_text(state);
   expect_eq(snapshot,

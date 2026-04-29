@@ -22,6 +22,18 @@ enum CounterCommand {
   Quit(Void)
 }
 
+struct CounterCommandEnvelope {
+  kind: String,
+  correlation_id: String,
+  state_revision: Int
+}
+
+struct CounterCommandCodeEnvelope {
+  kind_code: Int,
+  correlation_id: String,
+  state_revision: Int
+}
+
 fn initial_state() -> CounterState {
   return CounterState(0, "boot", 0)
 }
@@ -119,6 +131,26 @@ fn command_text_at_revision(kind: String, correlation_id: String, state_revision
   return encode_command_text_with_context(kind, correlation_id, state_revision)
 }
 
+fn command_at_revision(kind: String, correlation_id: String, state_revision: Int) -> CounterCommandEnvelope {
+  return CounterCommandEnvelope(kind, correlation_id, state_revision)
+}
+
+fn command_code_at_revision(kind_code: Int, correlation_id: String, state_revision: Int) -> CounterCommandCodeEnvelope {
+  return CounterCommandCodeEnvelope(kind_code, correlation_id, state_revision)
+}
+
+fn increment_command_code() -> Int {
+  return 1
+}
+
+fn decrement_command_code() -> Int {
+  return 2
+}
+
+fn quit_command_code() -> Int {
+  return 3
+}
+
 fn decode_command(value: String) -> Result<CounterCommand, String> {
   if value == "increment" {
     return Ok(Increment)
@@ -162,10 +194,46 @@ fn reduce_command(state: CounterState, command: CounterCommand) -> Result<Counte
   return reduce_command_with_correlation(state, command, "local-reduce")
 }
 
-fn apply_command_text(state: CounterState, command_text: String) -> Result<CounterStep, String> {
-  let command = decode_command_text(command_text)?
-  if command.state_revision() != state.revision {
+fn reduce_command_code_with_correlation(state: CounterState, kind_code: Int, correlation_id: String) -> Result<CounterStep, String> {
+  if kind_code == increment_command_code() {
+    return Ok(CounterStep(CounterState(state.counter + 1, "increment", state.revision + 1),
+                          false,
+                          "increment_applied",
+                          correlation_id))
+  }
+  if kind_code == decrement_command_code() {
+    if state.counter <= 0 {
+      return Err("invalid counter transition: cannot decrement below zero")
+    }
+    return Ok(CounterStep(CounterState(state.counter - 1, "decrement", state.revision + 1),
+                          false,
+                          "decrement_applied",
+                          correlation_id))
+  }
+  if kind_code == quit_command_code() {
+    return Ok(CounterStep(CounterState(state.counter, "quit", state.revision + 1),
+                          true,
+                          "quit_requested",
+                          correlation_id))
+  }
+  return Err("unknown thin-host command kind")
+}
+
+fn apply_command_envelope(state: CounterState, command: CounterCommandEnvelope) -> Result<CounterStep, String> {
+  if command.state_revision != state.revision {
     return Err("stale thin-host command state_revision")
   }
-  return reduce_command_with_correlation(state, decode_command(command.kind())?, command.correlation_id())
+  return reduce_command_with_correlation(state, decode_command(command.kind)?, command.correlation_id)
+}
+
+fn apply_command_code_envelope(state: CounterState, command: CounterCommandCodeEnvelope) -> Result<CounterStep, String> {
+  if command.state_revision != state.revision {
+    return Err("stale thin-host command state_revision")
+  }
+  return reduce_command_code_with_correlation(state, command.kind_code, command.correlation_id)
+}
+
+fn apply_command_text(state: CounterState, command_text: String) -> Result<CounterStep, String> {
+  let command = decode_command_text(command_text)?
+  return apply_command_envelope(state, command_at_revision(command.kind(), command.correlation_id(), command.state_revision()))
 }

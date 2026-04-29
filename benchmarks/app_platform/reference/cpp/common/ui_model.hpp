@@ -317,6 +317,56 @@ inline std::string stringify_dashboard(const Node& root) {
   return out;
 }
 
+inline std::string typed_snapshot_text_unchecked(const TypedUiViewModel& model) {
+  const std::string spacing = std::to_string(model.spacing);
+  std::string out;
+  out.reserve(310 + model.title.size() + model.text.size() + model.editable_value.size() + spacing.size() +
+              model.primary_action.action_id.size() + model.primary_action.accessibility_label.size() +
+              model.secondary_action.action_id.size() + model.secondary_action.accessibility_label.size());
+  out += "{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Window\",\"props\":{";
+  append_json_string(out, "title");
+  out.push_back(':');
+  append_json_string(out, model.title);
+  out += "},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Column\",\"props\":{";
+  append_json_string(out, "spacing");
+  out.push_back(':');
+  out += spacing;
+  out += "},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Text\",\"props\":{";
+  append_json_string(out, "text");
+  out.push_back(':');
+  append_json_string(out, model.text);
+  out += "},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Input\",\"props\":{";
+  append_json_string(out, "value");
+  out.push_back(':');
+  append_json_string(out, model.editable_value);
+  out.push_back(',');
+  append_json_string(out, "action");
+  out.push_back(':');
+  append_json_string(out, model.primary_action.action_id);
+  out.push_back(',');
+  append_json_string(out, "accessibility_label");
+  out.push_back(':');
+  append_json_string(out, model.primary_action.accessibility_label);
+  out += "},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Button\",\"props\":{";
+  append_json_string(out, "text");
+  out.push_back(':');
+  append_json_string(out, model.secondary_action.accessibility_label);
+  out.push_back(',');
+  append_json_string(out, "action");
+  out.push_back(':');
+  append_json_string(out, model.secondary_action.action_id);
+  out += "},\"children\":[]}]}]}";
+  return out;
+}
+
+inline std::string typed_snapshot_text(const TypedUiViewModel& model) {
+  if (model.spacing < 0) fail("typed UI view model requires non-negative spacing");
+  if (model.primary_action.action_id.empty() || model.secondary_action.action_id.empty()) {
+    fail("typed UI action slot requires non-empty action id");
+  }
+  return typed_snapshot_text_unchecked(model);
+}
+
 inline int text_width(const std::string& text) {
   return std::max(8, static_cast<int>(text.size()) * 8);
 }
@@ -736,7 +786,10 @@ inline std::uint64_t run_action_roundtrip() {
 }
 
 inline std::uint64_t run_snapshot_render() {
-  const std::string rendered = stringify_dashboard(dashboard_tree());
+  const TypedActionSlot primary{"targets.filter", 1, "input", "Filter targets"};
+  const TypedActionSlot secondary{"targets.refresh", 2, "button", "Refresh"};
+  const TypedUiViewModel model{"Local Ops", "Local Ops", "targets", 12, primary, secondary};
+  const std::string rendered = typed_snapshot_text_unchecked(model);
   const std::string expected =
       "{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Window\",\"props\":{\"title\":\"Local Ops\"},"
       "\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Column\",\"props\":{\"spacing\":12},"

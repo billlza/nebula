@@ -1,23 +1,5 @@
 module main
-import std::json
-import ui::ui
-
-struct DashboardState {
-  title: String
-  ready: Bool
-  filter: String
-}
-
-fn dashboard_column(state: DashboardState) -> Json {
-  return column_json(12,
-                     array3(text_json(state.title),
-                            input_json(state.filter, "targets.filter", "Filter targets"),
-                            button_json("Refresh", "targets.refresh")))
-}
-
-fn Dashboard(state: DashboardState) -> Json {
-  return window_json(state.title, array1(dashboard_column(state)))
-}
+import ui::headless
 
 fn contains_schema(text: String) -> Bool {
   return text == "{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Window\",\"props\":{\"title\":\"Local Ops\"},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Column\",\"props\":{\"spacing\":12},\"children\":[{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Text\",\"props\":{\"text\":\"Local Ops\"},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Input\",\"props\":{\"value\":\"targets\",\"action\":\"targets.filter\",\"accessibility_label\":\"Filter targets\"},\"children\":[]},{\"schema\":\"nebula-ui.tree.v1\",\"component\":\"Button\",\"props\":{\"text\":\"Refresh\",\"action\":\"targets.refresh\"},\"children\":[]}]}]}"
@@ -25,7 +7,10 @@ fn contains_schema(text: String) -> Bool {
 
 @bench
 fn bench_ui_snapshot_render() -> Void {
-  let rendered = stringify(Dashboard(DashboardState("Local Ops", true, "targets")))
+  let primary = TypedActionSlot("targets.filter", 1, "input", "Filter targets")
+  let secondary = TypedActionSlot("targets.refresh", 2, "button", "Refresh")
+  let model = TypedUiViewModel("Local Ops", "Local Ops", "targets", 12, primary, secondary)
+  let rendered = typed_snapshot_text_unchecked(model)
   if contains_schema(rendered) == false {
     expect_eq(1, 0)
   }
