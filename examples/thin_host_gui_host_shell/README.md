@@ -21,5 +21,8 @@ Preview closure markers:
 - bundle preview manifest: `deploy/bundle/manifest.preview.json` records the host API version,
   entry binary name, staged assets, update-manifest checksum, telemetry correlation source, and
   crash-report marker schema
+- startup recovery policy: `app-local-startup-policy:` publishes
+  `nebula.app-local.startup-recovery-policy.v1` from the local receipt DB before new commands run;
+  it is diagnostic-only and keeps `action_owner="app"`
 - deploy examples under `deploy/` are schema fixtures for host packaging/update contracts only;
   they are not signing, notarization, store packaging, or auto-update implementation

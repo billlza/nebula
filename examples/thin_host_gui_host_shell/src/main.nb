@@ -98,8 +98,18 @@ fn publish_app_local_update(marker: AppLocalUpdateMarker) -> Void {
   print(text_join("app-local-update:", stringify(marker.as_json())))
 }
 
+fn publish_app_local_startup_policy(policy: AppLocalStartupRecoveryPolicy) -> Void {
+  print(text_join("app-local-startup-policy:", stringify(policy.as_json())))
+}
+
 fn publish_app_local_error(msg: String) -> Void {
   print(text_join("app-local-error:", msg))
+}
+
+fn publish_startup_recovery_policy() -> Result<Bool, String> {
+  let policy = startup_recovery_policy(receipt_db_path(), app_id(), 10)?
+  publish_app_local_startup_policy(policy)
+  return Ok(true)
 }
 
 fn publish_app_local_accepted(command_id: String,
@@ -286,6 +296,12 @@ fn fail_app_local(msg: String) -> Int {
 fn main() -> Int {
   let state = initial_state()
   host_shell_begin()
+  match publish_startup_recovery_policy() {
+    Ok(_) => {}
+    Err(msg) => {
+      return fail_app_local(msg)
+    }
+  }
   host_shell_publish_event(encode_event_text_with_context("ui_shell_booted",
                                                           state_payload(state),
                                                           false,
