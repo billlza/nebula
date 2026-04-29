@@ -16,6 +16,7 @@ Current surface:
 - `substrate::AppLocalReceipt`
 - `substrate::AppLocalReceiptReplayBatch`
 - `substrate::AppLocalReplayTrace`
+- `substrate::AppLocalStartupRecoveryPolicy`
 - `substrate::app_local_config(...) -> Result<AppLocalConfig, String>`
 - `substrate::config_from_env(default_app_id, default_sqlite_path, default_principal_subject, default_observe_service) -> Result<AppLocalConfig, String>`
 - `substrate::validate_config(config) -> Result<Bool, String>`
@@ -38,6 +39,7 @@ Current surface:
 - `substrate::receipt_by_key(path, app_id, receipt_kind, receipt_key) -> Result<AppLocalReceipt, String>`
 - `substrate::replay_receipts(path, app_id, receipt_kind, after_receipt_id, limit) -> Result<AppLocalReceiptReplayBatch, String>`
 - `substrate::recovery_replay_trace(path, app_id, limit) -> Result<AppLocalReplayTrace, String>`
+- `substrate::startup_recovery_policy(path, app_id, limit) -> Result<AppLocalStartupRecoveryPolicy, String>`
 - `substrate::receipt_count(path, app_id, receipt_kind) -> Result<Int, String>`
 - `substrate::latest_receipt(path, app_id, receipt_kind, correlation_id) -> Result<AppLocalReceipt, String>`
 - `substrate::validate_background_stages(stages) -> Result<Bool, String>`
@@ -93,6 +95,11 @@ Current guarantees:
   receipt, `replay_receipts(...)` pages one receipt kind, and `recovery_replay_trace(...)` returns a
   startup-oriented summary of recent snapshots, command contexts, events, and recovery/update
   markers. Replay limits are bounded and this is not an audit-log query language.
+- Startup recovery policy uses `recovery_replay_trace(...)` to produce
+  `nebula.app-local.startup-recovery-policy.v1`: latest revision evidence, last snapshot, last
+  accepted/rejected command event, and last recovery/update marker. The policy is diagnostic-only,
+  reports `action_owner="app"` and windowed revision confidence, and keeps recovery, replay,
+  rollback, or update application decisions in the app.
 - Jobs integration is limited to DAG validation in this package; worker lease/outbox storage remains
   in `nebula-jobs`.
 - Observe integration emits log-first preflight events and delta-counter metrics through

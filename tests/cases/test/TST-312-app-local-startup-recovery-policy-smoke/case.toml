@@ -1,0 +1,430 @@
+id = "TST-312-app-local-startup-recovery-policy-smoke"
+suite = "test"
+description = "app-local substrate explains startup recovery policy from generic replay receipts without taking app-owned actions"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_startup_recovery_policy")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-startup-recovery-policy"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn db_path() -> String {
+  return "work/app_local_startup_recovery_policy/state/receipts.db"
+}
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_bool(actual: Bool, expected: Bool) -> Void {
+  if actual != expected {
+    fail()
+  }
+}
+
+fn expect_policy_error(result: Result<AppLocalStartupRecoveryPolicy, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn principal_value() -> AppLocalPrincipal {
+  return AppLocalPrincipal("local-operator", "app.local.writer", "internal")
+}
+
+fn main_app_id() -> String {
+  return "app.local.policy"
+}
+
+fn clean_app_id() -> String {
+  return "app.local.clean"
+}
+
+fn reject_app_id() -> String {
+  return "app.local.reject"
+}
+
+fn snapshot_payload(screen: String, revision: Int) -> Json {
+  return object4("schema",
+                 string_value("thin-host-bridge.snapshot.v1"),
+                 "screen",
+                 string_value(screen),
+                 "payload",
+                 object1("screen", string_value(screen)),
+                 "state_revision",
+                 int_value(revision))
+}
+
+fn accepted_context() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-accepted", "corr-accepted", 0, principal_value(), 1777433000000)
+}
+
+fn rejected_context() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-rejected", "corr-rejected", 1, principal_value(), 1777433000001)
+}
+
+fn record_snapshots() -> Result<Bool, String> {
+  record_snapshot_receipt(db_path(),
+                          main_app_id(),
+                          "snapshot:boot",
+                          "boot",
+                          0,
+                          "thin-host-bridge.snapshot.v1",
+                          snapshot_payload("boot", 0),
+                          1777433000000)?
+  record_snapshot_receipt(db_path(),
+                          main_app_id(),
+                          "snapshot:corr-accepted",
+                          "corr-accepted",
+                          1,
+                          "thin-host-bridge.snapshot.v1",
+                          snapshot_payload("home", 1),
+                          1777433000003)?
+  return Ok(true)
+}
+
+fn record_commands_for_app(app_id: String) -> Result<Bool, String> {
+  record_accepted_command_for_app(app_id)?
+  return record_rejected_command_for_app(app_id)
+}
+
+fn record_accepted_command_for_app(app_id: String) -> Result<Bool, String> {
+  let accepted = accepted_context()?
+  record_command_context_receipt(db_path(), app_id, accepted, 1777433000001)?
+  record_event_receipt(db_path(), app_id, command_accepted_event(accepted, "state.updated", "ok")?, 1777433000002)?
+  return Ok(true)
+}
+
+fn record_rejected_command_for_app(app_id: String) -> Result<Bool, String> {
+  let rejected = rejected_context()?
+  record_command_context_receipt(db_path(), app_id, rejected, 1777433000004)?
+  record_event_receipt(db_path(), app_id, command_rejected_event(rejected, "stale command")?, 1777433000005)?
+  return Ok(true)
+}
+
+fn record_markers() -> Result<Bool, String> {
+  let recovery = recovery_marker(main_app_id(), "corr-marker", 9, "crash_detected", "/tmp/app.recovery")?
+  let update = update_marker(main_app_id(), "corr-marker", 9, "staged", "/tmp/update.json", "abc123")?
+  record_recovery_marker_receipt(db_path(), recovery, 1777433000006)?
+  record_update_marker_receipt(db_path(), update, 1777433000007)?
+  return Ok(true)
+}
+
+fn record_policy_sample() -> Result<Bool, String> {
+  initialize_receipts(db_path())?
+  record_snapshots()?
+  record_commands_for_app(main_app_id())?
+  return record_markers()
+}
+
+fn verify_latest_revision(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  if !verify_latest_revision_fields(policy) {
+    return Ok(false)
+  }
+  return verify_latest_revision_json(policy)
+}
+
+fn verify_latest_revision_fields(policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  return policy.latest_state_revision == 1 &&
+         policy.latest_correlation_id == "corr-rejected" &&
+         policy.revision_source == "event" &&
+         policy.revision_confidence == "windowed" &&
+         policy.trace.latest_state_revision == 9
+}
+
+fn verify_latest_revision_json(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let policy_json = policy.as_json()
+  let latest = get_value(policy_json, "latest_revision")?
+  return Ok(get_int(latest, "value")? == 1 &&
+            get_string(latest, "source")? == "event" &&
+            get_string(latest, "confidence")? == "windowed")
+}
+
+fn verify_command_evidence(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let commands = get_value(policy.evidence, "commands")?
+  if !verify_last_event_receipt(commands)? {
+    return Ok(false)
+  }
+  if !verify_last_accepted_command(commands)? {
+    return Ok(false)
+  }
+  return verify_last_rejected_command(commands)
+}
+
+fn verify_last_event_receipt(commands: Json) -> Result<Bool, String> {
+  let receipt = get_value(commands, "last_event")?
+  return Ok(get_string(receipt, "receipt_key")? == "cmd-rejected")
+}
+
+fn verify_last_accepted_command(commands: Json) -> Result<Bool, String> {
+  let receipt = get_value(commands, "last_accepted_event")?
+  return verify_accepted_event_receipt(receipt)
+}
+
+fn verify_last_rejected_command(commands: Json) -> Result<Bool, String> {
+  let receipt = get_value(commands, "last_rejected_event")?
+  return verify_rejected_event_receipt(receipt)
+}
+
+fn verify_accepted_event_receipt(receipt: Json) -> Result<Bool, String> {
+  let payload = get_value(receipt, "payload")?
+  return Ok(get_bool(payload, "accepted")?)
+}
+
+fn verify_rejected_event_receipt(receipt: Json) -> Result<Bool, String> {
+  let payload = get_value(receipt, "payload")?
+  return Ok(!get_bool(payload, "accepted")? &&
+            get_string(payload, "event_kind")? == "command_rejected")
+}
+
+fn verify_marker_evidence(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let markers = get_value(policy.evidence, "markers")?
+  let recovery = get_value(markers, "last_recovery_marker")?
+  let update = get_value(markers, "last_update_marker")?
+  if !verify_recovery_marker_receipt(recovery)? {
+    return Ok(false)
+  }
+  return verify_update_marker_receipt(update)
+}
+
+fn verify_recovery_marker_receipt(receipt: Json) -> Result<Bool, String> {
+  let payload = get_value(receipt, "payload")?
+  return Ok(get_string(payload, "status")? == "crash_detected")
+}
+
+fn verify_update_marker_receipt(receipt: Json) -> Result<Bool, String> {
+  let payload = get_value(receipt, "payload")?
+  return Ok(get_string(payload, "status")? == "staged" &&
+            get_string(payload, "manifest_sha256")? == "abc123")
+}
+
+fn verify_snapshot_evidence(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let snapshot = get_value(policy.evidence, "last_snapshot")?
+  if get_string(snapshot, "receipt_kind")? != "snapshot" {
+    return Ok(false)
+  }
+  if get_string(snapshot, "receipt_key")? != "snapshot:corr-accepted" {
+    return Ok(false)
+  }
+  return verify_snapshot_payload(snapshot)
+}
+
+fn verify_snapshot_payload(receipt: Json) -> Result<Bool, String> {
+  let payload = get_value(receipt, "payload")?
+  return Ok(get_int(payload, "state_revision")? == 1)
+}
+
+fn verify_policy_json(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let policy_json = policy.as_json()
+  if !verify_policy_json_identity(policy_json)? {
+    return Ok(false)
+  }
+  if !verify_policy_json_decision(policy_json)? {
+    return Ok(false)
+  }
+  return Ok(get_bool(policy_json, "diagnostic_only")?)
+}
+
+fn verify_policy_json_identity(policy_json: Json) -> Result<Bool, String> {
+  if get_string(policy_json, "schema")? != "nebula.app-local.startup-recovery-policy.v1" {
+    return Ok(false)
+  }
+  return Ok(get_string(policy_json, "action_owner")? == "app")
+}
+
+fn verify_policy_json_decision(policy_json: Json) -> Result<Bool, String> {
+  if get_string(policy_json, "recommendation")? != "inspect_update_marker" {
+    return Ok(false)
+  }
+  if get_string(policy_json, "reason")? != "latest startup evidence includes an update marker; app must verify or ignore it" {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn verify_policy_sample_shape(policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  return policy.recommendation == "inspect_update_marker" &&
+         policy.action_owner == "app" &&
+         policy.diagnostic_only
+}
+
+fn verify_policy_evidence(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  if !verify_latest_revision(policy)? {
+    return Ok(false)
+  }
+  if !verify_snapshot_evidence(policy)? {
+    return Ok(false)
+  }
+  if !verify_command_evidence(policy)? {
+    return Ok(false)
+  }
+  return verify_marker_evidence(policy)
+}
+
+fn verify_policy_sample() -> Result<Bool, String> {
+  let policy = startup_recovery_policy(db_path(), main_app_id(), 10)?
+  if !verify_policy_sample_shape(policy) {
+    return Ok(false)
+  }
+  if !verify_policy_evidence(policy)? {
+    return Ok(false)
+  }
+  return verify_policy_json(policy)
+}
+
+fn verify_clean_start_shape(policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  return policy.recommendation == "clean_start" &&
+         policy.reason == "no app-local receipts were found" &&
+         policy.latest_state_revision == 0 &&
+         policy.latest_correlation_id == "" &&
+         policy.revision_source == "none" &&
+         policy.revision_confidence == "none" &&
+         policy.action_owner == "app" &&
+         policy.diagnostic_only
+}
+
+fn verify_clean_start_policy() -> Result<Bool, String> {
+  let policy = startup_recovery_policy(db_path(), clean_app_id(), 10)?
+  return Ok(verify_clean_start_shape(policy))
+}
+
+fn verify_rejected_command_shape(policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  return policy.recommendation == "inspect_rejected_command" &&
+         policy.reason == "latest command event was rejected; app should inspect the rejection before resuming" &&
+         policy.latest_state_revision == 1 &&
+         policy.revision_source == "event" &&
+         policy.action_owner == "app" &&
+         policy.diagnostic_only
+}
+
+fn verify_rejected_command_policy() -> Result<Bool, String> {
+  record_commands_for_app(reject_app_id())?
+  let policy = startup_recovery_policy(db_path(), reject_app_id(), 10)?
+  return Ok(verify_rejected_command_shape(policy))
+}
+
+fn verify_negative_contracts() -> Void {
+  expect_policy_error(startup_recovery_policy(db_path(), "", 10),
+                      "app-local substrate replay app_id is required")
+  expect_policy_error(startup_recovery_policy(db_path(), main_app_id(), 0),
+                      "app-local substrate replay limit must be positive")
+}
+
+fn verify_startup_recovery_policy() -> Result<Bool, String> {
+  record_policy_sample()?
+  if !verify_policy_sample()? {
+    return Ok(false)
+  }
+  if !verify_clean_start_policy()? {
+    return Ok(false)
+  }
+  return verify_rejected_command_policy()
+}
+
+fn main() -> Int {
+  match verify_startup_recovery_policy() {
+    Ok(ok) => {
+      if !ok {
+        print("app-local-startup-recovery-policy-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_negative_contracts()
+  print("app-local-startup-recovery-policy-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local startup recovery policy check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True)
+if run.returncode != 0 or "app-local-startup-recovery-policy-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local startup recovery policy smoke failed")
+print("app-local-startup-recovery-policy-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-startup-recovery-policy-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+for marker in [
+    "AppLocalStartupRecoveryPolicy",
+    "startup_recovery_policy",
+    "nebula.app-local.startup-recovery-policy.v1",
+    "diagnostic-only",
+    "action_owner=",
+    "windowed revision confidence",
+]:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing startup policy marker: {marker}")
+for marker in [
+    "Startup Recovery Policy",
+    "startup_recovery_policy",
+    "diagnostic summary",
+    "does not apply updates, replay commands, roll back state, or restore snapshots",
+    "app remains the action owner",
+]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing startup policy marker: {marker}")
+print("app-local-startup-recovery-policy-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-startup-recovery-policy-docs-ok"]

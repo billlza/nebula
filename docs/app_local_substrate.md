@@ -112,6 +112,23 @@ This is a startup diagnostic and replay substrate, not an audit-log query langua
 domain state model. The validation app still owns how to interpret a snapshot payload, whether an
 event can be replayed, and which recovery action is safe.
 
+## Startup Recovery Policy
+
+`startup_recovery_policy(...)` builds on `recovery_replay_trace(...)` and returns
+`nebula.app-local.startup-recovery-policy.v1`, a diagnostic summary designed for app startup. It
+reports the latest revision evidence, last snapshot, last accepted command event, last rejected
+command event, last recovery marker, last update marker, and `action_owner="app"` inside a bounded
+replay window.
+
+The policy is intentionally explanatory rather than executable. It may recommend that the app inspect
+an update marker, recovery marker, rejected command, snapshot, or raw receipts. The substrate policy
+does not apply updates, replay commands, roll back state, or restore snapshots.
+The app remains the action owner because only the app can decide whether a snapshot payload, command event, or recovery marker is safe for its domain.
+
+The latest revision in the policy is derived from the most recent command event or snapshot, not from
+marker receipts alone. Its confidence is marked `windowed` when evidence exists because startup traces
+are bounded by the requested limit, and `none` when no revision evidence is available.
+
 ## App Boundaries
 
 The substrate is allowed to standardize:
