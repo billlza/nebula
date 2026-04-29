@@ -4,6 +4,11 @@
   "version": "0.1.0-preview",
   "channel": "preview",
   "min_host_api": "thin-host-shell.preview.v1",
+  "recovery": {
+    "mode": "manual-preview",
+    "rollback": "operator-restage-previous-bundle",
+    "crash_log_path": "logs/thin-host-gui-host-shell.ndjson"
+  },
   "assets": [
     {
       "platform": "macos-arm64",

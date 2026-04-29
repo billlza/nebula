@@ -37,6 +37,17 @@ if bundle_manifest.get("telemetry", {}).get("correlation_id_source") != "thin-ho
     raise SystemExit(f"bad telemetry correlation source: {bundle_manifest!r}")
 if bundle_manifest.get("crash", {}).get("crash_report_schema") != "nebula.gui.preview.crash.v1":
     raise SystemExit(f"bad crash schema: {bundle_manifest!r}")
+runtime = bundle_manifest.get("runtime", {})
+if runtime.get("command_schema") != "thin-host-bridge.command.v1":
+    raise SystemExit(f"bad runtime command schema: {bundle_manifest!r}")
+if runtime.get("stale_command_policy") != "reject-preserve-state":
+    raise SystemExit(f"bad stale command policy: {bundle_manifest!r}")
+recovery = bundle_manifest.get("recovery", {})
+if recovery.get("mode") != "manual-preview" or recovery.get("log_path") != "logs/thin-host-gui-host-shell.ndjson":
+    raise SystemExit(f"bad recovery contract: {bundle_manifest!r}")
+substrate = bundle_manifest.get("app_local_substrate", {})
+if substrate.get("default_store") != "sqlite" or substrate.get("postgres") != "preview-optional":
+    raise SystemExit(f"bad app-local substrate: {bundle_manifest!r}")
 
 asset_paths = [asset.get("path") for asset in bundle_manifest.get("assets", [])]
 expected_assets = {
@@ -84,7 +95,9 @@ required = [
     "thin-host-gui-shell-crash-report-schema=nebula.gui.preview.crash.v1",
     "thin-host-gui-shell-crash-correlation-id=gui-3",
     "thin-host-gui-shell-crash-state-revision=3",
-    "thin-host-gui-shell-end renders=4",
+    "thin-host-gui-shell-recovery-log=logs/thin-host-gui-host-shell.ndjson",
+    "thin-host-gui-shell-recovery-policy=manual-preview",
+    "thin-host-gui-shell-end renders=6",
 ]
 for marker in required:
     if marker not in output:
@@ -100,13 +113,15 @@ for line in output.splitlines():
     if line.startswith("snapshot:"):
         snapshots.append(json.loads(line[len("snapshot:"):]))
 
-if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-2", "gui-3"]:
+if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
     raise SystemExit(f"unexpected event correlation sequence: {events!r}")
-if [event["state_revision"] for event in events] != [0, 1, 2, 3]:
+if [event["state_revision"] for event in events] != [0, 1, 1, 1, 2, 3]:
     raise SystemExit(f"unexpected event revisions: {events!r}")
+if [event["kind"] for event in events][2:4] != ["ui_command_rejected", "ui_command_rejected"]:
+    raise SystemExit(f"rejected command events missing: {events!r}")
 if not events[-1].get("terminal"):
     raise SystemExit(f"final event was not terminal: {events[-1]!r}")
-if [snapshot["state_revision"] for snapshot in snapshots] != [0, 1, 2, 3]:
+if [snapshot["state_revision"] for snapshot in snapshots] != [0, 1, 1, 1, 2, 3]:
     raise SystemExit(f"unexpected snapshot revisions: {snapshots!r}")
 if bundle_manifest["crash"]["last_event_correlation_id"] != events[-1]["correlation_id"]:
     raise SystemExit("bundle crash correlation id does not match final event")

@@ -25,7 +25,16 @@
   ],
   "update_manifest": {
     "path": "deploy/update/manifest.preview.json",
-    "sha256": "379d4d5857ad94bc172269cc6dbedd823aaa284375c0d991ebe0f4f3b4ba5a4d"
+    "sha256": "52457a884a25b45c67e40519907515393af3b7c6ac451baca974285987a4766c"
+  },
+  "runtime": {
+    "command_schema": "thin-host-bridge.command.v1",
+    "event_schema": "thin-host-bridge.event.v1",
+    "snapshot_schema": "thin-host-bridge.snapshot.v1",
+    "state_revision_policy": "monotonic-on-accepted-command",
+    "stale_command_policy": "reject-preserve-state",
+    "unknown_command_policy": "reject-preserve-state",
+    "replay_required": true
   },
   "telemetry": {
     "session_id": "thin-host-gui-preview-session-0001",
@@ -36,5 +45,19 @@
     "crash_report_schema": "nebula.gui.preview.crash.v1",
     "last_event_correlation_id": "gui-3",
     "last_state_revision": 3
+  },
+  "recovery": {
+    "mode": "manual-preview",
+    "log_path": "logs/thin-host-gui-host-shell.ndjson",
+    "restart_policy": "host-owned",
+    "update_failure_policy": "operator-restage-previous-bundle"
+  },
+  "app_local_substrate": {
+    "default_store": "sqlite",
+    "postgres": "preview-optional",
+    "config": "preview-required",
+    "auth": "preview-internal-principal",
+    "jobs": "preview-background-tasks",
+    "observe": "preview-telemetry"
   }
 }

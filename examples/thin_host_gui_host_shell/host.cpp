@@ -15,6 +15,8 @@ std::string command_text(const char* kind, const char* correlation_id, int state
 
 std::vector<std::string> g_commands = {
     command_text("targets.refresh", "gui-1", 0),
+    command_text("targets.refresh", "gui-stale", 0),
+    command_text("targets.export", "gui-unknown", 1),
     command_text("targets.filter", "gui-2", 1),
     command_text("quit", "gui-3", 2),
 };
@@ -100,5 +102,7 @@ void host_shell_end() {
   std::cout << "thin-host-gui-shell-crash-report-schema=nebula.gui.preview.crash.v1\n";
   std::cout << "thin-host-gui-shell-crash-correlation-id=gui-3\n";
   std::cout << "thin-host-gui-shell-crash-state-revision=3\n";
+  std::cout << "thin-host-gui-shell-recovery-log=logs/thin-host-gui-host-shell.ndjson\n";
+  std::cout << "thin-host-gui-shell-recovery-policy=manual-preview\n";
   std::cout << "thin-host-gui-shell-end renders=" << g_render_count << "\n";
 }

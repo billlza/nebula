@@ -31,7 +31,9 @@ required = [
     "nebula-ui-tree-input-accessibility-label=Filter targets",
     "nebula-ui-action-dispatched=targets.refresh",
     "nebula-ui-action-dispatched=targets.filter",
-    "thin-host-gui-shell-end renders=4",
+    "thin-host-gui-shell-recovery-log=logs/thin-host-gui-host-shell.ndjson",
+    "thin-host-gui-shell-recovery-policy=manual-preview",
+    "thin-host-gui-shell-end renders=6",
 ]
 for marker in required:
     if marker not in output:
@@ -50,22 +52,30 @@ for line in output.splitlines():
 if [event["kind"] for event in events] != [
     "ui_shell_booted",
     "ui_action_applied",
+    "ui_command_rejected",
+    "ui_command_rejected",
     "ui_action_applied",
     "ui_shell_quit",
 ]:
     raise SystemExit(f"unexpected event sequence: {events!r}")
-if [event["schema"] for event in events] != ["thin-host-bridge.event.v1"] * 4:
+if [event["schema"] for event in events] != ["thin-host-bridge.event.v1"] * 6:
     raise SystemExit(f"unexpected event schemas: {events!r}")
-if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-2", "gui-3"]:
+if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
     raise SystemExit(f"unexpected correlation ids: {events!r}")
-if [event["state_revision"] for event in events] != [0, 1, 2, 3]:
+if [event["state_revision"] for event in events] != [0, 1, 1, 1, 2, 3]:
     raise SystemExit(f"unexpected event revisions: {events!r}")
+if events[2]["payload"].get("reason") != "stale thin-host GUI command state_revision":
+    raise SystemExit(f"stale command rejection reason missing: {events[2]!r}")
+if events[3]["payload"].get("reason") != "unknown thin-host GUI command kind":
+    raise SystemExit(f"unknown command rejection reason missing: {events[3]!r}")
+if events[2]["payload"].get("last_action") != "targets.refresh" or events[3]["payload"].get("last_action") != "targets.refresh":
+    raise SystemExit(f"rejected commands mutated last action unexpectedly: {events!r}")
 if events[-1]["terminal"] is not True:
     raise SystemExit(f"quit event was not terminal: {events[-1]!r}")
 
-if len(snapshots) != 4:
-    raise SystemExit(f"expected four snapshots, got {len(snapshots)}: {output!r}")
-for expected_revision, snapshot in enumerate(snapshots):
+if len(snapshots) != 6:
+    raise SystemExit(f"expected six snapshots, got {len(snapshots)}: {output!r}")
+for expected_revision, snapshot in zip([0, 1, 1, 1, 2, 3], snapshots):
     if snapshot["schema"] != "thin-host-bridge.snapshot.v1":
         raise SystemExit(f"bad snapshot schema: {snapshot!r}")
     if snapshot["screen"] != "local_ops_console":
@@ -85,8 +95,12 @@ for expected_revision, snapshot in enumerate(snapshots):
 
 if snapshots[0]["payload"]["children"][0]["props"]["value"] != "targets":
     raise SystemExit("initial filter value missing")
-if snapshots[2]["payload"]["children"][0]["props"]["value"] != "prod":
+if snapshots[4]["payload"]["children"][0]["props"]["value"] != "prod":
     raise SystemExit("filter command did not update UI IR snapshot")
+if snapshots[1]["payload"]["children"][0]["props"]["value"] != snapshots[2]["payload"]["children"][0]["props"]["value"]:
+    raise SystemExit("stale rejected command mutated snapshot state")
+if snapshots[2]["payload"]["children"][0]["props"]["value"] != snapshots[3]["payload"]["children"][0]["props"]["value"]:
+    raise SystemExit("unknown rejected command mutated snapshot state")
 
 print("thin-host-gui-host-shell-pilot-ok")
 PY
