@@ -27,6 +27,7 @@ Repo-local preview packages:
 - `nebula-pqc-protocols`
 - `nebula-qkd`
 - `nebula-qcomm-sim`
+- `nebula-app-local`
 - `nebula-thin-host-bridge`
 - `nebula-ui`
 
@@ -65,6 +66,10 @@ Current package intent:
   request/response helpers and a deterministic local mock; not a hardware, trusted-node, or
   security-certification contract
 - `nebula-qcomm-sim` is simulation-only BB84 quantum-communication lab work
+- `nebula-app-local`: preview composition substrate for standalone/thin-host apps, combining
+  config, auth principal carriage, SQLite-default state, PostgreSQL preview preflight, jobs DAG
+  validation, and observe events without claiming an ORM, game runtime, media-player template, or
+  complete app framework
 - `nebula-thin-host-bridge`: preview command/event/snapshot envelope contract for thin-host app
   cores, including correlation, state revision, replay validation, and explicit non-UI non-goals
 - `nebula-ui`: preview semantic UI tree package for `ui` / `view` source syntax,

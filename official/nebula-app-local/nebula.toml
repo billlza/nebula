@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+name = "nebula-app-local"
+version = "0.1.0"
+entry = "src/lib.nb"
+src_dir = "src"
+
+[dependencies]
+app_config = { path = "../nebula-config" }
+auth_pkg = { path = "../nebula-auth" }
+db_postgres = { path = "../nebula-db-postgres" }
+jobs = { path = "../nebula-jobs" }
+observe = { path = "../nebula-observe" }

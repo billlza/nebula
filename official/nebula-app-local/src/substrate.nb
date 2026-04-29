@@ -1,0 +1,220 @@
+module substrate
+import app_config::config
+import auth_pkg::jwt
+import db_postgres::postgres
+import jobs::graph
+import observe::log
+import observe::metrics
+import std::json
+import std::result
+
+struct AppLocalConfig {
+  app_id: String
+  data_backend: String
+  sqlite_path: String
+  postgres_preview: Bool
+  postgres_dsn: String
+  auth_required: Bool
+  auth_mode: String
+  principal_subject: String
+  observe_service: String
+}
+
+struct AppLocalPreflight {
+  ok: Bool
+  data_backend: String
+  sqlite_path: String
+  postgres_preview: Bool
+  postgres_runtime_available: Bool
+  auth_required: Bool
+  auth_mode: String
+  principal_subject: String
+  diagnostic: Json
+}
+
+struct AppLocalPrincipal {
+  subject: String
+  role: String
+  auth_mode: String
+}
+
+fn app_local_config(app_id: String,
+                    data_backend: String,
+                    sqlite_path: String,
+                    postgres_preview: Bool,
+                    postgres_dsn: String,
+                    auth_required: Bool,
+                    auth_mode: String,
+                    principal_subject: String,
+                    observe_service: String) -> Result<AppLocalConfig, String> {
+  let config_value = AppLocalConfig(app_id,
+                                    data_backend,
+                                    sqlite_path,
+                                    postgres_preview,
+                                    postgres_dsn,
+                                    auth_required,
+                                    auth_mode,
+                                    principal_subject,
+                                    observe_service)
+  validate_config(config_value)?
+  return Ok(config_value)
+}
+
+fn validate_data_backend(config_value: AppLocalConfig) -> Result<Bool, String> {
+  if config_value.data_backend != "sqlite" && config_value.data_backend != "postgres" {
+    return Err("app-local substrate data_backend must be sqlite or postgres")
+  }
+  if config_value.data_backend == "sqlite" && config_value.sqlite_path == "" {
+    return Err("app-local substrate sqlite_path is required for sqlite backend")
+  }
+  return Ok(true)
+}
+
+fn validate_postgres_gate(config_value: AppLocalConfig) -> Result<Bool, String> {
+  if config_value.data_backend == "postgres" {
+    if !config_value.postgres_preview {
+      return Err("app-local substrate postgres backend requires postgres_preview=true")
+    }
+    if config_value.postgres_dsn == "" {
+      return Err("app-local substrate postgres backend requires postgres_dsn")
+    }
+    if !config_value.auth_required {
+      return Err("app-local substrate postgres backend requires auth_required=true")
+    }
+  }
+  return Ok(true)
+}
+
+fn validate_auth_mode(config_value: AppLocalConfig) -> Result<Bool, String> {
+  if config_value.auth_mode != "internal" && config_value.auth_mode != "token" && config_value.auth_mode != "jwt" {
+    return Err("app-local substrate auth_mode must be internal, token, or jwt")
+  }
+  if config_value.auth_required && config_value.principal_subject == "" {
+    return Err("app-local substrate auth_required requires principal_subject")
+  }
+  return Ok(true)
+}
+
+fn validate_config(config_value: AppLocalConfig) -> Result<Bool, String> {
+  if config_value.app_id == "" {
+    return Err("app-local substrate app_id is required")
+  }
+  if config_value.observe_service == "" {
+    return Err("app-local substrate observe_service is required")
+  }
+  validate_data_backend(config_value)?
+  validate_postgres_gate(config_value)?
+  return validate_auth_mode(config_value)
+}
+
+fn postgres_runtime_available_if_needed(config_value: AppLocalConfig) -> Result<Bool, String> {
+  if config_value.data_backend != "postgres" {
+    return Ok(false)
+  }
+  match probe_runtime() {
+    Ok(available) => {
+      if available {
+        return Ok(true)
+      }
+      return Err("app-local substrate postgres runtime unavailable")
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn preflight_diagnostic(config_value: AppLocalConfig, postgres_runtime_available: Bool) -> Json {
+  return object9("schema",
+                 string_value("nebula.app-local.preflight.v1"),
+                 "app_id",
+                 string_value(config_value.app_id),
+                 "data_backend",
+                 string_value(config_value.data_backend),
+                 "sqlite_path",
+                 string_value(config_value.sqlite_path),
+                 "postgres_preview",
+                 bool_value(config_value.postgres_preview),
+                 "postgres_runtime_available",
+                 bool_value(postgres_runtime_available),
+                 "auth_required",
+                 bool_value(config_value.auth_required),
+                 "auth_mode",
+                 string_value(config_value.auth_mode),
+                 "principal_subject",
+                 string_value(config_value.principal_subject))
+}
+
+fn preflight(config_value: AppLocalConfig) -> Result<AppLocalPreflight, String> {
+  validate_config(config_value)?
+  let postgres_available = postgres_runtime_available_if_needed(config_value)?
+  let diagnostic = preflight_diagnostic(config_value, postgres_available)
+  return Ok(AppLocalPreflight(true,
+                              config_value.data_backend,
+                              config_value.sqlite_path,
+                              config_value.postgres_preview,
+                              postgres_available,
+                              config_value.auth_required,
+                              config_value.auth_mode,
+                              config_value.principal_subject,
+                              diagnostic))
+}
+
+fn AppLocalPreflight_as_json(self: AppLocalPreflight) -> Json {
+  return object9("schema",
+                 string_value("nebula.app-local.preflight.v1"),
+                 "ok",
+                 bool_value(self.ok),
+                 "data_backend",
+                 string_value(self.data_backend),
+                 "sqlite_path",
+                 string_value(self.sqlite_path),
+                 "postgres_preview",
+                 bool_value(self.postgres_preview),
+                 "postgres_runtime_available",
+                 bool_value(self.postgres_runtime_available),
+                 "auth_required",
+                 bool_value(self.auth_required),
+                 "auth_mode",
+                 string_value(self.auth_mode),
+                 "principal_subject",
+                 string_value(self.principal_subject))
+}
+
+fn principal(subject: String, role: String, auth_mode: String) -> Result<AppLocalPrincipal, String> {
+  if subject == "" {
+    return Err("app-local substrate principal subject is required")
+  }
+  if role == "" {
+    return Err("app-local substrate principal role is required")
+  }
+  if auth_mode != "internal" && auth_mode != "token" && auth_mode != "jwt" {
+    return Err("app-local substrate auth_mode must be internal, token, or jwt")
+  }
+  return Ok(AppLocalPrincipal(subject, role, auth_mode))
+}
+
+fn principal_from_claims(claims: JwtClaims, role: String) -> Result<AppLocalPrincipal, String> {
+  return principal(claims.subject, role, "jwt")
+}
+
+fn AppLocalPrincipal_as_json(self: AppLocalPrincipal) -> Json {
+  return object3("subject",
+                 string_value(self.subject),
+                 "role",
+                 string_value(self.role),
+                 "auth_mode",
+                 string_value(self.auth_mode))
+}
+
+fn validate_background_stages(stages: Json) -> Result<Bool, String> {
+  return validate_stage_graph(stages)
+}
+
+fn emit_preflight_observe(config_value: AppLocalConfig, report: AppLocalPreflight) -> Void {
+  info_event(config_value.observe_service, "app_local_preflight_ok", "app-local substrate preflight passed")
+  delta_counter(config_value.observe_service, "app_local_preflight", "1", 1)
+  if report.data_backend == "postgres" {
+    delta_counter(config_value.observe_service, "app_local_postgres_preview", "1", 1)
+  }
+}

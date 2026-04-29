@@ -1,0 +1,376 @@
+id = "TST-307-app-local-substrate-contract-smoke"
+suite = "test"
+description = "app-local substrate combines config, SQLite, PostgreSQL preflight, auth principal shape, jobs DAG, and observe output without app-specific assumptions"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_substrate_contract")
+app = root / "app"
+secret_file = root / "secret.txt"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+secret_file.parent.mkdir(parents=True, exist_ok=True)
+secret_file.write_text("substrate-secret\\n", encoding="utf-8")
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-substrate-contract"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+app_config = {{ path = "{repo / 'official' / 'nebula-config'}" }}
+auth_pkg = {{ path = "{repo / 'official' / 'nebula-auth'}" }}
+db_postgres = {{ path = "{repo / 'official' / 'nebula-db-postgres'}" }}
+db_sqlite = {{ path = "{repo / 'official' / 'nebula-db-sqlite'}" }}
+jobs = {{ path = "{repo / 'official' / 'nebula-jobs'}" }}
+observe = {{ path = "{repo / 'official' / 'nebula-observe'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "storage.nb").write_text(r'''module storage
+import db_sqlite::sqlite
+import std::json
+import std::result
+
+fn migrations() -> Json {
+  let builder = array_builder()
+  let sql = "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, revision INTEGER NOT NULL)"
+  builder = array_push(builder, migration(1, "app_state", sql))
+  return array_build(builder)
+}
+
+fn state_params(key: String, value: String, revision: Int) -> Json {
+  let builder = array_builder()
+  builder = array_push(builder, string_value(key))
+  builder = array_push(builder, string_value(value))
+  builder = array_push(builder, int_value(revision))
+  return array_build(builder)
+}
+
+fn seed_state(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("DELETE FROM app_state")?
+  conn.execute("INSERT INTO app_state(key, value, revision) VALUES (?, ?, ?)", state_params("profile", "ready", 2))?
+  return Ok(true)
+}
+
+fn has_single_row(rows: ResultSet) -> Result<Bool, String> {
+  let count = rows.len()?
+  return Ok(count == 1)
+}
+
+fn row_matches(row: Row) -> Result<Bool, String> {
+  let key = row.get_string_at(0)?
+  let value = row.get_string_at(1)?
+  let revision = row.get_int_at(2)?
+  return Ok(key == "profile" && value == "ready" && revision == 2)
+}
+
+fn read_state(conn: Connection) -> Result<Bool, String> {
+  let rows = conn.query0("SELECT key, value, revision FROM app_state ORDER BY key ASC")?
+  if !has_single_row(rows)? {
+    return Ok(false)
+  }
+  return row_matches(rows.row(0)?)
+}
+
+fn verify_sqlite(path: String) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.run_migrations(migrations())?
+  seed_state(conn)?
+  let ok = read_state(conn)?
+  conn.close()?
+  return Ok(ok)
+}
+''', encoding="utf-8")
+
+(app / "src" / "substrate_config.nb").write_text(r'''module substrate_config
+import app_config::config
+import std::json
+import std::result
+
+fn verify_config() -> Result<Bool, String> {
+  let profile = required_env("APP_LOCAL_SUBSTRATE_PROFILE")?
+  let secret = required_secret_value("APP_LOCAL_SECRET", "APP_LOCAL_SECRET_FILE")?
+  let diagnostic = secret_diagnostic("APP_LOCAL_SECRET", "APP_LOCAL_SECRET_FILE", true)
+  let status = get_string(diagnostic, "status")?
+  let value = get_string(diagnostic, "value")?
+  return Ok(profile == "default" && secret == "substrate-secret" && status == "ok" && value == "<redacted>")
+}
+''', encoding="utf-8")
+
+(app / "src" / "principal.nb").write_text(r'''module principal
+import app_local::substrate
+import auth_pkg::jwt
+import std::json
+import std::result
+
+fn sample_claims_json() -> Json {
+  let roles = array_build(array_push(array_builder(), string_value("app.local.admin")))
+  let claims = JwtClaims("local-operator", "nebula-local", "app-local", 2000, 1000, roles)
+  return claims.as_json()
+}
+
+fn verify_claim_text(value: Json) -> Result<Bool, String> {
+  let subject = get_string(value, "subject")?
+  let issuer = get_string(value, "issuer")?
+  let audience = get_string(value, "audience")?
+  return Ok(subject == "local-operator" && issuer == "nebula-local" && audience == "app-local")
+}
+
+fn verify_claim_roles(value: Json) -> Result<Bool, String> {
+  let claim_roles = get_value(value, "roles")?
+  let first_role = as_string(array_get(claim_roles, 0)?)?
+  return Ok(first_role == "app.local.admin")
+}
+
+fn verify_principal_shape() -> Result<Bool, String> {
+  let value = sample_claims_json()
+  if !verify_claim_text(value)? {
+    return Ok(false)
+  }
+  if !verify_claim_roles(value)? {
+    return Ok(false)
+  }
+  let claims = JwtClaims("local-operator", "nebula-local", "app-local", 2000, 1000, array1(string_value("app.local.admin")))
+  let principal = principal_from_claims(claims, "app.local.admin")?
+  return Ok(principal.subject == "local-operator" && principal.role == "app.local.admin" && principal.auth_mode == "jwt")
+}
+''', encoding="utf-8")
+
+(app / "src" / "background.nb").write_text(r'''module background
+import app_local::substrate
+import jobs::contracts
+import jobs::graph
+import std::json
+import std::result
+
+fn verify_jobs_dag() -> Result<Bool, String> {
+  let scan = JobStageSpec("scan", "leased_task", "app.scan", 30, 2, empty_json_array()).as_json()
+  let deps = array_build(array_push(array_builder(), string_value("scan")))
+  let publish = JobStageSpec("publish", "leased_task", "app.publish", 30, 2, deps).as_json()
+  let stages = array_builder()
+  stages = array_push(stages, scan)
+  stages = array_push(stages, publish)
+  return validate_background_stages(array_build(stages))
+}
+''', encoding="utf-8")
+
+(app / "src" / "postgres_preflight.nb").write_text(r'''module postgres_preflight
+import app_local::substrate
+import db_postgres::postgres
+import std::result
+
+fn verify_postgres_preflight() -> Result<Bool, String> {
+  match probe_runtime() {
+    Ok(_) => {
+      return Ok(true)
+    }
+    Err(msg) => {
+      if msg != "" {
+        return Ok(true)
+      }
+      return Err("postgres runtime probe returned empty diagnostic")
+    }
+  }
+}
+''', encoding="utf-8")
+
+(app / "src" / "telemetry.nb").write_text(r'''module telemetry
+import app_local::substrate
+import observe::log
+import observe::metrics
+import std::json
+import std::result
+
+fn substrate_config() -> AppLocalConfig {
+  return AppLocalConfig("substrate-smoke",
+                        "sqlite",
+                        "work/app_local_substrate_contract/state/app.db",
+                        false,
+                        "",
+                        true,
+                        "internal",
+                        "local-operator",
+                        "app-local-substrate")
+}
+
+fn verify_app_local_preflight() -> Result<Bool, String> {
+  let config_value = substrate_config()
+  let report = preflight(config_value)?
+  let value = report.as_json()
+  let schema = get_string(value, "schema")?
+  let backend = get_string(value, "data_backend")?
+  return Ok(schema == "nebula.app-local.preflight.v1" && backend == "sqlite" && report.ok)
+}
+
+fn emit_substrate_observe() -> Result<Bool, String> {
+  let config_value = substrate_config()
+  let report = preflight(config_value)?
+  emit_preflight_observe(config_value, report)
+  return Ok(true)
+}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import background
+import postgres_preflight
+import principal
+import storage
+import substrate_config
+import telemetry
+import std::result
+
+fn db_path() -> String {
+  return "work/app_local_substrate_contract/state/app.db"
+}
+
+fn verify_config_and_storage() -> Result<Bool, String> {
+  if !verify_config()? {
+    return Ok(false)
+  }
+  if !verify_sqlite(db_path())? {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn verify_preview_and_identity() -> Result<Bool, String> {
+  if !verify_postgres_preflight()? {
+    return Ok(false)
+  }
+  if !verify_principal_shape()? {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn verify_all() -> Result<Bool, String> {
+  if !verify_config_and_storage()? {
+    return Ok(false)
+  }
+  if !verify_preview_and_identity()? {
+    return Ok(false)
+  }
+  if !verify_jobs_dag()? {
+    return Ok(false)
+  }
+  if !verify_app_local_preflight()? {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn main() -> Int {
+  match verify_all() {
+    Ok(ok) => {
+      if ok {
+        match emit_substrate_observe() {
+          Ok(_) => {
+            print("app-local-substrate-contract-ok")
+            return 0
+          }
+          Err(msg) => {
+            print(msg)
+            return 1
+          }
+        }
+      }
+      print("app-local-substrate-contract-bad")
+      return 1
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+}
+''', encoding="utf-8")
+
+env = {
+    **os.environ,
+    "APP_LOCAL_SUBSTRATE_PROFILE": "default",
+    "APP_LOCAL_SECRET_FILE": str(secret_file.resolve()),
+}
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True, env=env)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True, env=env)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local substrate check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, env=env)
+if run.returncode != 0 or "app-local-substrate-contract-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local substrate smoke failed")
+for fragment in [
+    '"schema":"nebula.observe.metric.v1"',
+    '"service":"app-local-substrate"',
+    '"metric":"app_local_preflight"',
+    '"event":"app_local_preflight_ok"',
+]:
+    if fragment not in run.stderr:
+        raise SystemExit(f"observe output missing fragment: {fragment!r} in {run.stderr!r}")
+print("app-local-substrate-contract-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-substrate-contract-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+required = [
+    "App-Local Substrate Preview",
+    "not a media-player template",
+    "official/nebula-app-local",
+    "SQLite is the default durable local data plane",
+    "PostgreSQL is optional repo-preview",
+    "nebula-config",
+    "nebula-auth",
+    "nebula-jobs",
+    "nebula-observe",
+    "nebula-app-local",
+    "Secrets must never appear",
+    "must not pre-build a media library",
+    "must not standardize",
+    "validation app actually needs them",
+]
+missing = [item for item in required if item not in doc]
+if missing:
+    raise SystemExit(f"app-local substrate doc missing markers: {missing!r}")
+shell_doc = (repo / "docs" / "thin_host_app_shell.md").read_text(encoding="utf-8")
+media_doc = (repo / "docs" / "media_player_validation_app.md").read_text(encoding="utf-8")
+for marker in [
+    "docs/app_local_substrate.md",
+    "generic substrate boundary",
+    "app-specific schemas should emerge",
+]:
+    if marker not in shell_doc:
+        raise SystemExit(f"thin-host shell doc missing substrate marker: {marker}")
+if "docs/app_local_substrate.md" not in media_doc:
+    raise SystemExit("media player probe doc does not point at generic substrate")
+package_tiering = (repo / "docs" / "official_package_tiering.md").read_text(encoding="utf-8")
+for marker in ["nebula-app-local", "preview composition substrate", "without claiming an ORM"]:
+    if marker not in package_tiering:
+        raise SystemExit(f"package tiering missing app-local marker: {marker}")
+print("app-local-substrate-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-substrate-docs-ok"]

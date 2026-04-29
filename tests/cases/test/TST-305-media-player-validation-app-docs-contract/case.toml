@@ -1,0 +1,59 @@
+id = "TST-305-media-player-validation-app-docs-contract"
+suite = "test"
+description = "media player validation app docs keep legal torrent and app-local substrate boundaries explicit"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+doc = repo / "docs" / "media_player_validation_app.md"
+text = doc.read_text(encoding="utf-8")
+required = [
+    "thin-host media player",
+    "validation probe",
+    "not a reusable app template",
+    "The platform should not pre-build media-player-specific capabilities",
+    "A game, editor, or operations console",
+    "audio quality",
+    "video quality",
+    "bitrate policy",
+    "Legal Torrent Boundary",
+    "public-domain content",
+    "open-licensed content",
+    "media the operator has rights to download",
+    "must not include piracy search",
+    "host-owned transport adapter",
+    "SQLite remains the default local data plane",
+    "PostgreSQL is included as an optional preview backend",
+    "no automatic SQLite-to-PostgreSQL migration claim",
+    "Other platform pieces remain generic capabilities",
+    "nebula-config",
+    "nebula-auth",
+    "nebula-jobs",
+    "nebula-observe",
+    "library.import_torrent",
+    "playback.set_audio_quality",
+    "playback.set_video_quality",
+    "playback.set_bitrate_policy",
+]
+missing = [item for item in required if item not in text]
+if missing:
+    raise SystemExit(f"missing media player validation app doc markers: {missing!r}")
+shell_doc = (repo / "docs" / "thin_host_app_shell.md").read_text(encoding="utf-8")
+for marker in [
+    "docs/media_player_validation_app.md",
+    "optional PostgreSQL metadata",
+    "not a reusable app template",
+    "Torrent import for that app is limited",
+]:
+    if marker not in shell_doc:
+        raise SystemExit(f"thin-host shell guide missing media marker: {marker}")
+print("media-player-validation-app-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["media-player-validation-app-docs-ok"]

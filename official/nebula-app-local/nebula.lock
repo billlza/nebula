@@ -1,0 +1,121 @@
+schema_version = 2
+root_package = "nebula-app-local"
+root_manifest_hash = "a413ae56e70bbe2f"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "nebula-app-local"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "root"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "a413ae56e70bbe2f"
+source_fingerprint = "8de19fc7094f7fa1"
+integrity_fingerprint = "3a2eef0c574b5bb0"
+is_root = 1
+dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "jobs=nebula-jobs", "observe=nebula-observe"]
+
+[[package]]
+name = "nebula-auth"
+version = "0.1.0"
+root = "../nebula-auth"
+manifest = "../nebula-auth/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-auth"
+resolved_rev = ""
+manifest_hash = "3001bd4e24c54ba6"
+source_fingerprint = "f632ca718b48402e"
+integrity_fingerprint = "2ed00c956b25c1e4"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-config"
+version = "0.1.0"
+root = "../nebula-config"
+manifest = "../nebula-config/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-config"
+resolved_rev = ""
+manifest_hash = "d1a9ed532ab65b9e"
+source_fingerprint = "b3515cb727a50bfb"
+integrity_fingerprint = "ec8cd676d0985b6b"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-db-postgres"
+version = "0.1.0"
+root = "../nebula-db-postgres"
+manifest = "../nebula-db-postgres/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-db-postgres"
+resolved_rev = ""
+manifest_hash = "d52f52e5c4f2a1f8"
+source_fingerprint = "d094dc31f20662b1"
+integrity_fingerprint = "14644b48dfd62784"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-db-sqlite"
+version = "0.1.0"
+root = "../nebula-db-sqlite"
+manifest = "../nebula-db-sqlite/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-db-sqlite"
+resolved_rev = ""
+manifest_hash = "fc4d07adad75b3ed"
+source_fingerprint = "c4a7b1f99f1715f4"
+integrity_fingerprint = "8ec068b6856bb59f"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-jobs"
+version = "0.1.0"
+root = "../nebula-jobs"
+manifest = "../nebula-jobs/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-jobs"
+resolved_rev = ""
+manifest_hash = "fe187ccc7970baf9"
+source_fingerprint = "3696eefc8ede27e7"
+integrity_fingerprint = "327dee5cf33984a3"
+is_root = 0
+dependencies = ["db_sqlite=nebula-db-sqlite"]
+
+[[package]]
+name = "nebula-observe"
+version = "0.1.0"
+root = "../nebula-observe"
+manifest = "../nebula-observe/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../nebula-observe"
+resolved_rev = ""
+manifest_hash = "9a8a10871f57579b"
+source_fingerprint = "c61413f4bbd8e08c"
+integrity_fingerprint = "fe583625075a78d"
+is_root = 0
+dependencies = []
