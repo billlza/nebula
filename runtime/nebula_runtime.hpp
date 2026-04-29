@@ -162,10 +162,11 @@ struct Result {
   };
 
   std::variant<Ok, Err> data;
+  bool ok = true;
 
   Result() = default;
-  Result(Ok ok) : data(std::move(ok)) {}
-  Result(Err err) : data(std::move(err)) {}
+  Result(Ok value) : data(std::move(value)), ok(true) {}
+  Result(Err value) : data(std::move(value)), ok(false) {}
 };
 
 template <typename E>
@@ -176,20 +177,21 @@ struct Result<void, E> {
   };
 
   std::variant<Ok, Err> data;
+  bool ok = true;
 
   Result() = default;
-  Result(Ok ok) : data(std::move(ok)) {}
-  Result(Err err) : data(std::move(err)) {}
+  Result(Ok value) : data(std::move(value)), ok(true) {}
+  Result(Err value) : data(std::move(value)), ok(false) {}
 };
 
 template <typename T, typename E>
 inline bool result_is_ok(const Result<T, E>& result) {
-  return std::holds_alternative<typename Result<T, E>::Ok>(result.data);
+  return result.ok;
 }
 
 template <typename T, typename E>
 inline bool result_is_err(const Result<T, E>& result) {
-  return std::holds_alternative<typename Result<T, E>::Err>(result.data);
+  return !result.ok;
 }
 
 template <typename T, typename E>
