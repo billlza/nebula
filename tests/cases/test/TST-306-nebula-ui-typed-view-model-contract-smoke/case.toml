@@ -1,0 +1,277 @@
+id = "TST-306-nebula-ui-typed-view-model-contract-smoke"
+suite = "test"
+description = "nebula-ui exposes generic typed view-model/action/hit-test/patch helpers without changing JSON wire contract"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/nebula-ui-typed-view-model-contract")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "nebula-ui-typed-view-model-contract"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+ui = {{ path = "{repo / 'official' / 'nebula-ui'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import std::result
+import ui::headless
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_int(actual: Int, expected: Int) -> Void {
+  expect_eq(actual, expected)
+}
+
+fn expect_ok(result: Result<Bool, String>) -> Void {
+  match result {
+    Ok(value) => {
+      if !value {
+        fail()
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn expect_err(result: Result<Bool, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn expect_slot_err(result: Result<TypedActionSlot, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn expect_model_err(result: Result<TypedUiViewModel, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn dummy_slot() -> TypedActionSlot {
+  return TypedActionSlot("dummy", 99, "button", "Dummy")
+}
+
+fn dummy_model() -> TypedUiViewModel {
+  return TypedUiViewModel("", "", "", 0, dummy_slot(), dummy_slot())
+}
+
+fn require_slot(result: Result<TypedActionSlot, String>) -> TypedActionSlot {
+  match result {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+      return dummy_slot()
+    }
+  }
+}
+
+fn require_model(result: Result<TypedUiViewModel, String>) -> TypedUiViewModel {
+  match result {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+      return dummy_model()
+    }
+  }
+}
+
+fn require_index(result: Result<TypedActionIndex, String>) -> TypedActionIndex {
+  match result {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+      return TypedActionIndex("", "", 1, 2, 0)
+    }
+  }
+}
+
+fn player_model(value: String,
+                primary_id: String,
+                secondary_id: String,
+                primary_code: Int,
+                secondary_code: Int) -> Result<TypedUiViewModel, String> {
+  let primary = typed_action_slot(primary_id, primary_code, "quality-select", "Audio quality")?
+  let secondary = typed_action_slot(secondary_id, secondary_code, "button", "Apply quality")?
+  return typed_view_model("Nebula Player", "Now playing", value, 8, primary, secondary)
+}
+
+fn sample_model() -> TypedUiViewModel {
+  return require_model(player_model("lossless",
+                                    "playback.set_audio_quality",
+                                    "playback.apply_quality",
+                                    11,
+                                    12))
+}
+
+fn expect_hit_id(layout_value: TypedUiLayout, x: Int, y: Int, expected: String) -> Void {
+  match typed_hit_test_action_id(layout_value, x, y) {
+    Ok(action) => {
+      expect_text(action, expected)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn expect_hit_code(layout_value: TypedUiLayout, x: Int, y: Int, expected: Int) -> Void {
+  match typed_hit_test_action_code(layout_value, x, y) {
+    Ok(action_code) => {
+      expect_int(action_code, expected)
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn verify_action_index() -> Void {
+  let model = sample_model()
+  let index = require_index(typed_action_index(model))
+  expect_text(index.primary_action, "playback.set_audio_quality")
+  expect_text(index.secondary_action, "playback.apply_quality")
+  expect_int(index.primary_action_code, 11)
+  expect_int(index.secondary_action_code, 12)
+  expect_int(index.action_count, 2)
+  expect_ok(typed_dispatch_action_id(index, "playback.set_audio_quality"))
+  expect_ok(typed_dispatch_action_code(index, 12))
+  expect_err(typed_dispatch_action_id(index, "playback.unknown"), "action not found: playback.unknown")
+}
+
+fn verify_hit_test() -> Void {
+  let model = sample_model()
+  let layout_value = typed_layout(model)
+  expect_hit_id(layout_value, 30, 60, "playback.set_audio_quality")
+  expect_hit_code(layout_value, 30, 100, 12)
+}
+
+fn verify_patch_contract() -> Void {
+  let model = sample_model()
+  let changed_value = require_model(player_model("high",
+                                                 "playback.set_audio_quality",
+                                                 "playback.apply_quality",
+                                                 11,
+                                                 12))
+  expect_int(typed_patch_code(model, changed_value), 111)
+
+  let changed_action = require_model(player_model("lossless",
+                                                  "playback.set_audio_quality",
+                                                  "playback.confirm_quality",
+                                                  11,
+                                                  12))
+  expect_int(typed_patch_code(model, changed_action), 200)
+  expect_int(typed_patch_code(model, model), 0)
+}
+
+fn verify_slot_negative_contracts() -> Void {
+  expect_slot_err(typed_action_slot("", 1, "button", "Apply"), "typed UI action slot requires non-empty action id")
+  expect_slot_err(typed_action_slot("playback.apply_quality", 0, "button", "Apply"), "typed UI action slot requires positive action code")
+  expect_slot_err(typed_action_slot("playback.apply_quality", 1, "", "Apply"), "typed UI action slot requires non-empty role")
+  expect_slot_err(typed_action_slot("playback.apply_quality", 1, "button", ""), "typed UI action slot requires non-empty accessibility label")
+}
+
+fn verify_index_negative_contracts() -> Void {
+  let primary = require_slot(typed_action_slot("playback.a", 1, "button", "A"))
+  let secondary = require_slot(typed_action_slot("playback.b", 1, "button", "B"))
+  let bad_codes = require_model(typed_view_model("Player", "Now", "lossless", 8, primary, secondary))
+  match typed_action_index(bad_codes) {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, "typed UI action codes must be distinct")
+    }
+  }
+}
+
+fn verify_model_negative_contracts() -> Void {
+  let primary = require_slot(typed_action_slot("playback.a", 1, "button", "A"))
+  let good_secondary = require_slot(typed_action_slot("playback.b", 2, "button", "B"))
+  expect_model_err(typed_view_model("Player", "Now", "lossless", -1, primary, good_secondary),
+                   "typed UI view model requires non-negative spacing")
+}
+
+fn main() -> Int {
+  verify_action_index()
+  verify_hit_test()
+  verify_patch_contract()
+  verify_slot_negative_contracts()
+  verify_index_negative_contracts()
+  verify_model_negative_contracts()
+  print("nebula-ui-typed-view-model-contract-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"typed UI model check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], check=True, capture_output=True, text=True)
+if "nebula-ui-typed-view-model-contract-ok" not in run.stdout:
+    raise SystemExit(run.stdout)
+print("nebula-ui-typed-view-model-contract-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["nebula-ui-typed-view-model-contract-ok"]

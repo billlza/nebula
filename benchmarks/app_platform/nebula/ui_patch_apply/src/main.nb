@@ -3,9 +3,11 @@ import ui::headless
 
 @bench
 fn bench_ui_patch_apply() -> Void {
-  let old_tree = FastPreviewTree("Local Ops", "Local Ops", "targets", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
-  let new_tree = FastPreviewTree("Local Ops", "Local Ops", "prod", "targets.filter", "Filter targets", "Refresh", "targets.refresh", 12)
-  let patch_code = fast_patch_code(old_tree, new_tree)
+  let primary = TypedActionSlot("targets.filter", 1, "input", "Filter targets")
+  let secondary = TypedActionSlot("targets.refresh", 2, "button", "Refresh")
+  let old_model = TypedUiViewModel("Local Ops", "Local Ops", "targets", 12, primary, secondary)
+  let new_model = TypedUiViewModel("Local Ops", "Local Ops", "prod", 12, primary, secondary)
+  let patch_code = typed_patch_code(old_model, new_model)
   if patch_code != 111 {
     expect_eq(1, 0)
   }

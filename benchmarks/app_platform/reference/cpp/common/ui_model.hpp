@@ -92,6 +92,41 @@ struct FastActionIndex {
   int input_count = 1;
 };
 
+struct TypedActionSlot {
+  std::string action_id;
+  int action_code = 0;
+  std::string role;
+  std::string accessibility_label;
+};
+
+struct TypedUiViewModel {
+  std::string title;
+  std::string text;
+  std::string editable_value;
+  int spacing = 12;
+  TypedActionSlot primary_action;
+  TypedActionSlot secondary_action;
+};
+
+struct TypedUiLayout {
+  int width = 0;
+  int height = 0;
+  FastRect text_rect;
+  FastRect primary_rect;
+  FastRect secondary_rect;
+  TypedActionSlot primary_action;
+  TypedActionSlot secondary_action;
+  int command_count = 0;
+};
+
+struct TypedActionIndex {
+  std::string primary_action;
+  std::string secondary_action;
+  int primary_action_code = 1;
+  int secondary_action_code = 2;
+  int action_count = 2;
+};
+
 struct FastPatch {
   std::string kind;
   std::string node_id;
@@ -286,6 +321,62 @@ inline int text_width(const std::string& text) {
   return std::max(8, static_cast<int>(text.size()) * 8);
 }
 
+inline TypedActionSlot typed_action_slot(std::string action_id,
+                                         int action_code,
+                                         std::string role,
+                                         std::string accessibility_label) {
+  if (action_id.empty()) fail("typed UI action slot requires non-empty action id");
+  if (action_code <= 0) fail("typed UI action slot requires positive action code");
+  if (role.empty()) fail("typed UI action slot requires non-empty role");
+  if (accessibility_label.empty()) fail("typed UI action slot requires non-empty accessibility label");
+  return TypedActionSlot{std::move(action_id), action_code, std::move(role), std::move(accessibility_label)};
+}
+
+inline TypedUiViewModel typed_view_model(std::string title,
+                                         std::string text,
+                                         std::string editable_value,
+                                         int spacing,
+                                         TypedActionSlot primary_action,
+                                         TypedActionSlot secondary_action) {
+  if (spacing < 0) fail("typed UI view model requires non-negative spacing");
+  return TypedUiViewModel{std::move(title),
+                          std::move(text),
+                          std::move(editable_value),
+                          spacing,
+                          std::move(primary_action),
+                          std::move(secondary_action)};
+}
+
+inline TypedActionIndex typed_action_index(const TypedUiViewModel& model) {
+  if (model.primary_action.action_id.empty() || model.secondary_action.action_id.empty()) {
+    fail("typed UI action slot requires non-empty action id");
+  }
+  if (model.primary_action.action_code <= 0 || model.secondary_action.action_code <= 0) {
+    fail("typed UI action slot requires positive action code");
+  }
+  if (model.primary_action.action_code == model.secondary_action.action_code) {
+    fail("typed UI action codes must be distinct");
+  }
+  return TypedActionIndex{model.primary_action.action_id,
+                          model.secondary_action.action_id,
+                          model.primary_action.action_code,
+                          model.secondary_action.action_code,
+                          2};
+}
+
+inline bool typed_dispatch_action_id(const TypedActionIndex& index, const std::string& action_id) {
+  if (action_id.empty()) fail("action id must be non-empty");
+  if (action_id == index.primary_action || action_id == index.secondary_action) return true;
+  fail("action not found: " + action_id);
+  return false;
+}
+
+inline bool typed_dispatch_action_code(const TypedActionIndex& index, int action_code) {
+  if (action_code == index.primary_action_code || action_code == index.secondary_action_code) return true;
+  fail("action not found");
+  return false;
+}
+
 inline FastPreviewTree fast_preview_tree(std::string title,
                                          std::string text,
                                          std::string input_value,
@@ -306,11 +397,25 @@ inline FastPreviewTree fast_preview_tree(std::string title,
                          12};
 }
 
+inline TypedUiViewModel typed_view_model_from_fast(const FastPreviewTree& tree) {
+  return TypedUiViewModel{tree.title,
+                          tree.text,
+                          tree.input_value,
+                          tree.spacing,
+                          TypedActionSlot{tree.input_action, 1, "input", tree.input_accessibility_label},
+                          TypedActionSlot{tree.button_action, 2, "button", tree.button_text}};
+}
+
 inline FastActionIndex fast_action_index(const FastPreviewTree& tree) {
-  if (tree.input_action.empty()) fail("Input node requires non-empty action string");
-  if (tree.input_accessibility_label.empty()) fail("Input node requires non-empty accessibility_label string");
-  if (tree.button_action.empty()) fail("Button node requires non-empty action string");
-  return FastActionIndex{tree.button_action, tree.input_action, tree.button_action, tree.input_action, 2, 1, 1, 1};
+  const TypedActionIndex index = typed_action_index(typed_view_model_from_fast(tree));
+  return FastActionIndex{index.secondary_action,
+                         index.primary_action,
+                         index.secondary_action,
+                         index.primary_action,
+                         index.secondary_action_code,
+                         index.primary_action_code,
+                         1,
+                         1};
 }
 
 inline bool fast_dispatch_action_index(const FastActionIndex& index, const std::string& action) {
@@ -330,20 +435,32 @@ inline FastRect fast_rect(int x, int y, int width, int height) {
   return FastRect{x, y, width, height};
 }
 
-inline FastPreviewLayout fast_preview_layout(const FastPreviewTree& tree) {
+inline TypedUiLayout typed_layout(const TypedUiViewModel& model) {
   const int text_y = 24;
-  const int input_y = text_y + 20 + tree.spacing;
-  const int button_y = input_y + 32 + tree.spacing;
+  const int primary_y = text_y + 20 + model.spacing;
+  const int secondary_y = primary_y + 32 + model.spacing;
+  return TypedUiLayout{480,
+                       std::max(120, secondary_y + 32 + 24),
+                       fast_rect(24, text_y, text_width(model.text), 20),
+                       fast_rect(24, primary_y, std::max(160, text_width(model.editable_value) + 32), 32),
+                       fast_rect(24, secondary_y, std::max(96, text_width(model.secondary_action.accessibility_label) + 32), 32),
+                       model.primary_action,
+                       model.secondary_action,
+                       5};
+}
+
+inline FastPreviewLayout fast_preview_layout(const FastPreviewTree& tree) {
+  const TypedUiLayout layout = typed_layout(typed_view_model_from_fast(tree));
   return FastPreviewLayout{480,
-                           std::max(120, button_y + 32 + 24),
-                           fast_rect(24, text_y, text_width(tree.text), 20),
-                           fast_rect(24, input_y, std::max(160, text_width(tree.input_value) + 32), 32),
-                           fast_rect(24, button_y, std::max(96, text_width(tree.button_text) + 32), 32),
-                           tree.input_action,
-                           tree.button_action,
-                           1,
-                           2,
-                           5};
+                           layout.height,
+                           layout.text_rect,
+                           layout.primary_rect,
+                           layout.secondary_rect,
+                           layout.primary_action.action_id,
+                           layout.secondary_action.action_id,
+                           layout.primary_action.action_code,
+                           layout.secondary_action.action_code,
+                           layout.command_count};
 }
 
 inline bool fast_contains(const FastRect& rect, int x, int y) {
@@ -362,6 +479,18 @@ inline int fast_hit_test_action_code(const FastPreviewLayout& layout, int x, int
   return 0;
 }
 
+inline std::string typed_hit_test_action_id(const TypedUiLayout& layout, int x, int y) {
+  if (fast_contains(layout.primary_rect, x, y)) return layout.primary_action.action_id;
+  if (fast_contains(layout.secondary_rect, x, y)) return layout.secondary_action.action_id;
+  return "";
+}
+
+inline int typed_hit_test_action_code(const TypedUiLayout& layout, int x, int y) {
+  if (fast_contains(layout.primary_rect, x, y)) return layout.primary_action.action_code;
+  if (fast_contains(layout.secondary_rect, x, y)) return layout.secondary_action.action_code;
+  return 0;
+}
+
 inline FastPatch fast_patch(const FastPreviewTree& old_tree, const FastPreviewTree& new_tree) {
   if (old_tree.input_value != new_tree.input_value) {
     return FastPatch{"props", "0.0.1", "value", new_tree.input_value};
@@ -376,29 +505,61 @@ inline FastPatch fast_patch(const FastPreviewTree& old_tree, const FastPreviewTr
 }
 
 inline FastPatchPlan fast_patch_plan(const FastPreviewTree& old_tree, const FastPreviewTree& new_tree) {
-  if (old_tree.input_value != new_tree.input_value) {
-    return FastPatchPlan{1, 1, 1, new_tree.input_value};
+  const TypedUiViewModel old_model = typed_view_model_from_fast(old_tree);
+  const TypedUiViewModel new_model = typed_view_model_from_fast(new_tree);
+  if (old_model.editable_value != new_model.editable_value) {
+    return FastPatchPlan{1, 1, 1, new_model.editable_value};
   }
-  if (old_tree.title != new_tree.title || old_tree.text != new_tree.text ||
-      old_tree.input_action != new_tree.input_action ||
-      old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
-      old_tree.button_text != new_tree.button_text || old_tree.button_action != new_tree.button_action) {
+  if (old_model.title != new_model.title || old_model.text != new_model.text ||
+      old_model.spacing != new_model.spacing ||
+      old_model.primary_action.action_id != new_model.primary_action.action_id ||
+      old_model.primary_action.action_code != new_model.primary_action.action_code ||
+      old_model.primary_action.role != new_model.primary_action.role ||
+      old_model.primary_action.accessibility_label != new_model.primary_action.accessibility_label ||
+      old_model.secondary_action.action_id != new_model.secondary_action.action_id ||
+      old_model.secondary_action.action_code != new_model.secondary_action.action_code ||
+      old_model.secondary_action.role != new_model.secondary_action.role ||
+      old_model.secondary_action.accessibility_label != new_model.secondary_action.accessibility_label) {
     return FastPatchPlan{2, 0, 0, ""};
   }
   return FastPatchPlan{0, 0, 0, ""};
 }
 
-inline int fast_patch_code(const FastPreviewTree& old_tree, const FastPreviewTree& new_tree) {
-  if (old_tree.input_value != new_tree.input_value) {
+inline int typed_patch_kind_code(const TypedUiViewModel& old_model, const TypedUiViewModel& new_model) {
+  if (old_model.editable_value != new_model.editable_value) {
+    return 1;
+  }
+  if (old_model.title != new_model.title || old_model.text != new_model.text ||
+      old_model.spacing != new_model.spacing ||
+      old_model.primary_action.action_id != new_model.primary_action.action_id ||
+      old_model.primary_action.action_code != new_model.primary_action.action_code ||
+      old_model.primary_action.role != new_model.primary_action.role ||
+      old_model.primary_action.accessibility_label != new_model.primary_action.accessibility_label ||
+      old_model.secondary_action.action_id != new_model.secondary_action.action_id ||
+      old_model.secondary_action.action_code != new_model.secondary_action.action_code ||
+      old_model.secondary_action.role != new_model.secondary_action.role ||
+      old_model.secondary_action.accessibility_label != new_model.secondary_action.accessibility_label) {
+    return 2;
+  }
+  return 0;
+}
+
+inline int patch_code_from_kind(int kind_code) {
+  if (kind_code == 1) {
     return 111;
   }
-  if (old_tree.title != new_tree.title || old_tree.text != new_tree.text ||
-      old_tree.input_action != new_tree.input_action ||
-      old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
-      old_tree.button_text != new_tree.button_text || old_tree.button_action != new_tree.button_action) {
+  if (kind_code == 2) {
     return 200;
   }
   return 0;
+}
+
+inline int typed_patch_code(const TypedUiViewModel& old_model, const TypedUiViewModel& new_model) {
+  return patch_code_from_kind(typed_patch_kind_code(old_model, new_model));
+}
+
+inline int fast_patch_code(const FastPreviewTree& old_tree, const FastPreviewTree& new_tree) {
+  return typed_patch_code(typed_view_model_from_fast(old_tree), typed_view_model_from_fast(new_tree));
 }
 
 inline int leaf_height(const std::string& component) {
@@ -615,11 +776,11 @@ inline std::uint64_t run_hit_test_dispatch() {
 }
 
 inline std::uint64_t run_patch_apply() {
-  const FastPreviewTree old_tree{"Local Ops", "Local Ops", "targets", "targets.filter",
-                                 "Filter targets", "Refresh", "targets.refresh", 12};
-  const FastPreviewTree new_tree{"Local Ops", "Local Ops", "prod", "targets.filter",
-                                 "Filter targets", "Refresh", "targets.refresh", 12};
-  const int patch_code = fast_patch_code(old_tree, new_tree);
+  const TypedActionSlot primary{"targets.filter", 1, "input", "Filter targets"};
+  const TypedActionSlot secondary{"targets.refresh", 2, "button", "Refresh"};
+  const TypedUiViewModel old_model{"Local Ops", "Local Ops", "targets", 12, primary, secondary};
+  const TypedUiViewModel new_model{"Local Ops", "Local Ops", "prod", 12, primary, secondary};
+  const int patch_code = typed_patch_code(old_model, new_model);
   expect_eq(patch_code, 111, "ui patch code");
   return static_cast<std::uint64_t>(patch_code);
 }

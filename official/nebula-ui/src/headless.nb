@@ -930,6 +930,199 @@ struct FastPatchPlan {
   value: String
 }
 
+struct TypedActionSlot {
+  action_id: String
+  action_code: Int
+  role: String
+  accessibility_label: String
+}
+
+struct TypedUiViewModel {
+  title: String
+  text: String
+  editable_value: String
+  spacing: Int
+  primary_action: TypedActionSlot
+  secondary_action: TypedActionSlot
+}
+
+struct TypedUiLayout {
+  width: Int
+  height: Int
+  text_rect: FastRect
+  primary_rect: FastRect
+  secondary_rect: FastRect
+  primary_action: TypedActionSlot
+  secondary_action: TypedActionSlot
+  command_count: Int
+}
+
+struct TypedActionIndex {
+  primary_action: String
+  secondary_action: String
+  primary_action_code: Int
+  secondary_action_code: Int
+  action_count: Int
+}
+
+fn typed_action_slot(action_id: String, action_code: Int, role: String, accessibility_label: String) -> Result<TypedActionSlot, String> {
+  if action_id == "" {
+    return Err("typed UI action slot requires non-empty action id")
+  }
+  if action_code <= 0 {
+    return Err("typed UI action slot requires positive action code")
+  }
+  if role == "" {
+    return Err("typed UI action slot requires non-empty role")
+  }
+  if accessibility_label == "" {
+    return Err("typed UI action slot requires non-empty accessibility label")
+  }
+  return Ok(TypedActionSlot(action_id, action_code, role, accessibility_label))
+}
+
+fn typed_action_slot_unchecked(action_id: String, action_code: Int, role: String, accessibility_label: String) -> TypedActionSlot {
+  return TypedActionSlot(action_id, action_code, role, accessibility_label)
+}
+
+fn typed_view_model(title: String,
+                    text: String,
+                    editable_value: String,
+                    spacing: Int,
+                    primary_action: TypedActionSlot,
+                    secondary_action: TypedActionSlot) -> Result<TypedUiViewModel, String> {
+  if spacing < 0 {
+    return Err("typed UI view model requires non-negative spacing")
+  }
+  return Ok(TypedUiViewModel(title, text, editable_value, spacing, primary_action, secondary_action))
+}
+
+fn typed_action_index(model: TypedUiViewModel) -> Result<TypedActionIndex, String> {
+  if model.primary_action.action_id == "" || model.secondary_action.action_id == "" {
+    return Err("typed UI action slot requires non-empty action id")
+  }
+  if model.primary_action.action_code <= 0 || model.secondary_action.action_code <= 0 {
+    return Err("typed UI action slot requires positive action code")
+  }
+  if model.primary_action.action_code == model.secondary_action.action_code {
+    return Err("typed UI action codes must be distinct")
+  }
+  return Ok(TypedActionIndex(model.primary_action.action_id,
+                             model.secondary_action.action_id,
+                             model.primary_action.action_code,
+                             model.secondary_action.action_code,
+                             2))
+}
+
+fn typed_dispatch_action_id(index: TypedActionIndex, action_id: String) -> Result<Bool, String> {
+  if action_id == "" {
+    return Err("action id must be non-empty")
+  }
+  if action_id == index.primary_action || action_id == index.secondary_action {
+    return Ok(true)
+  }
+  return Err(text_concat("action not found: ", action_id))
+}
+
+fn typed_dispatch_action_code(index: TypedActionIndex, action_code: Int) -> Result<Bool, String> {
+  if action_code == index.primary_action_code || action_code == index.secondary_action_code {
+    return Ok(true)
+  }
+  return Err("action not found")
+}
+
+fn typed_layout(model: TypedUiViewModel) -> TypedUiLayout {
+  let text_y = 24
+  let primary_y = text_y + 20 + model.spacing
+  let secondary_y = primary_y + 32 + model.spacing
+  let height = max_int(120, secondary_y + 32 + 24)
+  let text_rect = fast_rect(24, text_y, text_measure_width(model.text), 20)
+  let primary_rect = fast_rect(24, primary_y, max_int(160, text_measure_width(model.editable_value) + 32), 32)
+  let secondary_rect = fast_rect(24, secondary_y, max_int(96, text_measure_width(model.secondary_action.accessibility_label) + 32), 32)
+  return TypedUiLayout(480,
+                       height,
+                       text_rect,
+                       primary_rect,
+                       secondary_rect,
+                       model.primary_action,
+                       model.secondary_action,
+                       5)
+}
+
+fn typed_hit_test_action_id(layout_value: TypedUiLayout, x: Int, y: Int) -> Result<String, String> {
+  if fast_point_inside(layout_value.primary_rect, x, y) {
+    return Ok(layout_value.primary_action.action_id)
+  }
+  if fast_point_inside(layout_value.secondary_rect, x, y) {
+    return Ok(layout_value.secondary_action.action_id)
+  }
+  return Err("no UI action at point")
+}
+
+fn typed_hit_test_action_code(layout_value: TypedUiLayout, x: Int, y: Int) -> Result<Int, String> {
+  if fast_point_inside(layout_value.primary_rect, x, y) {
+    return Ok(layout_value.primary_action.action_code)
+  }
+  if fast_point_inside(layout_value.secondary_rect, x, y) {
+    return Ok(layout_value.secondary_action.action_code)
+  }
+  return Err("no UI action at point")
+}
+
+fn typed_patch_plan(old_model: TypedUiViewModel, new_model: TypedUiViewModel) -> FastPatchPlan {
+  if old_model.editable_value != new_model.editable_value {
+    return FastPatchPlan(1, 1, 1, new_model.editable_value)
+  }
+  if old_model.title != new_model.title ||
+     old_model.text != new_model.text ||
+     old_model.spacing != new_model.spacing ||
+     old_model.primary_action.action_id != new_model.primary_action.action_id ||
+     old_model.primary_action.action_code != new_model.primary_action.action_code ||
+     old_model.primary_action.role != new_model.primary_action.role ||
+     old_model.primary_action.accessibility_label != new_model.primary_action.accessibility_label ||
+     old_model.secondary_action.action_id != new_model.secondary_action.action_id ||
+     old_model.secondary_action.action_code != new_model.secondary_action.action_code ||
+     old_model.secondary_action.role != new_model.secondary_action.role ||
+     old_model.secondary_action.accessibility_label != new_model.secondary_action.accessibility_label {
+    return FastPatchPlan(2, 0, 0, "")
+  }
+  return FastPatchPlan(0, 0, 0, "")
+}
+
+fn typed_patch_kind_code(old_model: TypedUiViewModel, new_model: TypedUiViewModel) -> Int {
+  if old_model.editable_value != new_model.editable_value {
+    return 1
+  }
+  if old_model.title != new_model.title ||
+     old_model.text != new_model.text ||
+     old_model.spacing != new_model.spacing ||
+     old_model.primary_action.action_id != new_model.primary_action.action_id ||
+     old_model.primary_action.action_code != new_model.primary_action.action_code ||
+     old_model.primary_action.role != new_model.primary_action.role ||
+     old_model.primary_action.accessibility_label != new_model.primary_action.accessibility_label ||
+     old_model.secondary_action.action_id != new_model.secondary_action.action_id ||
+     old_model.secondary_action.action_code != new_model.secondary_action.action_code ||
+     old_model.secondary_action.role != new_model.secondary_action.role ||
+     old_model.secondary_action.accessibility_label != new_model.secondary_action.accessibility_label {
+    return 2
+  }
+  return 0
+}
+
+fn patch_code_from_kind(kind_code: Int) -> Int {
+  if kind_code == 1 {
+    return 111
+  }
+  if kind_code == 2 {
+    return 200
+  }
+  return 0
+}
+
+fn typed_patch_code(old_model: TypedUiViewModel, new_model: TypedUiViewModel) -> Int {
+  return patch_code_from_kind(typed_patch_kind_code(old_model, new_model))
+}
+
 fn fast_preview_tree(title: String,
                      text: String,
                      input_value: String,
@@ -949,22 +1142,23 @@ fn fast_preview_tree(title: String,
   return Ok(FastPreviewTree(title, text, input_value, input_action, input_accessibility_label, button_text, button_action, 12))
 }
 
+fn typed_view_model_from_fast(tree: FastPreviewTree) -> TypedUiViewModel {
+  return TypedUiViewModel(tree.title,
+                          tree.text,
+                          tree.input_value,
+                          tree.spacing,
+                          typed_action_slot_unchecked(tree.input_action, 1, "input", tree.input_accessibility_label),
+                          typed_action_slot_unchecked(tree.button_action, 2, "button", tree.button_text))
+}
+
 fn fast_action_index(tree: FastPreviewTree) -> Result<FastActionIndex, String> {
-  if tree.input_action == "" {
-    return Err("Input node requires non-empty action string")
-  }
-  if tree.input_accessibility_label == "" {
-    return Err("Input node requires non-empty accessibility_label string")
-  }
-  if tree.button_action == "" {
-    return Err("Button node requires non-empty action string")
-  }
-  return Ok(FastActionIndex(tree.button_action,
-                            tree.input_action,
-                            tree.button_action,
-                            tree.input_action,
-                            2,
-                            1,
+  let index = typed_action_index(typed_view_model_from_fast(tree))?
+  return Ok(FastActionIndex(index.secondary_action,
+                            index.primary_action,
+                            index.secondary_action,
+                            index.primary_action,
+                            index.secondary_action_code,
+                            index.primary_action_code,
                             1,
                             1))
 }
@@ -991,23 +1185,17 @@ fn fast_rect(x: Int, y: Int, width: Int, height: Int) -> FastRect {
 }
 
 fn fast_preview_layout(tree: FastPreviewTree) -> FastPreviewLayout {
-  let text_y = 24
-  let input_y = text_y + 20 + tree.spacing
-  let button_y = input_y + 32 + tree.spacing
-  let height = max_int(120, button_y + 32 + 24)
-  let text_rect = fast_rect(24, text_y, text_measure_width(tree.text), 20)
-  let input_rect = fast_rect(24, input_y, max_int(160, text_measure_width(tree.input_value) + 32), 32)
-  let button_rect = fast_rect(24, button_y, max_int(96, text_measure_width(tree.button_text) + 32), 32)
-  return FastPreviewLayout(480,
-                           height,
-                           text_rect,
-                           input_rect,
-                           button_rect,
-                           tree.input_action,
-                           tree.button_action,
-                           1,
-                           2,
-                           5)
+  let layout_value = typed_layout(typed_view_model_from_fast(tree))
+  return FastPreviewLayout(layout_value.width,
+                           layout_value.height,
+                           layout_value.text_rect,
+                           layout_value.primary_rect,
+                           layout_value.secondary_rect,
+                           layout_value.primary_action.action_id,
+                           layout_value.secondary_action.action_id,
+                           layout_value.primary_action.action_code,
+                           layout_value.secondary_action.action_code,
+                           layout_value.command_count)
 }
 
 fn fast_point_inside(rect: FastRect, x: Int, y: Int) -> Bool {
@@ -1058,31 +1246,9 @@ fn fast_patch(old_tree: FastPreviewTree, new_tree: FastPreviewTree) -> FastPatch
 }
 
 fn fast_patch_plan(old_tree: FastPreviewTree, new_tree: FastPreviewTree) -> FastPatchPlan {
-  if old_tree.input_value != new_tree.input_value {
-    return FastPatchPlan(1, 1, 1, new_tree.input_value)
-  }
-  if old_tree.title != new_tree.title ||
-     old_tree.text != new_tree.text ||
-     old_tree.input_action != new_tree.input_action ||
-     old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
-     old_tree.button_text != new_tree.button_text ||
-     old_tree.button_action != new_tree.button_action {
-    return FastPatchPlan(2, 0, 0, "")
-  }
-  return FastPatchPlan(0, 0, 0, "")
+  return typed_patch_plan(typed_view_model_from_fast(old_tree), typed_view_model_from_fast(new_tree))
 }
 
 fn fast_patch_code(old_tree: FastPreviewTree, new_tree: FastPreviewTree) -> Int {
-  if old_tree.input_value != new_tree.input_value {
-    return 111
-  }
-  if old_tree.title != new_tree.title ||
-     old_tree.text != new_tree.text ||
-     old_tree.input_action != new_tree.input_action ||
-     old_tree.input_accessibility_label != new_tree.input_accessibility_label ||
-     old_tree.button_text != new_tree.button_text ||
-     old_tree.button_action != new_tree.button_action {
-    return 200
-  }
-  return 0
+  return typed_patch_code(typed_view_model_from_fast(old_tree), typed_view_model_from_fast(new_tree))
 }

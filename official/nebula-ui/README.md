@@ -21,10 +21,12 @@ Current V1 shape:
   bounds, `headless::render_list(layout)` derives `nebula-ui.render-list.v1` display commands,
   `headless::hit_test(layout, x, y)` resolves stable action ids, and `headless::patch(old, new)`
   emits `ui.patch.v1` smoke operations for small state changes
-- typed fast path preview: internal benchmark/workload helpers can compile the current Local Ops
-  UI shape into `FastPreviewTree`/`FastPreviewLayout` plus `FastActionIndex`, preserving the JSON
-  tree as the external adapter contract while avoiding JSON parse/stringify work inside action
-  dispatch, layout, render-list, hit-test, and patch classification loops
+- typed fast path preview: internal benchmark/workload helpers can use `TypedUiViewModel`,
+  `TypedActionSlot`, `TypedActionIndex`, and `TypedUiLayout` for action dispatch, hit-test, and
+  patch classification without JSON parse/stringify in the hot path. The older
+  `FastPreviewTree`/`FastPreviewLayout`/`FastActionIndex` helpers remain compatibility wrappers for
+  current Local Ops benchmarks, while the external adapter contract remains the JSON
+  `nebula-ui.tree.v1` tree.
 - GPU backend preview: a guarded macOS Metal submit smoke can submit an empty command buffer after
   validating the same UI tree contract; the always-available null/headless path remains the test and
   benchmark baseline
