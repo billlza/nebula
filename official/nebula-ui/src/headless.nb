@@ -905,6 +905,17 @@ struct FastPreviewLayout {
   command_count: Int
 }
 
+struct FastActionIndex {
+  first_button_action: String
+  first_input_action: String
+  button_action: String
+  input_action: String
+  button_action_code: Int
+  input_action_code: Int
+  button_count: Int
+  input_count: Int
+}
+
 struct FastPatch {
   kind: String
   node_id: String
@@ -936,6 +947,43 @@ fn fast_preview_tree(title: String,
     return Err("Button node requires non-empty action string")
   }
   return Ok(FastPreviewTree(title, text, input_value, input_action, input_accessibility_label, button_text, button_action, 12))
+}
+
+fn fast_action_index(tree: FastPreviewTree) -> Result<FastActionIndex, String> {
+  if tree.input_action == "" {
+    return Err("Input node requires non-empty action string")
+  }
+  if tree.input_accessibility_label == "" {
+    return Err("Input node requires non-empty accessibility_label string")
+  }
+  if tree.button_action == "" {
+    return Err("Button node requires non-empty action string")
+  }
+  return Ok(FastActionIndex(tree.button_action,
+                            tree.input_action,
+                            tree.button_action,
+                            tree.input_action,
+                            2,
+                            1,
+                            1,
+                            1))
+}
+
+fn fast_dispatch_action_index(index: FastActionIndex, action: String) -> Result<Bool, String> {
+  if action == "" {
+    return Err("action id must be non-empty")
+  }
+  if action == index.input_action || action == index.button_action {
+    return Ok(true)
+  }
+  return Err(text_concat("action not found: ", action))
+}
+
+fn fast_dispatch_action_code(index: FastActionIndex, action_code: Int) -> Result<Bool, String> {
+  if action_code == index.input_action_code || action_code == index.button_action_code {
+    return Ok(true)
+  }
+  return Err("action not found")
 }
 
 fn fast_rect(x: Int, y: Int, width: Int, height: Int) -> FastRect {

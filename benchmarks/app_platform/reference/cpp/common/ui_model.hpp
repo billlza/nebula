@@ -81,6 +81,17 @@ struct FastPreviewLayout {
   int command_count = 0;
 };
 
+struct FastActionIndex {
+  std::string first_button_action;
+  std::string first_input_action;
+  std::string button_action;
+  std::string input_action;
+  int button_action_code = 2;
+  int input_action_code = 1;
+  int button_count = 1;
+  int input_count = 1;
+};
+
 struct FastPatch {
   std::string kind;
   std::string node_id;
@@ -293,6 +304,26 @@ inline FastPreviewTree fast_preview_tree(std::string title,
                          std::move(button_text),
                          std::move(button_action),
                          12};
+}
+
+inline FastActionIndex fast_action_index(const FastPreviewTree& tree) {
+  if (tree.input_action.empty()) fail("Input node requires non-empty action string");
+  if (tree.input_accessibility_label.empty()) fail("Input node requires non-empty accessibility_label string");
+  if (tree.button_action.empty()) fail("Button node requires non-empty action string");
+  return FastActionIndex{tree.button_action, tree.input_action, tree.button_action, tree.input_action, 2, 1, 1, 1};
+}
+
+inline bool fast_dispatch_action_index(const FastActionIndex& index, const std::string& action) {
+  if (action.empty()) fail("action id must be non-empty");
+  if (action == index.input_action || action == index.button_action) return true;
+  fail("action not found: " + action);
+  return false;
+}
+
+inline bool fast_dispatch_action_code(const FastActionIndex& index, int action_code) {
+  if (action_code == index.input_action_code || action_code == index.button_action_code) return true;
+  fail("action not found");
+  return false;
 }
 
 inline FastRect fast_rect(int x, int y, int width, int height) {
@@ -529,12 +560,18 @@ inline std::string patch_kind(const Node& old_tree, const Node& new_tree) {
 }
 
 inline std::uint64_t run_action_roundtrip() {
-  const Node root = dashboard_tree();
-  const ActionSummary summary = action_summary(root);
-  expect_eq(summary.first_button_action, "targets.refresh", "ui action");
-  expect_eq(summary.first_input_action, "targets.filter", "ui input action");
-  dispatch_action_summary(summary, summary.first_input_action);
-  return checksum_text(summary.first_button_action + summary.first_input_action);
+  const FastPreviewTree tree = fast_preview_tree("Local Ops",
+                                                 "Local Ops",
+                                                 "targets",
+                                                 "targets.filter",
+                                                 "Filter targets",
+                                                 "Refresh",
+                                                 "targets.refresh");
+  const FastActionIndex index = fast_action_index(tree);
+  expect_eq(index.first_button_action, "targets.refresh", "ui action");
+  expect_eq(index.first_input_action, "targets.filter", "ui input action");
+  if (!fast_dispatch_action_index(index, index.first_input_action)) fail("action dispatch failed");
+  return checksum_text(index.first_button_action + index.first_input_action);
 }
 
 inline std::uint64_t run_snapshot_render() {

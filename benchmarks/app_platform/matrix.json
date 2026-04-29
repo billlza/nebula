@@ -160,12 +160,12 @@
     {
       "id": "ui_action_roundtrip",
       "category": "ui",
-      "description": "Nebula UI action identifier extraction and validation path",
-      "timed_scope": "build UI tree, derive a cached action summary from JSON IR, and dispatch through the summary index",
+      "description": "Nebula UI typed action index extraction and validation path",
+      "timed_scope": "build typed UI preview tree, derive a cached action index, and dispatch through the index without JSON wire reparse",
       "correctness_contract": [
-        "action_summary_schema=nebula-ui.action-summary.v1",
+        "typed_action_index=preview",
         "action=targets.refresh",
-        "summary_index_dispatch=targets.filter"
+        "action_index_dispatch=targets.filter"
       ],
       "nebula_paths": [
         "examples/local_ops_console_ui",

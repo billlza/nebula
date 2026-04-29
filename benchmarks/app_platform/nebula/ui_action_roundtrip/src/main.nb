@@ -1,46 +1,38 @@
 module main
-import std::json
 import std::result
 import ui::headless
-import ui::ui
 
-struct DashboardState {
-  title: String
-  ready: Bool
-  filter: String
-}
-
-fn dashboard_column(state: DashboardState) -> Json {
-  return column_json(12,
-                     array3(text_json(state.title),
-                            input_json(state.filter, "targets.filter", "Filter targets"),
-                            button_json("Refresh", "targets.refresh")))
-}
-
-fn Dashboard(state: DashboardState) -> Json {
-  return window_json(state.title, array1(dashboard_column(state)))
+fn local_ops_tree() -> Result<FastPreviewTree, String> {
+  return fast_preview_tree("Local Ops",
+                           "Local Ops",
+                           "targets",
+                           "targets.filter",
+                           "Filter targets",
+                           "Refresh",
+                           "targets.refresh")
 }
 
 @bench
 fn bench_ui_action_roundtrip() -> Void {
-  let state = DashboardState("Local Ops", true, "targets")
-  let tree = Dashboard(state)
-  match action_summary(tree) {
-    Ok(summary) => {
-      match get_string(summary, "first_button_action") {
-        Ok(action) => {
-          if action != "targets.refresh" {
+  match local_ops_tree() {
+    Ok(tree) => {
+      match fast_action_index(tree) {
+        Ok(index) => {
+          if index.first_button_action != "targets.refresh" {
             expect_eq(1, 0)
           }
-        }
-        Err(_) => {
-          expect_eq(1, 0)
-        }
-      }
-      match dispatch_action_summary(summary, "targets.filter") {
-        Ok(action) => {
-          if action != "nebula-ui-action-dispatched=targets.filter" {
+          if index.first_input_action != "targets.filter" {
             expect_eq(1, 0)
+          }
+          match fast_dispatch_action_index(index, "targets.filter") {
+            Ok(dispatched) => {
+              if !dispatched {
+                expect_eq(1, 0)
+              }
+            }
+            Err(_) => {
+              expect_eq(1, 0)
+            }
           }
         }
         Err(_) => {

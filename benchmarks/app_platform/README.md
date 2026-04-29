@@ -24,7 +24,7 @@ the fixed workloads and reference stacks that future APP-platform maturity claim
 - `nebula_ui_startup`
   - Nebula UI semantic tree construction startup path
 - `ui_action_roundtrip`
-  - action identifier extraction and validation from UI JSON IR
+  - typed action-index extraction and validation without JSON wire reparse
 - `ui_snapshot_render`
   - UI JSON IR stringify/render handoff path
 - `ui_layout_pass`

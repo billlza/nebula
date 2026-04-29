@@ -53,121 +53,83 @@ bool validate_component(std::string_view component, std::string* error) {
   return set_error(error, "unsupported UI component: " + std::string(component));
 }
 
-bool parse_required_string(nebula::rt::JsonCursor& cursor,
-                           std::string* out,
-                           std::string_view message,
-                           std::string* error) {
-  std::string value;
-  if (!nebula::rt::parse_json_string_literal(cursor, &value) || value.empty()) {
+bool get_required_string_field(const RtJson& value,
+                               std::string_view key,
+                               std::string_view message,
+                               std::string* out,
+                               std::string* error) {
+  auto result = nebula::rt::json_get_string(value, key);
+  if (nebula::rt::result_is_err(result) || nebula::rt::result_ok_ref(result).empty()) {
     return set_error(error, std::string(message));
   }
-  if (out != nullptr) *out = std::move(value);
+  if (out != nullptr) *out = std::move(nebula::rt::result_ok_ref(result));
   return true;
 }
 
-bool capture_json_value(nebula::rt::JsonCursor& cursor, std::string_view* raw) {
-  cursor.skip_ws();
-  const std::size_t start = cursor.pos();
-  if (!nebula::rt::parse_json_value(cursor)) return false;
-  if (raw != nullptr) *raw = cursor.slice(start, cursor.pos());
+bool get_required_json_field(const RtJson& value,
+                             std::string_view key,
+                             std::string_view message,
+                             RtJson* out,
+                             std::string* error) {
+  auto result = nebula::rt::json_get_value(value, key);
+  if (nebula::rt::result_is_err(result)) return set_error(error, std::string(message));
+  if (out != nullptr) *out = std::move(nebula::rt::result_ok_ref(result));
   return true;
 }
 
-bool validate_action_node_raw(std::string_view raw,
-                              std::string_view target_action,
-                              bool* found,
-                              ActionSummary* summary,
-                              std::string* error);
+bool validate_action_node_value(const RtJson& node,
+                                std::string_view target_action,
+                                bool* found,
+                                ActionSummary* summary,
+                                std::string* error);
 
-bool validate_children_raw(std::string_view raw,
-                           std::string_view target_action,
-                           bool* found,
-                           ActionSummary* summary,
-                           std::string* error) {
-  nebula::rt::JsonCursor cursor(raw);
-  if (!cursor.consume('[')) return set_error(error, "expected UI node children array");
-  cursor.skip_ws();
-  if (!cursor.eof() && cursor.peek() == ']') {
-    cursor.set_pos(cursor.pos() + 1);
-    cursor.skip_ws();
-    return cursor.eof() || set_error(error, "expected UI node children array");
-  }
-  while (true) {
-    std::string_view child_raw;
-    if (!capture_json_value(cursor, &child_raw)) {
-      return set_error(error, "expected UI node children array");
+bool validate_children_value(const RtJson& children,
+                             std::string_view target_action,
+                             bool* found,
+                             ActionSummary* summary,
+                             std::string* error) {
+  auto count = nebula::rt::json_array_len(children);
+  if (nebula::rt::result_is_err(count)) return set_error(error, "expected UI node children array");
+
+  const auto total = nebula::rt::result_ok_ref(count);
+  for (std::int64_t i = 0; i < total; ++i) {
+    auto child = nebula::rt::json_array_get(children, i);
+    if (nebula::rt::result_is_err(child)) return set_error(error, "expected UI node children array");
+    if (!validate_action_node_value(nebula::rt::result_ok_ref(child), target_action, found, summary, error)) {
+      return false;
     }
-    if (!validate_action_node_raw(child_raw, target_action, found, summary, error)) return false;
-    cursor.skip_ws();
-    if (cursor.eof()) return set_error(error, "expected UI node children array");
-    if (cursor.peek() == ']') {
-      cursor.set_pos(cursor.pos() + 1);
-      cursor.skip_ws();
-      return cursor.eof() || set_error(error, "expected UI node children array");
-    }
-    if (cursor.peek() != ',') return set_error(error, "expected UI node children array");
-    cursor.set_pos(cursor.pos() + 1);
   }
+  return true;
 }
 
-bool validate_props_raw(std::string_view raw,
-                        std::string_view component,
-                        std::string_view target_action,
-                        bool* found,
-                        ActionSummary* summary,
-                        std::string* error) {
-  nebula::rt::JsonCursor cursor(raw);
-  if (!cursor.consume('{')) return set_error(error, "expected UI node props object");
-  bool has_action = false;
-  bool has_accessibility_label = false;
-  std::string action;
-  cursor.skip_ws();
-  if (!cursor.eof() && cursor.peek() == '}') {
-    cursor.set_pos(cursor.pos() + 1);
-  } else {
-    while (true) {
-      std::string key;
-      if (!nebula::rt::parse_json_string_literal(cursor, &key) || !cursor.consume(':')) {
-        return set_error(error, "expected UI node props object");
-      }
-      if (key == "action") {
-        const std::string_view message = component == "Button"
-                                             ? "Button node requires non-empty action string"
-                                             : "Input node requires non-empty action string";
-        if (!parse_required_string(cursor, &action, message, error)) return false;
-        has_action = true;
-      } else if (key == "accessibility_label") {
-        if (!parse_required_string(cursor,
-                                   nullptr,
-                                   "Input node requires non-empty accessibility_label string",
-                                   error)) {
-          return false;
-        }
-        has_accessibility_label = true;
-      } else if (!capture_json_value(cursor, nullptr)) {
-        return set_error(error, "expected UI node props object");
-      }
-      cursor.skip_ws();
-      if (cursor.eof()) return set_error(error, "expected UI node props object");
-      if (cursor.peek() == '}') {
-        cursor.set_pos(cursor.pos() + 1);
-        break;
-      }
-      if (cursor.peek() != ',') return set_error(error, "expected UI node props object");
-      cursor.set_pos(cursor.pos() + 1);
-    }
+bool validate_props_value(const RtJson& props,
+                          std::string_view component,
+                          std::string_view target_action,
+                          bool* found,
+                          ActionSummary* summary,
+                          std::string* error) {
+  if (props.parsed.kind != nebula::rt::JsonValueKind::Object) {
+    return set_error(error, "expected UI node props object");
   }
-  cursor.skip_ws();
-  if (!cursor.eof()) return set_error(error, "expected UI node props object");
 
   if (component == "Button") {
-    if (!has_action) return set_error(error, "Button node requires non-empty action string");
+    std::string action;
+    if (!get_required_string_field(props, "action", "Button node requires non-empty action string", &action, error)) {
+      return false;
+    }
     if (summary != nullptr) summary->add_button(action);
     if (action == target_action) *found = true;
   } else if (component == "Input") {
-    if (!has_action) return set_error(error, "Input node requires non-empty action string");
-    if (!has_accessibility_label) {
-      return set_error(error, "Input node requires non-empty accessibility_label string");
+    std::string action;
+    if (!get_required_string_field(props, "action", "Input node requires non-empty action string", &action, error)) {
+      return false;
+    }
+    if (!get_required_string_field(props,
+                                   "accessibility_label",
+                                   "Input node requires non-empty accessibility_label string",
+                                   nullptr,
+                                   error)) {
+      return false;
     }
     if (summary != nullptr) summary->add_input(action);
     if (action == target_action) *found = true;
@@ -175,82 +137,34 @@ bool validate_props_raw(std::string_view raw,
   return true;
 }
 
-bool validate_action_node_raw(std::string_view raw,
-                              std::string_view target_action,
-                              bool* found,
-                              ActionSummary* summary,
-                              std::string* error) {
-  nebula::rt::JsonCursor cursor(raw);
-  if (!cursor.consume('{')) {
+bool validate_action_node_value(const RtJson& node,
+                                std::string_view target_action,
+                                bool* found,
+                                ActionSummary* summary,
+                                std::string* error) {
+  if (node.parsed.kind != nebula::rt::JsonValueKind::Object) {
     return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
   }
 
-  bool has_schema = false;
-  bool has_component = false;
-  bool has_props = false;
-  bool has_children = false;
-  std::string component;
-  std::string_view props_raw;
-  std::string_view children_raw;
-
-  cursor.skip_ws();
-  if (!cursor.eof() && cursor.peek() == '}') {
-    cursor.set_pos(cursor.pos() + 1);
-  } else {
-    while (true) {
-      std::string key;
-      if (!nebula::rt::parse_json_string_literal(cursor, &key) || !cursor.consume(':')) {
-        return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
-      }
-      if (key == "schema") {
-        std::string schema;
-        if (!parse_required_string(cursor, &schema, "expected nebula-ui.tree.v1 root-view schema", error)) {
-          return false;
-        }
-        if (schema != "nebula-ui.tree.v1") {
-          return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
-        }
-        has_schema = true;
-      } else if (key == "component") {
-        if (!parse_required_string(cursor, &component, "expected UI node component string", error)) {
-          return false;
-        }
-        has_component = true;
-      } else if (key == "props") {
-        if (!capture_json_value(cursor, &props_raw)) {
-          return set_error(error, "expected UI node props object");
-        }
-        has_props = true;
-      } else if (key == "children") {
-        if (!capture_json_value(cursor, &children_raw)) {
-          return set_error(error, "expected UI node children array");
-        }
-        has_children = true;
-      } else if (!capture_json_value(cursor, nullptr)) {
-        return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
-      }
-      cursor.skip_ws();
-      if (cursor.eof()) return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
-      if (cursor.peek() == '}') {
-        cursor.set_pos(cursor.pos() + 1);
-        break;
-      }
-      if (cursor.peek() != ',') {
-        return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
-      }
-      cursor.set_pos(cursor.pos() + 1);
-    }
+  std::string schema;
+  if (!get_required_string_field(node, "schema", "expected nebula-ui.tree.v1 root-view schema", &schema, error) ||
+      schema != "nebula-ui.tree.v1") {
+    return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
   }
-  cursor.skip_ws();
-  if (!cursor.eof()) return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
 
-  if (!has_schema) return set_error(error, "expected nebula-ui.tree.v1 root-view schema");
-  if (!has_component) return set_error(error, "expected UI node component string");
+  std::string component;
+  if (!get_required_string_field(node, "component", "expected UI node component string", &component, error)) {
+    return false;
+  }
   if (!validate_component(component, error)) return false;
-  if (!has_props) return set_error(error, "expected UI node props object");
-  if (!validate_props_raw(props_raw, component, target_action, found, summary, error)) return false;
-  if (!has_children) return set_error(error, "expected UI node children array");
-  return validate_children_raw(children_raw, target_action, found, summary, error);
+
+  RtJson props;
+  if (!get_required_json_field(node, "props", "expected UI node props object", &props, error)) return false;
+  if (!validate_props_value(props, component, target_action, found, summary, error)) return false;
+
+  RtJson children;
+  if (!get_required_json_field(node, "children", "expected UI node children array", &children, error)) return false;
+  return validate_children_value(children, target_action, found, summary, error);
 }
 
 RtJson action_summary_json(const ActionSummary& summary) {
@@ -277,10 +191,9 @@ RtJson action_summary_json(const ActionSummary& summary) {
 RtResult __nebula_ui_headless_dispatch_action_wire(const RtJson& tree, const std::string& action) {
   if (action.empty()) return err_string("action id must be non-empty");
 
-  if (tree.text.empty()) return err_string("expected nebula-ui.tree.v1 root-view schema");
   bool found = false;
   std::string error;
-  if (!validate_action_node_raw(tree.text, action, &found, nullptr, &error)) {
+  if (!validate_action_node_value(tree, action, &found, nullptr, &error)) {
     return err_string(std::move(error));
   }
   if (found) return ok_string("nebula-ui-action-dispatched=" + action);
@@ -288,12 +201,10 @@ RtResult __nebula_ui_headless_dispatch_action_wire(const RtJson& tree, const std
 }
 
 RtJsonResult __nebula_ui_headless_action_summary_wire(const RtJson& tree) {
-  if (tree.text.empty()) return nebula::rt::err_result<RtJson>("expected nebula-ui.tree.v1 root-view schema");
-
   bool found = false;
   ActionSummary summary;
   std::string error;
-  if (!validate_action_node_raw(tree.text, "", &found, &summary, &error)) {
+  if (!validate_action_node_value(tree, "", &found, &summary, &error)) {
     return nebula::rt::err_result<RtJson>(std::move(error));
   }
   return nebula::rt::ok_result(action_summary_json(summary));

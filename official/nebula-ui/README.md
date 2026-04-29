@@ -22,15 +22,18 @@ Current V1 shape:
   `headless::hit_test(layout, x, y)` resolves stable action ids, and `headless::patch(old, new)`
   emits `ui.patch.v1` smoke operations for small state changes
 - typed fast path preview: internal benchmark/workload helpers can compile the current Local Ops
-  UI shape into `FastPreviewTree`/`FastPreviewLayout`, preserving the JSON tree as the external
-  adapter contract while avoiding JSON parse/stringify work inside layout, render-list, hit-test,
-  and patch classification loops
+  UI shape into `FastPreviewTree`/`FastPreviewLayout` plus `FastActionIndex`, preserving the JSON
+  tree as the external adapter contract while avoiding JSON parse/stringify work inside action
+  dispatch, layout, render-list, hit-test, and patch classification loops
 - GPU backend preview: a guarded macOS Metal submit smoke can submit an empty command buffer after
   validating the same UI tree contract; the always-available null/headless path remains the test and
   benchmark baseline
 - malformed tree contract: headless and native preview adapters reject unsupported schemas,
   unknown components, missing/non-array `children`, empty `Button.action`, empty `Input.action`,
   and empty `Input.accessibility_label`
+- JSON wire performance contract: native headless action dispatch and action-summary validation walk
+  runtime `JsonValue` object/array indexes first, while keeping `nebula-ui.tree.v1` JSON as the
+  external adapter format
 - rendering contract: adapters consume the JSON tree, not source syntax directly
 
 This package is a preview contract. It does not yet provide a complete renderer, style system,

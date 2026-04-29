@@ -102,6 +102,28 @@ fn emit_action_summary(tree: Json) -> Void {
   }
 }
 
+fn emit_fast_action_index() -> Void {
+  match fast_preview_tree("Local Ops", "Local Ops", "targets", "targets.filter", "Filter targets", "Refresh", "targets.refresh") {
+    Ok(tree) => {
+      match fast_action_index(tree) {
+        Ok(index) => {
+          print(index.first_button_action)
+          print(index.first_input_action)
+          emit_bool(fast_dispatch_action_index(index, "targets.filter"))
+          emit_bool(fast_dispatch_action_code(index, 1))
+          print("fast-action-index-ok")
+        }
+        Err(msg) => {
+          print(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
 fn main() -> Int {
   match parse(__JSON_LITERAL__) {
     Ok(tree) => {
@@ -113,6 +135,7 @@ fn main() -> Int {
       emit_action_summary(tree)
       emit_layout_pipeline(tree)
       emit_patch(tree)
+      emit_fast_action_index()
       return 0
     }
     Err(msg) => {
@@ -135,6 +158,7 @@ def run_tree(name, json_text):
 
 valid = '{"schema":"nebula-ui.tree.v1","component":"Window","props":{"title":"Local Ops"},"children":[{"schema":"nebula-ui.tree.v1","component":"Column","props":{"spacing":12},"children":[{"schema":"nebula-ui.tree.v1","component":"Text","props":{"text":"Local Ops"},"children":[]},{"schema":"nebula-ui.tree.v1","component":"Input","props":{"value":"targets","action":"targets.filter","accessibility_label":"Filter targets"},"children":[]},{"schema":"nebula-ui.tree.v1","component":"Button","props":{"text":"Refresh","action":"targets.refresh"},"children":[]}]}]}'
 valid_next = '{"schema":"nebula-ui.tree.v1","component":"Window","props":{"title":"Local Ops"},"children":[{"schema":"nebula-ui.tree.v1","component":"Column","props":{"spacing":12},"children":[{"schema":"nebula-ui.tree.v1","component":"Text","props":{"text":"Local Ops"},"children":[]},{"schema":"nebula-ui.tree.v1","component":"Input","props":{"value":"prod","action":"targets.filter","accessibility_label":"Filter targets"},"children":[]},{"schema":"nebula-ui.tree.v1","component":"Button","props":{"text":"Refresh","action":"targets.refresh"},"children":[]}]}]}'
+valid_unknown_fields = '{"schema":"nebula-ui.tree.v1","component":"Window","props":{"title":"Local Ops","unknown":"ignored"},"children":[{"schema":"nebula-ui.tree.v1","component":"Column","props":{"spacing":12,"extra":true},"children":[{"schema":"nebula-ui.tree.v1","component":"Text","props":{"text":"Local Ops"},"children":[]},{"schema":"nebula-ui.tree.v1","component":"Input","props":{"value":"targets","action":"targets.filter","accessibility_label":"Filter targets","ignored":1},"children":[]},{"schema":"nebula-ui.tree.v1","component":"Button","props":{"text":"Refresh","action":"targets.refresh","ignored":false},"children":[]}],"unknown_child_field":1}],"x1":1,"x2":2,"x3":3,"x4":4,"x5":5,"x6":6}'
 valid_out = run_tree("valid", valid)
 for marker in (
     "validate-ok",
@@ -153,9 +177,26 @@ for marker in (
     '"schema":"nebula-ui.patch.v1"',
     '"kind":"props"',
     '"op":"replace-prop"',
+    "targets.refresh",
+    "fast-action-index-ok",
 ):
     if marker not in valid_out:
         raise SystemExit(f"valid tree missing marker {marker!r}: {valid_out!r}")
+
+valid_unknown_out = run_tree("valid-unknown-fields", valid_unknown_fields)
+for marker in (
+    "validate-ok",
+    "nebula-ui-action-dispatched=targets.refresh",
+    "nebula-ui-action-dispatched=targets.filter",
+    '"first_button_action":"targets.refresh"',
+    '"first_input_action":"targets.filter"',
+):
+    if marker not in valid_unknown_out:
+        raise SystemExit(f"valid unknown-field tree missing marker {marker!r}: {valid_unknown_out!r}")
+
+props_not_object_out = run_tree("props-not-object", '{"schema":"nebula-ui.tree.v1","component":"Window","props":[],"children":[]}')
+if props_not_object_out.count("expected UI node props object") < 3:
+    raise SystemExit(f"props-not-object did not reject through action wire paths: {props_not_object_out!r}")
 
 bad_cases = [
     ("bad-schema", '{"schema":"wrong","component":"Window","props":{},"children":[]}', "expected nebula-ui.tree.v1 root-view schema"),
