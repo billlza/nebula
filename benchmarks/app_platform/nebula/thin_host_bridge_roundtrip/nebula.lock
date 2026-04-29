@@ -48,7 +48,7 @@ source_kind = "path"
 source_hint = "../../../../examples/thin_host_app_core/packages/counter_core"
 resolved_rev = ""
 manifest_hash = "a7f7d99e350c6543"
-source_fingerprint = "9bb3cf7d6fab82de"
-integrity_fingerprint = "4f72899dc52279a6"
+source_fingerprint = "36dac130ce57a5e6"
+integrity_fingerprint = "314a5fa33ff63b96"
 is_root = 0
 dependencies = ["bridge=nebula-thin-host-bridge"]

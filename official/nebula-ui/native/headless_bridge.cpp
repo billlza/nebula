@@ -254,14 +254,14 @@ RtResult __nebula_ui_headless_dispatch_action_summary_wire(const RtJson& summary
   return err_string("action not found: " + action);
 }
 
-std::string __nebula_ui_typed_snapshot_text(std::string title,
-                                            std::string text,
-                                            std::string editable_value,
+std::string __nebula_ui_typed_snapshot_text(const std::string& title,
+                                            const std::string& text,
+                                            const std::string& editable_value,
                                             std::int64_t spacing,
-                                            std::string primary_action,
-                                            std::string primary_accessibility_label,
-                                            std::string secondary_action,
-                                            std::string secondary_accessibility_label) {
+                                            const std::string& primary_action,
+                                            const std::string& primary_accessibility_label,
+                                            const std::string& secondary_action,
+                                            const std::string& secondary_accessibility_label) {
   const std::string spacing_text = std::to_string(spacing);
   std::string out;
   out.reserve(310 + title.size() + text.size() + editable_value.size() + spacing_text.size() +

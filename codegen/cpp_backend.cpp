@@ -413,6 +413,7 @@ static bool extern_uses_hosted_const_ref_contract(const Function& fn) {
       "__nebula_ui_headless_action_summary_wire",
       "__nebula_ui_headless_dispatch_action_wire",
       "__nebula_ui_headless_dispatch_action_summary_wire",
+      "__nebula_ui_typed_snapshot_text",
   };
   return kConstRefExterns.contains(fn.name);
 }
@@ -540,10 +541,19 @@ struct EmitCtx {
   std::vector<std::string> region_stack;
   std::unordered_map<VarId, std::string> stringify_source_vars;
   std::vector<std::vector<VarId>> stringify_scope_stack;
+  std::unordered_set<VarId> local_value_vars;
+  std::unordered_map<VarId, const Block*> local_value_decl_block;
+  const Block* current_block = nullptr;
+  std::size_t current_stmt_index = 0;
   mutable std::uint64_t temp_counter = 0;
 };
 
 static std::string emit_expr(const EmitCtx& ctx, const Expr& e);
+static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e);
+
+static bool is_synthetic_try_name(std::string_view name) {
+  return name.starts_with("__nebula_try_");
+}
 
 static bool member_access_uses_arrow(const EmitCtx& ctx, VarId base_var) {
   const StorageDecision* dec = lookup_decision(*ctx.rep_owner, ctx.fn_name, base_var);
@@ -747,8 +757,15 @@ static std::string emit_match_enum_payload(const std::string& subject_name,
                                            const Ty& subject_ty,
                                            const std::string& variant_name) {
   if (is_std_result_enum(subject_ty)) {
-    if (variant_name == "Ok") return "nebula::rt::result_ok_ref(" + subject_name + ")";
-    if (variant_name == "Err") return "nebula::rt::result_err_ref(" + subject_name + ")";
+    const bool move_synthetic_try = is_synthetic_try_name(subject_name);
+    if (variant_name == "Ok") {
+      return std::string("nebula::rt::") +
+             (move_synthetic_try ? "result_ok_move(" : "result_ok_ref(") + subject_name + ")";
+    }
+    if (variant_name == "Err") {
+      return std::string("nebula::rt::") +
+             (move_synthetic_try ? "result_err_move(" : "result_err_ref(") + subject_name + ")";
+    }
   }
   return "nebula::rt::project_value_ref(" + subject_name +
          ", [&](auto&& __nebula_enum) -> decltype(auto) { return (" +
@@ -951,7 +968,7 @@ static std::string emit_construct_call(const EmitCtx& ctx, const std::string& ty
   os << type_name << "(";
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (i) os << ", ";
-    os << emit_expr(ctx, *args[i]);
+    os << emit_construct_arg_expr(ctx, *args[i]);
   }
   os << ")";
   return os.str();
@@ -970,7 +987,7 @@ static std::string emit_heap_make(PrefixKind k, const EmitCtx& ctx, const std::s
   os << maker << "<" << type_name << ">(";
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (i) os << ", ";
-    os << emit_expr(ctx, *args[i]);
+    os << emit_construct_arg_expr(ctx, *args[i]);
   }
   os << ")";
   return os.str();
@@ -991,7 +1008,7 @@ static std::string emit_construct_call(const EmitCtx& ctx,
     os << "{";
     for (std::size_t i = 0; i < construct.args.size(); ++i) {
       if (i) os << ", ";
-      os << emit_expr(ctx, *construct.args[i]);
+      os << emit_construct_arg_expr(ctx, *construct.args[i]);
     }
     os << "}";
   }
@@ -1022,7 +1039,7 @@ static std::string emit_heap_make(PrefixKind k,
     os << "{";
     for (std::size_t i = 0; i < construct.args.size(); ++i) {
       if (i) os << ", ";
-      os << emit_expr(ctx, *construct.args[i]);
+      os << emit_construct_arg_expr(ctx, *construct.args[i]);
     }
     os << "}";
   }
@@ -1366,7 +1383,15 @@ static void emit_stmt(Cpp& out, EmitCtx& ctx, const Stmt& s);
 
 static void emit_block(Cpp& out, EmitCtx& ctx, const Block& b) {
   ctx.stringify_scope_stack.push_back({});
-  for (const auto& st : b.stmts) emit_stmt(out, ctx, st);
+  const Block* previous_block = ctx.current_block;
+  const std::size_t previous_index = ctx.current_stmt_index;
+  ctx.current_block = &b;
+  for (std::size_t i = 0; i < b.stmts.size(); ++i) {
+    ctx.current_stmt_index = i;
+    emit_stmt(out, ctx, b.stmts[i]);
+  }
+  ctx.current_block = previous_block;
+  ctx.current_stmt_index = previous_index;
   for (VarId var : ctx.stringify_scope_stack.back()) {
     ctx.stringify_source_vars.erase(var);
   }
@@ -1565,7 +1590,52 @@ static bool current_function_uses_var_outside_parse_alias(const EmitCtx& ctx, Va
          block_uses_var_outside_parse_alias(*ctx.current_function->body, target);
 }
 
+static bool ty_is_movable_value(const Ty& ty) {
+  switch (ty.kind) {
+  case Ty::Kind::String:
+  case Ty::Kind::Struct:
+  case Ty::Kind::Enum: return true;
+  default: return false;
+  }
+}
+
+static bool current_block_uses_var_after_current_stmt(const EmitCtx& ctx, VarId target) {
+  if (ctx.current_block == nullptr) return true;
+  for (std::size_t i = ctx.current_stmt_index + 1; i < ctx.current_block->stmts.size(); ++i) {
+    if (stmt_uses_var_outside_parse_alias(ctx.current_block->stmts[i], target)) return true;
+  }
+  return false;
+}
+
+static bool expr_is_synthetic_try_payload(const Expr& expr) {
+  const auto* payload = std::get_if<Expr::EnumPayload>(&expr.node);
+  if (payload == nullptr) return false;
+  const auto* subject = std::get_if<Expr::VarRef>(&payload->subject->node);
+  return subject != nullptr && is_synthetic_try_name(subject->name);
+}
+
+static bool expr_is_last_use_movable_local(const EmitCtx& ctx, const Expr& expr) {
+  const auto* var = std::get_if<Expr::VarRef>(&expr.node);
+  if (var == nullptr || var->var == 0) return false;
+  if (!ty_is_movable_value(expr.ty)) return false;
+  if (!ctx.local_value_vars.contains(var->var)) return false;
+  const auto declared_in = ctx.local_value_decl_block.find(var->var);
+  if (declared_in == ctx.local_value_decl_block.end() || declared_in->second != ctx.current_block) {
+    return false;
+  }
+  if (member_access_uses_arrow(ctx, var->var)) return false;
+  return !current_block_uses_var_after_current_stmt(ctx, var->var);
+}
+
+static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e) {
+  if (expr_is_last_use_movable_local(ctx, e)) {
+    return "std::move(" + emit_expr(ctx, e) + ")";
+  }
+  return emit_expr(ctx, e);
+}
+
 static bool should_bind_let_by_const_ref(const EmitCtx& ctx, const Stmt::Let& st) {
+  if (is_synthetic_try_name(st.name) || expr_is_synthetic_try_payload(*st.value)) return false;
   if (current_function_reassigns_var(ctx, st.var)) return false;
   if (std::holds_alternative<Expr::VarRef>(st.value->node) ||
       std::holds_alternative<Expr::FieldRef>(st.value->node)) {
@@ -1594,6 +1664,8 @@ static std::optional<std::string> emit_json_array_builder_self_push(const EmitCt
 }
 
 static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
+  ctx.local_value_vars.insert(st.var);
+  ctx.local_value_decl_block[st.var] = ctx.current_block;
   const StorageDecision* dec = lookup_decision(*ctx.rep_owner, ctx.fn_name, st.var);
   const RepKind rep = dec ? dec->rep : RepKind::Stack;
   const OwnerKind owner = dec ? dec->owner : OwnerKind::None;

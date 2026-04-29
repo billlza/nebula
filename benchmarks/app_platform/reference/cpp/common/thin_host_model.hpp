@@ -194,6 +194,27 @@ inline Step apply_command_code_envelope(const State& state, const CommandCodeEnv
   return reduce_command_code(state, command.kind_code, command.correlation_id);
 }
 
+inline State reduce_command_code_state(const State& state, int kind_code) {
+  if (kind_code == increment_command_code()) {
+    return State{state.counter + 1, "increment", state.revision + 1};
+  }
+  if (kind_code == decrement_command_code()) {
+    if (state.counter <= 0) {
+      fail("invalid counter transition: cannot decrement below zero");
+    }
+    return State{state.counter - 1, "decrement", state.revision + 1};
+  }
+  if (kind_code == quit_command_code()) {
+    return State{state.counter, "quit", state.revision + 1};
+  }
+  fail("unknown thin-host command kind");
+}
+
+inline State apply_command_code_state_envelope(const State& state, const CommandCodeEnvelope& command) {
+  expect_eq(command.state_revision, state.revision, "command state_revision");
+  return reduce_command_code_state(state, command.kind_code);
+}
+
 inline std::string event_text(const Step& step) {
   return encode_event(step.event_kind,
                       counter_payload(step.state),
@@ -228,12 +249,9 @@ inline std::uint64_t run_increment_roundtrip() {
 
 inline std::uint64_t run_state_sync_tape() {
   State state = initial_state();
-  Step step1 = apply_command_code_envelope(state, command_code_at_revision(increment_command_code(), "sync-1", state.revision));
-  state = step1.state;
-  Step step2 = apply_command_code_envelope(state, command_code_at_revision(increment_command_code(), "sync-2", state.revision));
-  state = step2.state;
-  Step step3 = apply_command_code_envelope(state, command_code_at_revision(decrement_command_code(), "sync-3", state.revision));
-  state = step3.state;
+  state = apply_command_code_state_envelope(state, command_code_at_revision(increment_command_code(), "sync-1", state.revision));
+  state = apply_command_code_state_envelope(state, command_code_at_revision(increment_command_code(), "sync-2", state.revision));
+  state = apply_command_code_state_envelope(state, command_code_at_revision(decrement_command_code(), "sync-3", state.revision));
   const std::string snapshot = snapshot_text(state);
   expect_eq(snapshot,
             "{\"schema\":\"thin-host-bridge.snapshot.v1\",\"screen\":\"counter\","

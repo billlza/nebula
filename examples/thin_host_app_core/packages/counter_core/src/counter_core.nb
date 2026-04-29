@@ -219,6 +219,22 @@ fn reduce_command_code_with_correlation(state: CounterState, kind_code: Int, cor
   return Err("unknown thin-host command kind")
 }
 
+fn reduce_command_code_state(state: CounterState, kind_code: Int) -> Result<CounterState, String> {
+  if kind_code == increment_command_code() {
+    return Ok(CounterState(state.counter + 1, "increment", state.revision + 1))
+  }
+  if kind_code == decrement_command_code() {
+    if state.counter <= 0 {
+      return Err("invalid counter transition: cannot decrement below zero")
+    }
+    return Ok(CounterState(state.counter - 1, "decrement", state.revision + 1))
+  }
+  if kind_code == quit_command_code() {
+    return Ok(CounterState(state.counter, "quit", state.revision + 1))
+  }
+  return Err("unknown thin-host command kind")
+}
+
 fn apply_command_envelope(state: CounterState, command: CounterCommandEnvelope) -> Result<CounterStep, String> {
   if command.state_revision != state.revision {
     return Err("stale thin-host command state_revision")
@@ -231,6 +247,13 @@ fn apply_command_code_envelope(state: CounterState, command: CounterCommandCodeE
     return Err("stale thin-host command state_revision")
   }
   return reduce_command_code_with_correlation(state, command.kind_code, command.correlation_id)
+}
+
+fn apply_command_code_state_envelope(state: CounterState, command: CounterCommandCodeEnvelope) -> Result<CounterState, String> {
+  if command.state_revision != state.revision {
+    return Err("stale thin-host command state_revision")
+  }
+  return reduce_command_code_state(state, command.kind_code)
 }
 
 fn apply_command_text(state: CounterState, command_text: String) -> Result<CounterStep, String> {

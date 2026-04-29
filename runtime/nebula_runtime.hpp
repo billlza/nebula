@@ -202,6 +202,16 @@ inline decltype(auto) result_ok_ref(const Result<T, E>& result) {
   return (std::get<typename Result<T, E>::Ok>(result.data).value);
 }
 
+template <typename T, typename E>
+inline decltype(auto) result_ok_move(Result<T, E>& result) {
+  return std::move(std::get<typename Result<T, E>::Ok>(result.data).value);
+}
+
+template <typename E>
+inline void result_ok_move(Result<void, E>& result) {
+  std::get<typename Result<void, E>::Ok>(result.data);
+}
+
 template <typename E>
 inline void result_ok_ref(Result<void, E>& result) {
   std::get<typename Result<void, E>::Ok>(result.data);
@@ -220,6 +230,16 @@ inline decltype(auto) result_err_ref(Result<T, E>& result) {
 template <typename T, typename E>
 inline decltype(auto) result_err_ref(const Result<T, E>& result) {
   return (std::get<typename Result<T, E>::Err>(result.data).value);
+}
+
+template <typename T, typename E>
+inline decltype(auto) result_err_move(Result<T, E>& result) {
+  return std::move(std::get<typename Result<T, E>::Err>(result.data).value);
+}
+
+template <typename E>
+inline decltype(auto) result_err_move(Result<void, E>& result) {
+  return std::move(std::get<typename Result<void, E>::Err>(result.data).value);
 }
 
 struct Bytes {
