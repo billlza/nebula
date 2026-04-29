@@ -87,14 +87,21 @@ Update markers use `nebula.app-local.update-marker.v1` and carry app id, correla
 revision, status, manifest path, and manifest checksum. They are a sidecar contract for host-owned
 bundle/update flows, not a downloader, signer, notarization flow, rollback engine, or auto-updater.
 
+Runtime lifecycle markers use `nebula.app-local.lifecycle-marker.v1` and carry app id,
+`runtime_session_id`, correlation id, state revision, status, and reason. The preview status set is
+`startup_started`, `app_ready`, `app_degraded`, and `shutdown_clean`. They are evidence about a
+runtime session, not a hidden runtime state machine; the app still owns whether an incomplete or
+degraded session should resume, restore, discard, or prompt the user.
+
 ## Runtime Receipts
 
 The default local recoverability path is SQLite. `official/nebula-app-local` provides a generic
 `app_local_runtime_receipts` table plus helpers for command contexts, command events, recovery
-markers, update markers, and host snapshots. Receipts store the stable schema string, app id, receipt key,
-correlation id, state revision, created time, and the same JSON payload that can still be emitted as
-sidecar output. `app_id + receipt_kind + receipt_key` is unique so replaying the same command or
-marker returns the existing receipt instead of creating an ambiguous duplicate.
+markers, update markers, lifecycle markers, and host snapshots. Receipts store the stable schema
+string, app id, receipt key, correlation id, state revision, created time, and the same JSON payload
+that can still be emitted as sidecar output. `app_id + receipt_kind + receipt_key` is unique so
+replaying the same command or marker returns the existing receipt instead of creating an ambiguous
+duplicate.
 
 This is intentionally narrower than an audit log or event-sourcing framework. It gives a thin-host
 shell enough local facts to replay, reject, diagnose crashes, and correlate staged updates, while
@@ -106,7 +113,7 @@ that actually needs them.
 `receipt_by_key(...)` reads a single stable receipt by `app_id`, `receipt_kind`, and `receipt_key`.
 `replay_receipts(...)` pages one receipt kind after a receipt id cursor with a bounded limit.
 `recovery_replay_trace(...)` assembles the recent generic trajectory a host shell needs at startup:
-snapshots, command contexts, command events, and recovery/update markers.
+snapshots, command contexts, command events, recovery/update markers, and lifecycle markers.
 
 This is a startup diagnostic and replay substrate, not an audit-log query language, sync engine, or
 domain state model. The validation app still owns how to interpret a snapshot payload, whether an
@@ -117,8 +124,8 @@ event can be replayed, and which recovery action is safe.
 `startup_recovery_policy(...)` builds on `recovery_replay_trace(...)` and returns
 `nebula.app-local.startup-recovery-policy.v1`, a diagnostic summary designed for app startup. It
 reports the latest revision evidence, last snapshot, last accepted command event, last rejected
-command event, last recovery marker, last update marker, and `action_owner="app"` inside a bounded
-replay window.
+command event, last recovery marker, last update marker, lifecycle session evidence, and
+`action_owner="app"` inside a bounded replay window.
 
 The policy is intentionally explanatory rather than executable. It may recommend that the app inspect
 an update marker, recovery marker, rejected command, snapshot, or raw receipts. The substrate policy
@@ -128,6 +135,18 @@ The app remains the action owner because only the app can decide whether a snaps
 The latest revision in the policy is derived from the most recent command event or snapshot, not from
 marker receipts alone. Its confidence is marked `windowed` when evidence exists because startup traces
 are bounded by the requested limit, and `none` when no revision evidence is available.
+
+## Runtime Lifecycle Markers
+
+Lifecycle markers answer two startup questions without embedding any app domain model: what did the
+previous runtime session last report, and how far did this runtime session get? A host shell should
+compute startup recovery policy before recording the new `startup_started` marker, then record
+`app_ready` after the first usable app snapshot, `app_degraded` when startup continues with a known
+missing capability, and `shutdown_clean` during normal quit.
+
+These markers do not restore snapshots, replay commands, apply updates, or choose UX. They only make
+session evidence durable enough for a media player, game, editor, or operations console to explain
+its previous shutdown and decide the next action itself.
 
 ## App Boundaries
 

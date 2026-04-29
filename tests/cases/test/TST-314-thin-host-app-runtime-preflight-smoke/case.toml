@@ -55,6 +55,7 @@ if "postgresql://user:pass@127.0.0.1:5432/runtime_preflight" in combined:
 preflights = []
 startup_policies = []
 contexts = []
+lifecycle = []
 for line in output.splitlines():
     if line.startswith("app-local-preflight:"):
         preflights.append(json.loads(line[len("app-local-preflight:"):]))
@@ -62,6 +63,8 @@ for line in output.splitlines():
         startup_policies.append(json.loads(line[len("app-local-startup-policy:"):]))
     if line.startswith("app-local-context:"):
         contexts.append(json.loads(line[len("app-local-context:"):]))
+    if line.startswith("app-local-lifecycle:"):
+        lifecycle.append(json.loads(line[len("app-local-lifecycle:"):]))
 
 if len(preflights) != 1:
     raise SystemExit(f"unexpected preflight lines: {preflights!r}")
@@ -89,6 +92,10 @@ if policy["diagnostic_only"] is not True or policy["action_owner"] != "app":
 
 if not contexts or {item["actor_subject"] for item in contexts} != {"preflight-operator"}:
     raise SystemExit(f"runtime principal did not flow into command contexts: {contexts!r}")
+if [item["status"] for item in lifecycle] != ["startup_started", "app_ready", "shutdown_clean"]:
+    raise SystemExit(f"runtime lifecycle markers missing: {lifecycle!r}")
+if {item["app_id"] for item in lifecycle} != {"thin-host-runtime-preflight-app"}:
+    raise SystemExit(f"runtime app id did not flow into lifecycle markers: {lifecycle!r}")
 if '"service":"thin-host-runtime-preflight"' not in run.stderr:
     raise SystemExit(f"observe service missing from stderr: {run.stderr!r}")
 if '"event":"app_local_preflight_ok"' not in run.stderr:
@@ -103,7 +110,7 @@ with sqlite3.connect(receipt_db) as conn:
     counts = dict(conn.execute(
         "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
     ).fetchall())
-if counts != {"snapshot": 6, "command_context": 5, "event": 5, "recovery_marker": 1, "update_marker": 1}:
+if counts != {"snapshot": 6, "command_context": 5, "event": 5, "lifecycle_marker": 3, "recovery_marker": 1, "update_marker": 1}:
     raise SystemExit(f"unexpected runtime preflight receipt counts: {counts!r}")
 if {row[0] for row in rows} != {"thin-host-runtime-preflight-app"}:
     raise SystemExit(f"runtime app id did not flow into receipts: {rows!r}")

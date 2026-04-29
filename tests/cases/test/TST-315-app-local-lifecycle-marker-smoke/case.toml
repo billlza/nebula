@@ -1,0 +1,308 @@
+id = "TST-315-app-local-lifecycle-marker-smoke"
+suite = "test"
+description = "app-local substrate persists generic runtime lifecycle markers and exposes them in startup recovery policy evidence"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_lifecycle_marker")
+app = root / "app"
+db_path = root / "state" / "receipts.db"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-lifecycle-marker"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn db_path() -> String {
+  return "work/app_local_lifecycle_marker/state/receipts.db"
+}
+
+fn app_id() -> String {
+  return "app.local.lifecycle"
+}
+
+fn session_id() -> String {
+  return "session-1"
+}
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_marker_error(result: Result<AppLocalLifecycleMarker, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn marker(status: String, reason: String) -> Result<AppLocalLifecycleMarker, String> {
+  return lifecycle_marker(app_id(), session_id(), session_id(), 0, status, reason)
+}
+
+fn record_marker(status: String, reason: String, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_lifecycle_marker_receipt(db_path(), marker(status, reason)?, created_unix_ms)
+}
+
+fn last_lifecycle_payload(policy: AppLocalStartupRecoveryPolicy) -> Result<Json, String> {
+  let lifecycle = get_value(policy.evidence, "lifecycle")?
+  let last = get_value(lifecycle, "last_lifecycle_marker")?
+  return get_value(last, "payload")
+}
+
+fn lifecycle_clean_flag(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let lifecycle = get_value(policy.evidence, "lifecycle")?
+  return get_bool(lifecycle, "previous_session_clean")
+}
+
+fn verify_policy_status(expected_status: String,
+                        expected_recommendation: String,
+                        expected_clean: Bool) -> Result<Bool, String> {
+  let policy = startup_recovery_policy(db_path(), app_id(), 10)?
+  let payload = last_lifecycle_payload(policy)?
+  return Ok(get_string(payload, "status")? == expected_status &&
+            policy.recommendation == expected_recommendation &&
+            lifecycle_clean_flag(policy)? == expected_clean &&
+            policy.action_owner == "app" &&
+            policy.diagnostic_only)
+}
+
+fn verify_incomplete_session_policy() -> Result<Bool, String> {
+  let policy = startup_recovery_policy(db_path(), app_id(), 10)?
+  if !verify_incomplete_policy_shape(policy) {
+    return Ok(false)
+  }
+  return verify_incomplete_policy_payload(policy)
+}
+
+fn verify_incomplete_policy_shape(policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  return policy.recommendation == "inspect_incomplete_session" &&
+         policy.reason == "latest lifecycle marker is not shutdown_clean; app should inspect prior session before resuming"
+}
+
+fn verify_incomplete_policy_payload(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let payload = last_lifecycle_payload(policy)?
+  return Ok(get_string(payload, "runtime_session_id")? == session_id() &&
+            get_string(payload, "status")? == "startup_started" &&
+            !lifecycle_clean_flag(policy)?)
+}
+
+fn verify_clean_shutdown_policy() -> Result<Bool, String> {
+  let policy = startup_recovery_policy(db_path(), app_id(), 10)?
+  if !verify_clean_policy_shape(policy) {
+    return Ok(false)
+  }
+  return verify_clean_policy_payload(policy)
+}
+
+fn verify_clean_policy_shape(policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  return policy.recommendation == "app_decide_from_lifecycle" &&
+         policy.reason == "lifecycle receipts exist; app should decide startup behavior from session evidence"
+}
+
+fn verify_clean_policy_payload(policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  let payload = last_lifecycle_payload(policy)?
+  return Ok(get_string(payload, "status")? == "shutdown_clean" &&
+            lifecycle_clean_flag(policy)?)
+}
+
+fn verify_lifecycle_trace() -> Result<Bool, String> {
+  let trace = recovery_replay_trace(db_path(), app_id(), 10)?
+  let trajectory = get_value(trace.as_json(), "trajectory")?
+  let trace_count = array_len(trace.lifecycle_markers)?
+  let trajectory_count = array_len(get_value(trajectory, "lifecycle_markers")?)?
+  return Ok(trace_count == 4 && trajectory_count == 4)
+}
+
+fn verify_idempotent_shutdown(first: AppLocalReceipt) -> Result<Bool, String> {
+  let duplicate = record_marker("shutdown_clean", "normal quit duplicate", 1777434000099)?
+  let by_key = receipt_by_key(db_path(), app_id(), "lifecycle_marker", "session-1:shutdown_clean:session-1")?
+  return Ok(duplicate.receipt_id == first.receipt_id &&
+            by_key.receipt_id == first.receipt_id &&
+            by_key.receipt_kind == "lifecycle_marker")
+}
+
+fn verify_lifecycle_markers() -> Result<Bool, String> {
+  initialize_receipts(db_path())?
+  if !verify_lifecycle_startup_and_ready()? {
+    return Ok(false)
+  }
+  if !verify_lifecycle_degraded_and_shutdown()? {
+    return Ok(false)
+  }
+  return verify_lifecycle_trace()
+}
+
+fn verify_lifecycle_startup_and_ready() -> Result<Bool, String> {
+  record_marker("startup_started", "process started", 1777434000001)?
+  if !verify_incomplete_session_policy()? {
+    return Ok(false)
+  }
+  record_marker("app_ready", "first render complete", 1777434000002)?
+  if !verify_policy_status("app_ready", "inspect_incomplete_session", false)? {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn verify_lifecycle_degraded_and_shutdown() -> Result<Bool, String> {
+  if !verify_lifecycle_degraded()? {
+    return Ok(false)
+  }
+  return verify_lifecycle_shutdown()
+}
+
+fn verify_lifecycle_degraded() -> Result<Bool, String> {
+  record_marker("app_degraded", "background worker unavailable", 1777434000003)?
+  return verify_policy_status("app_degraded", "inspect_incomplete_session", false)
+}
+
+fn verify_lifecycle_shutdown() -> Result<Bool, String> {
+  let clean = record_marker("shutdown_clean", "normal quit", 1777434000004)?
+  if !verify_clean_shutdown_policy()? {
+    return Ok(false)
+  }
+  if !verify_idempotent_shutdown(clean)? {
+    return Ok(false)
+  }
+  return Ok(true)
+}
+
+fn verify_negative_contracts() -> Void {
+  verify_lifecycle_identity_errors()
+  verify_lifecycle_value_errors()
+}
+
+fn verify_lifecycle_identity_errors() -> Void {
+  expect_marker_error(lifecycle_marker("", session_id(), session_id(), 0, "startup_started", "ok"),
+                      "app-local substrate lifecycle app_id is required")
+  expect_marker_error(lifecycle_marker(app_id(), "", session_id(), 0, "startup_started", "ok"),
+                      "app-local substrate lifecycle runtime_session_id is required")
+  expect_marker_error(lifecycle_marker(app_id(), session_id(), "", 0, "startup_started", "ok"),
+                      "app-local substrate lifecycle correlation_id is required")
+}
+
+fn verify_lifecycle_value_errors() -> Void {
+  expect_marker_error(lifecycle_marker(app_id(), session_id(), session_id(), -1, "startup_started", "ok"),
+                      "app-local substrate lifecycle state_revision must be non-negative")
+  expect_marker_error(lifecycle_marker(app_id(), session_id(), session_id(), 0, "half_ready", "ok"),
+                      "app-local substrate lifecycle status must be startup_started, app_ready, app_degraded, or shutdown_clean")
+  expect_marker_error(lifecycle_marker(app_id(), session_id(), session_id(), 0, "startup_started", ""),
+                      "app-local substrate lifecycle reason is required")
+}
+
+fn main() -> Int {
+  match verify_lifecycle_markers() {
+    Ok(ok) => {
+      if !ok {
+        print("app-local-lifecycle-marker-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_negative_contracts()
+  print("app-local-lifecycle-marker-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local lifecycle marker check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True)
+if run.returncode != 0 or "app-local-lifecycle-marker-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local lifecycle marker smoke failed")
+
+with sqlite3.connect(db_path) as conn:
+    rows = conn.execute(
+        "SELECT receipt_kind, receipt_key, schema FROM app_local_runtime_receipts ORDER BY receipt_id"
+    ).fetchall()
+if [row[0] for row in rows] != ["lifecycle_marker"] * 4:
+    raise SystemExit(f"unexpected lifecycle receipt kinds: {rows!r}")
+if rows[-1][1] != "session-1:shutdown_clean:session-1":
+    raise SystemExit(f"bad lifecycle receipt key: {rows[-1]!r}")
+if rows[-1][2] != "nebula.app-local.lifecycle-marker.v1":
+    raise SystemExit(f"bad lifecycle receipt schema: {rows[-1]!r}")
+print("app-local-lifecycle-marker-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-lifecycle-marker-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+for marker in [
+    "AppLocalLifecycleMarker",
+    "lifecycle_marker",
+    "record_lifecycle_marker_receipt",
+    "nebula.app-local.lifecycle-marker.v1",
+    "startup_started",
+    "shutdown_clean",
+]:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing lifecycle marker: {marker}")
+for marker in [
+    "Runtime Lifecycle Markers",
+    "startup_started",
+    "app_ready",
+    "app_degraded",
+    "shutdown_clean",
+    "not a hidden runtime state machine",
+]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing lifecycle marker: {marker}")
+print("app-local-lifecycle-marker-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-lifecycle-marker-docs-ok"]

@@ -76,8 +76,14 @@ new commands. The preflight is `nebula.app-local.preflight.v1` from the app-loca
 including the selected app id, SQLite receipt path, auth mode, principal subject, and optional
 PostgreSQL preview gate. The startup policy is `nebula.app-local.startup-recovery-policy.v1`
 generated from the local receipt DB: it explains the latest revision evidence, prior snapshot,
-accepted/rejected command events, and recovery/update markers. Both are diagnostic startup inputs;
-concrete resume, rollback, replay, or update actions remain app-owned.
+accepted/rejected command events, recovery/update markers, and lifecycle session evidence. Both are
+diagnostic startup inputs; concrete resume, rollback, replay, or update actions remain app-owned.
+
+During the current session the host shell emits `app-local-lifecycle:` markers with
+`nebula.app-local.lifecycle-marker.v1`. The preview lifecycle statuses used by this shell are
+`startup_started`, `app_ready`, and `shutdown_clean`; `app_degraded` is reserved for sessions that
+continue after a known missing capability. These markers describe runtime evidence, not a host-owned
+restore policy.
 
 The next validation probe is a thin-host media player, tracked in
 `docs/media_player_validation_app.md`. That app should prove app-core state, app-local storage,

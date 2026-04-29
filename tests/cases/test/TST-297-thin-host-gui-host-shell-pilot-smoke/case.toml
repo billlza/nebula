@@ -30,6 +30,7 @@ required = [
     "thin-host-gui-shell-telemetry-session=thin-host-gui-preview-session-0001",
     "app-local-preflight:",
     "app-local-startup-policy:",
+    "app-local-lifecycle:",
     "nebula-ui-tree-title=Local Ops Shell",
     "nebula-ui-tree-button-action=targets.refresh",
     "nebula-ui-tree-input-action=targets.filter",
@@ -54,6 +55,7 @@ app_contexts = []
 app_events = []
 app_recovery = []
 app_updates = []
+app_lifecycle = []
 app_preflights = []
 app_startup_policies = []
 for line in output.splitlines():
@@ -69,6 +71,8 @@ for line in output.splitlines():
         app_recovery.append(json.loads(line[len("app-local-recovery:"):]))
     if line.startswith("app-local-update:"):
         app_updates.append(json.loads(line[len("app-local-update:"):]))
+    if line.startswith("app-local-lifecycle:"):
+        app_lifecycle.append(json.loads(line[len("app-local-lifecycle:"):]))
     if line.startswith("app-local-preflight:"):
         app_preflights.append(json.loads(line[len("app-local-preflight:"):]))
     if line.startswith("app-local-startup-policy:"):
@@ -90,6 +94,12 @@ if startup_policy["recommendation"] != "clean_start" or startup_policy["latest_r
     raise SystemExit(f"bad clean startup policy: {startup_policy!r}")
 if startup_policy["diagnostic_only"] is not True or startup_policy["action_owner"] != "app":
     raise SystemExit(f"startup policy is not diagnostic-only/app-owned: {startup_policy!r}")
+if [item["status"] for item in app_lifecycle] != ["startup_started", "app_ready", "shutdown_clean"]:
+    raise SystemExit(f"unexpected app-local lifecycle sequence: {app_lifecycle!r}")
+if [item["schema"] for item in app_lifecycle] != ["nebula.app-local.lifecycle-marker.v1"] * 3:
+    raise SystemExit(f"unexpected app-local lifecycle schemas: {app_lifecycle!r}")
+if [item["runtime_session_id"] for item in app_lifecycle] != ["thin-host-gui-preview-session-0001"] * 3:
+    raise SystemExit(f"unexpected app-local lifecycle session ids: {app_lifecycle!r}")
 if [event["kind"] for event in events] != [
     "ui_shell_booted",
     "ui_action_applied",
@@ -194,21 +204,54 @@ if receipt_counts != {
     "snapshot": 6,
     "command_context": 5,
     "event": 5,
+    "lifecycle_marker": 3,
     "recovery_marker": 1,
     "update_marker": 1,
 }:
     raise SystemExit(f"unexpected persisted app-local receipt counts: {receipt_counts!r}")
-if [row[1] for row in receipt_rows[:3]] != ["snapshot", "command_context", "event"]:
+if [row[1] for row in receipt_rows[:3]] != ["lifecycle_marker", "snapshot", "lifecycle_marker"]:
     raise SystemExit(f"unexpected persisted app-local receipt kinds: {receipt_rows!r}")
-if receipt_rows[0][0] != "thin-host-gui-host-shell" or receipt_rows[0][2] != "snapshot:boot":
+if receipt_rows[0][0] != "thin-host-gui-host-shell" or receipt_rows[0][2] != "thin-host-gui-preview-session-0001:startup_started:thin-host-gui-preview-session-0001":
     raise SystemExit(f"unexpected persisted app-local receipt identity: {receipt_rows[0]!r}")
 command_rows = [row for row in receipt_rows if row[1] == "command_context"]
 if [row[3] for row in command_rows] != ["gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
     raise SystemExit(f"unexpected persisted app-local command correlations: {receipt_rows!r}")
 if command_rows[0][2] != "targets.refresh:gui-1":
     raise SystemExit(f"unexpected persisted app-local command key: {command_rows[0]!r}")
-if receipt_rows[-1][5] != "nebula.app-local.update-marker.v1":
-    raise SystemExit(f"unexpected persisted app-local update receipt: {receipt_rows[-1]!r}")
+if receipt_rows[-1][5] != "nebula.app-local.lifecycle-marker.v1":
+    raise SystemExit(f"unexpected persisted app-local lifecycle receipt: {receipt_rows[-1]!r}")
+
+receipt_db.unlink(missing_ok=True)
+host_close_env = os.environ.copy()
+host_close_env["NEBULA_THIN_HOST_GUI_COMMAND_MODE"] = "host_close"
+host_close = subprocess.run(
+    [binary, "run", str(app), "--run-gate", "none"],
+    capture_output=True,
+    text=True,
+    check=True,
+    env=host_close_env,
+)
+host_close_output = host_close.stdout
+host_close_lifecycle = [
+    json.loads(line[len("app-local-lifecycle:"):])
+    for line in host_close_output.splitlines()
+    if line.startswith("app-local-lifecycle:")
+]
+if [item["status"] for item in host_close_lifecycle] != ["startup_started", "app_ready", "shutdown_clean"]:
+    raise SystemExit(f"unexpected host-close lifecycle sequence: {host_close_lifecycle!r}")
+if host_close_lifecycle[-1]["reason"] != "host shell closed" or host_close_lifecycle[-1]["state_revision"] != 2:
+    raise SystemExit(f"bad host-close shutdown lifecycle marker: {host_close_lifecycle!r}")
+with sqlite3.connect(receipt_db) as conn:
+    host_close_counts = dict(conn.execute(
+        "SELECT receipt_kind, COUNT(*) FROM app_local_runtime_receipts GROUP BY receipt_kind"
+    ).fetchall())
+if host_close_counts != {
+    "snapshot": 3,
+    "command_context": 2,
+    "event": 2,
+    "lifecycle_marker": 3,
+}:
+    raise SystemExit(f"unexpected host-close receipt counts: {host_close_counts!r}")
 
 print("thin-host-gui-host-shell-pilot-ok")
 PY

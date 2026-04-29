@@ -92,6 +92,7 @@ required = [
     "thin-host-gui-shell-telemetry-session=thin-host-gui-preview-session-0001",
     "app-local-preflight:",
     "app-local-startup-policy:",
+    "app-local-lifecycle:",
     "nebula-ui-tree-button-action=targets.refresh",
     "nebula-ui-tree-input-accessibility-label=Filter targets",
     "thin-host-gui-shell-crash-report-schema=nebula.gui.preview.crash.v1",
@@ -116,6 +117,7 @@ snapshots = []
 app_events = []
 app_recovery = []
 app_updates = []
+app_lifecycle = []
 app_preflights = []
 app_startup_policies = []
 for line in output.splitlines():
@@ -129,6 +131,8 @@ for line in output.splitlines():
         app_recovery.append(json.loads(line[len("app-local-recovery:"):]))
     if line.startswith("app-local-update:"):
         app_updates.append(json.loads(line[len("app-local-update:"):]))
+    if line.startswith("app-local-lifecycle:"):
+        app_lifecycle.append(json.loads(line[len("app-local-lifecycle:"):]))
     if line.startswith("app-local-preflight:"):
         app_preflights.append(json.loads(line[len("app-local-preflight:"):]))
     if line.startswith("app-local-startup-policy:"):
@@ -143,6 +147,8 @@ if len(app_startup_policies) != 1:
 startup_policy = app_startup_policies[0]
 if startup_policy["recommendation"] != "clean_start" or startup_policy["action_owner"] != "app":
     raise SystemExit(f"bad app-local startup policy: {startup_policy!r}")
+if [item["status"] for item in app_lifecycle] != ["startup_started", "app_ready", "shutdown_clean"]:
+    raise SystemExit(f"unexpected app-local lifecycle markers: {app_lifecycle!r}")
 if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
     raise SystemExit(f"unexpected event correlation sequence: {events!r}")
 if [event["state_revision"] for event in events] != [0, 1, 1, 1, 2, 3]:

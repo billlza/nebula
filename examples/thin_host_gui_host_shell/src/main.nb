@@ -60,6 +60,10 @@ fn observe_service() -> String {
   return "thin-host-gui-host-shell"
 }
 
+fn runtime_session_id() -> String {
+  return "thin-host-gui-preview-session-0001"
+}
+
 fn shell_runtime() -> Result<ShellRuntime, String> {
   let config_value = config_from_env(app_id(), receipt_db_path(), "local-operator", observe_service())?
   let report = preflight(config_value)?
@@ -113,6 +117,10 @@ fn publish_app_local_update(marker: AppLocalUpdateMarker) -> Void {
   print(text_join("app-local-update:", stringify(marker.as_json())))
 }
 
+fn publish_app_local_lifecycle(marker: AppLocalLifecycleMarker) -> Void {
+  print(text_join("app-local-lifecycle:", stringify(marker.as_json())))
+}
+
 fn publish_app_local_preflight(report: AppLocalPreflight) -> Void {
   print(text_join("app-local-preflight:", stringify(report.as_json())))
 }
@@ -134,6 +142,18 @@ fn publish_runtime_preflight(runtime: ShellRuntime) -> Result<Bool, String> {
 fn publish_startup_recovery_policy(runtime: ShellRuntime) -> Result<Bool, String> {
   let policy = startup_recovery_policy(runtime.config.sqlite_path, runtime.config.app_id, 10)?
   publish_app_local_startup_policy(policy)
+  return Ok(true)
+}
+
+fn publish_lifecycle_marker(runtime: ShellRuntime, status: String, reason: String, revision: Int) -> Result<Bool, String> {
+  let marker = lifecycle_marker(runtime.config.app_id,
+                                runtime_session_id(),
+                                runtime_session_id(),
+                                revision,
+                                status,
+                                reason)?
+  publish_app_local_lifecycle(marker)
+  record_lifecycle_marker_receipt(runtime.config.sqlite_path, marker, 1777431000000)?
   return Ok(true)
 }
 
@@ -285,6 +305,7 @@ fn handle_applied_step(runtime: ShellRuntime, step: ShellStep) -> Result<Bool, S
   render_state(runtime, step.state, step.correlation_id)?
   if step.terminal {
     publish_app_local_shutdown(runtime, step.correlation_id, step.state.revision)?
+    publish_lifecycle_marker(runtime, "shutdown_clean", "normal quit", step.state.revision)?
     host_shell_end()
     return Ok(true)
   }
@@ -322,6 +343,16 @@ fn fail_app_local(msg: String) -> Int {
   return 1
 }
 
+fn fail_app_local_runtime(runtime: ShellRuntime, msg: String, revision: Int) -> Int {
+  match publish_lifecycle_marker(runtime, "app_degraded", msg, revision) {
+    Ok(_) => {}
+    Err(marker_msg) => {
+      publish_app_local_error(marker_msg)
+    }
+  }
+  return fail_app_local(msg)
+}
+
 fn publish_startup_diagnostics(runtime: ShellRuntime) -> Result<Bool, String> {
   publish_runtime_preflight(runtime)?
   return publish_startup_recovery_policy(runtime)
@@ -337,37 +368,45 @@ fn publish_boot_event(state: ShellState) -> Void {
 
 fn boot_shell(runtime: ShellRuntime, state: ShellState) -> Result<Bool, String> {
   publish_startup_diagnostics(runtime)?
+  publish_lifecycle_marker(runtime, "startup_started", "host shell started", state.revision)?
   publish_boot_event(state)
-  return render_state(runtime, state, "boot")
+  render_state(runtime, state, "boot")?
+  return publish_lifecycle_marker(runtime, "app_ready", "first snapshot rendered", state.revision)
 }
 
-fn run_command_loop(runtime: ShellRuntime, state: ShellState) -> Result<Bool, String> {
+fn run_command_loop(runtime: ShellRuntime, state: ShellState) -> Result<ShellCommandOutcome, String> {
   while host_shell_open() {
     let command_text = host_shell_next_command_text()
     let outcome = handle_command(runtime, state, command_text)?
     state = outcome.state
     if outcome.terminal {
-      return Ok(true)
+      return Ok(outcome)
     }
   }
-  return Ok(false)
+  return Ok(ShellCommandOutcome(state, false))
 }
 
 fn run_shell(runtime: ShellRuntime, state: ShellState) -> Int {
   match boot_shell(runtime, state) {
     Ok(_) => {}
     Err(msg) => {
-      return fail_app_local(msg)
+      return fail_app_local_runtime(runtime, msg, state.revision)
     }
   }
   match run_command_loop(runtime, state) {
-    Ok(done) => {
-      if done {
+    Ok(outcome) => {
+      if outcome.terminal {
         return 0
+      }
+      match publish_lifecycle_marker(runtime, "shutdown_clean", "host shell closed", outcome.state.revision) {
+        Ok(_) => {}
+        Err(msg) => {
+          return fail_app_local(msg)
+        }
       }
     }
     Err(msg) => {
-      return fail_app_local(msg)
+      return fail_app_local_runtime(runtime, msg, state.revision)
     }
   }
   host_shell_end()

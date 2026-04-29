@@ -13,13 +13,24 @@ std::string command_text(const char* kind, const char* correlation_id, int state
          std::to_string(state_revision) + "}";
 }
 
-std::vector<std::string> g_commands = {
-    command_text("targets.refresh", "gui-1", 0),
-    command_text("targets.refresh", "gui-stale", 0),
-    command_text("targets.export", "gui-unknown", 1),
-    command_text("targets.filter", "gui-2", 1),
-    command_text("quit", "gui-3", 2),
-};
+std::vector<std::string> make_commands() {
+  const char* mode = std::getenv("NEBULA_THIN_HOST_GUI_COMMAND_MODE");
+  if (mode != nullptr && std::string(mode) == "host_close") {
+    return {
+        command_text("targets.refresh", "gui-close-1", 0),
+        command_text("targets.filter", "gui-close-2", 1),
+    };
+  }
+  return {
+      command_text("targets.refresh", "gui-1", 0),
+      command_text("targets.refresh", "gui-stale", 0),
+      command_text("targets.export", "gui-unknown", 1),
+      command_text("targets.filter", "gui-2", 1),
+      command_text("quit", "gui-3", 2),
+  };
+}
+
+std::vector<std::string> g_commands = make_commands();
 constexpr const char* kTelemetrySessionId = "thin-host-gui-preview-session-0001";
 std::size_t g_index = 0;
 int g_render_count = 0;

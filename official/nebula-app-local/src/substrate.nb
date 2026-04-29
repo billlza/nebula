@@ -5,6 +5,7 @@ import db_sqlite::sqlite
 import jobs::graph
 import observe::log
 import observe::metrics
+import std::bytes
 import postgres_probe
 import std::json
 import std::result
@@ -74,6 +75,15 @@ struct AppLocalUpdateMarker {
   manifest_sha256: String
 }
 
+struct AppLocalLifecycleMarker {
+  app_id: String
+  runtime_session_id: String
+  correlation_id: String
+  state_revision: Int
+  status: String
+  reason: String
+}
+
 struct AppLocalReceipt {
   receipt_id: Int
   app_id: String
@@ -138,6 +148,17 @@ struct AppLocalReplayTrace {
   command_contexts: Json
   events: Json
   markers: Json
+  lifecycle_markers: Json
+}
+
+struct AppLocalReplayTraceEvidence {
+  receipt_count: Int
+  receipts: Json
+  snapshots: Json
+  command_contexts: Json
+  events: Json
+  markers: Json
+  lifecycle_markers: Json
 }
 
 struct AppLocalStartupRecoveryPolicy {
@@ -198,6 +219,14 @@ fn config_from_env(default_app_id: String,
                           auth_mode,
                           principal_subject,
                           observe_service)
+}
+
+fn app_local_text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn app_local_text_concat3(first: String, second: String, third: String) -> String {
+  return app_local_text_concat(first, app_local_text_concat(second, third))
 }
 
 fn validate_data_backend(config_value: AppLocalConfig) -> Result<Bool, String> {
@@ -502,6 +531,40 @@ fn update_marker(app_id: String,
   return Ok(AppLocalUpdateMarker(app_id, correlation_id, state_revision, status, manifest_path, manifest_sha256))
 }
 
+fn lifecycle_status_allowed(status: String) -> Bool {
+  return status == "startup_started" ||
+         status == "app_ready" ||
+         status == "app_degraded" ||
+         status == "shutdown_clean"
+}
+
+fn lifecycle_marker(app_id: String,
+                    runtime_session_id: String,
+                    correlation_id: String,
+                    state_revision: Int,
+                    status: String,
+                    reason: String) -> Result<AppLocalLifecycleMarker, String> {
+  if app_id == "" {
+    return Err("app-local substrate lifecycle app_id is required")
+  }
+  if runtime_session_id == "" {
+    return Err("app-local substrate lifecycle runtime_session_id is required")
+  }
+  if correlation_id == "" {
+    return Err("app-local substrate lifecycle correlation_id is required")
+  }
+  if state_revision < 0 {
+    return Err("app-local substrate lifecycle state_revision must be non-negative")
+  }
+  if !lifecycle_status_allowed(status) {
+    return Err("app-local substrate lifecycle status must be startup_started, app_ready, app_degraded, or shutdown_clean")
+  }
+  if reason == "" {
+    return Err("app-local substrate lifecycle reason is required")
+  }
+  return Ok(AppLocalLifecycleMarker(app_id, runtime_session_id, correlation_id, state_revision, status, reason))
+}
+
 fn AppLocalUpdateMarker_as_json(self: AppLocalUpdateMarker) -> Json {
   return object7("schema",
                  string_value("nebula.app-local.update-marker.v1"),
@@ -517,6 +580,23 @@ fn AppLocalUpdateMarker_as_json(self: AppLocalUpdateMarker) -> Json {
                  string_value(self.manifest_path),
                  "manifest_sha256",
                  string_value(self.manifest_sha256))
+}
+
+fn AppLocalLifecycleMarker_as_json(self: AppLocalLifecycleMarker) -> Json {
+  return object7("schema",
+                 string_value("nebula.app-local.lifecycle-marker.v1"),
+                 "app_id",
+                 string_value(self.app_id),
+                 "runtime_session_id",
+                 string_value(self.runtime_session_id),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "status",
+                 string_value(self.status),
+                 "reason",
+                 string_value(self.reason))
 }
 
 fn AppLocalReceipt_as_json(self: AppLocalReceipt) -> Json {
@@ -605,7 +685,7 @@ fn startup_latest_revision_json(self: AppLocalStartupRecoveryPolicy) -> Json {
 }
 
 fn replay_trace_trajectory_json(self: AppLocalReplayTrace) -> Json {
-  return object5("receipts",
+  return object6("receipts",
                  self.receipts,
                  "snapshots",
                  self.snapshots,
@@ -614,7 +694,9 @@ fn replay_trace_trajectory_json(self: AppLocalReplayTrace) -> Json {
                  "events",
                  self.events,
                  "markers",
-                 self.markers)
+                 self.markers,
+                 "lifecycle_markers",
+                 self.lifecycle_markers)
 }
 
 fn ensure_receipt_schema(conn: Connection) -> Result<Bool, String> {
@@ -869,6 +951,24 @@ fn record_update_marker_receipt(path: String, marker: AppLocalUpdateMarker, crea
                         created_unix_ms)
 }
 
+fn lifecycle_receipt_key(marker: AppLocalLifecycleMarker) -> String {
+  return app_local_text_concat3(marker.runtime_session_id,
+                                ":",
+                                app_local_text_concat3(marker.status, ":", marker.correlation_id))
+}
+
+fn record_lifecycle_marker_receipt(path: String, marker: AppLocalLifecycleMarker, created_unix_ms: Int) -> Result<AppLocalReceipt, String> {
+  return record_receipt(path,
+                        marker.app_id,
+                        "lifecycle_marker",
+                        lifecycle_receipt_key(marker),
+                        marker.correlation_id,
+                        marker.state_revision,
+                        "nebula.app-local.lifecycle-marker.v1",
+                        marker.as_json(),
+                        created_unix_ms)
+}
+
 fn receipt_count(path: String, app_id: String, receipt_kind: String) -> Result<Int, String> {
   validate_receipt_scope(app_id, receipt_kind)?
   let conn = open_receipt_store(path)?
@@ -1090,15 +1190,27 @@ fn recovery_replay_trace(path: String, app_id: String, limit: Int) -> Result<App
 
 fn recovery_replay_trace_conn(conn: Connection, app_id: String, limit: Int) -> Result<AppLocalReplayTrace, String> {
   let latest = latest_app_receipt_conn(conn, app_id)?
+  let evidence = recovery_replay_trace_evidence_conn(conn, app_id, limit)?
   return Ok(AppLocalReplayTrace(app_id,
                                 latest.state_revision,
                                 latest.correlation_id,
-                                receipt_total_count_conn(conn, app_id)?,
-                                recent_receipts_conn(conn, app_id, limit)?,
-                                recent_receipts_by_kind_conn(conn, app_id, "snapshot", limit)?,
-                                recent_receipts_by_kind_conn(conn, app_id, "command_context", limit)?,
-                                recent_receipts_by_kind_conn(conn, app_id, "event", limit)?,
-                                recent_marker_receipts_conn(conn, app_id, limit)?))
+                                evidence.receipt_count,
+                                evidence.receipts,
+                                evidence.snapshots,
+                                evidence.command_contexts,
+                                evidence.events,
+                                evidence.markers,
+                                evidence.lifecycle_markers))
+}
+
+fn recovery_replay_trace_evidence_conn(conn: Connection, app_id: String, limit: Int) -> Result<AppLocalReplayTraceEvidence, String> {
+  return Ok(AppLocalReplayTraceEvidence(receipt_total_count_conn(conn, app_id)?,
+                                        recent_receipts_conn(conn, app_id, limit)?,
+                                        recent_receipts_by_kind_conn(conn, app_id, "snapshot", limit)?,
+                                        recent_receipts_by_kind_conn(conn, app_id, "command_context", limit)?,
+                                        recent_receipts_by_kind_conn(conn, app_id, "event", limit)?,
+                                        recent_marker_receipts_conn(conn, app_id, limit)?,
+                                        recent_receipts_by_kind_conn(conn, app_id, "lifecycle_marker", limit)?))
 }
 
 fn startup_recovery_policy(path: String, app_id: String, limit: Int) -> Result<AppLocalStartupRecoveryPolicy, String> {
@@ -1125,12 +1237,14 @@ fn startup_recovery_policy_from_trace(trace: AppLocalReplayTrace) -> Result<AppL
 
 fn startup_recovery_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
   let snapshot = latest_json_receipt(trace.snapshots, trace.app_id)?
-  return Ok(object3("last_snapshot",
+  return Ok(object4("last_snapshot",
                     snapshot,
                     "commands",
                     startup_command_evidence(trace)?,
                     "markers",
-                    startup_marker_evidence(trace)?))
+                    startup_marker_evidence(trace)?,
+                    "lifecycle",
+                    startup_lifecycle_evidence(trace)?))
 }
 
 fn startup_command_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
@@ -1149,10 +1263,38 @@ fn startup_marker_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
                     latest_json_receipt_by_kind(trace.markers, trace.app_id, "update_marker")?))
 }
 
+fn startup_lifecycle_evidence(trace: AppLocalReplayTrace) -> Result<Json, String> {
+  let last_marker = latest_json_receipt(trace.lifecycle_markers, trace.app_id)?
+  return Ok(object6("last_lifecycle_marker",
+                    last_marker,
+                    "last_startup_started",
+                    latest_lifecycle_receipt_by_status(trace.lifecycle_markers, trace.app_id, "startup_started")?,
+                    "last_app_ready",
+                    latest_lifecycle_receipt_by_status(trace.lifecycle_markers, trace.app_id, "app_ready")?,
+                    "last_app_degraded",
+                    latest_lifecycle_receipt_by_status(trace.lifecycle_markers, trace.app_id, "app_degraded")?,
+                    "last_shutdown_clean",
+                    latest_lifecycle_receipt_by_status(trace.lifecycle_markers, trace.app_id, "shutdown_clean")?,
+                    "previous_session_clean",
+                    bool_value(receipt_lifecycle_status(last_marker) == "shutdown_clean")))
+}
+
 fn startup_recovery_recommendation(trace: AppLocalReplayTrace, evidence: Json) -> Result<String, String> {
   if trace.receipt_count == 0 {
     return Ok("clean_start")
   }
+  return startup_recovery_recommendation_from_evidence(evidence)
+}
+
+fn startup_recovery_recommendation_from_evidence(evidence: Json) -> Result<String, String> {
+  let marker_recommendation = startup_marker_recommendation(evidence)?
+  if marker_recommendation != "" {
+    return Ok(marker_recommendation)
+  }
+  return startup_resume_recommendation(evidence)
+}
+
+fn startup_marker_recommendation(evidence: Json) -> Result<String, String> {
   if startup_has_update_marker(evidence)? {
     return Ok("inspect_update_marker")
   }
@@ -1162,8 +1304,18 @@ fn startup_recovery_recommendation(trace: AppLocalReplayTrace, evidence: Json) -
   if startup_rejected_after_accepted(evidence)? {
     return Ok("inspect_rejected_command")
   }
+  if startup_previous_session_incomplete(evidence)? {
+    return Ok("inspect_incomplete_session")
+  }
+  return Ok("")
+}
+
+fn startup_resume_recommendation(evidence: Json) -> Result<String, String> {
   if startup_has_snapshot(evidence)? {
     return Ok("app_decide_from_snapshot")
+  }
+  if startup_has_lifecycle_marker(evidence)? {
+    return Ok("app_decide_from_lifecycle")
   }
   return Ok("app_decide_from_receipts")
 }
@@ -1172,6 +1324,18 @@ fn startup_recovery_reason(trace: AppLocalReplayTrace, evidence: Json) -> Result
   if trace.receipt_count == 0 {
     return Ok("no app-local receipts were found")
   }
+  return startup_recovery_reason_from_evidence(evidence)
+}
+
+fn startup_recovery_reason_from_evidence(evidence: Json) -> Result<String, String> {
+  let marker_reason = startup_marker_reason(evidence)?
+  if marker_reason != "" {
+    return Ok(marker_reason)
+  }
+  return startup_resume_reason(evidence)
+}
+
+fn startup_marker_reason(evidence: Json) -> Result<String, String> {
   if startup_has_update_marker(evidence)? {
     return Ok("latest startup evidence includes an update marker; app must verify or ignore it")
   }
@@ -1181,8 +1345,18 @@ fn startup_recovery_reason(trace: AppLocalReplayTrace, evidence: Json) -> Result
   if startup_rejected_after_accepted(evidence)? {
     return Ok("latest command event was rejected; app should inspect the rejection before resuming")
   }
+  if startup_previous_session_incomplete(evidence)? {
+    return Ok("latest lifecycle marker is not shutdown_clean; app should inspect prior session before resuming")
+  }
+  return Ok("")
+}
+
+fn startup_resume_reason(evidence: Json) -> Result<String, String> {
   if startup_has_snapshot(evidence)? {
     return Ok("latest snapshot is available for app-owned resume logic")
+  }
+  if startup_has_lifecycle_marker(evidence)? {
+    return Ok("lifecycle receipts exist; app should decide startup behavior from session evidence")
   }
   return Ok("receipts exist but no snapshot or marker was found; app should inspect the trace")
 }
@@ -1219,6 +1393,10 @@ fn startup_last_update_marker(evidence: Json) -> Result<Json, String> {
   return get_value(get_value(evidence, "markers")?, "last_update_marker")
 }
 
+fn startup_last_lifecycle_marker(evidence: Json) -> Result<Json, String> {
+  return get_value(get_value(evidence, "lifecycle")?, "last_lifecycle_marker")
+}
+
 fn startup_has_snapshot(evidence: Json) -> Result<Bool, String> {
   return Ok(receipt_json_id(get_value(evidence, "last_snapshot")?) > 0)
 }
@@ -1229,6 +1407,18 @@ fn startup_has_recovery_marker(evidence: Json) -> Result<Bool, String> {
 
 fn startup_has_update_marker(evidence: Json) -> Result<Bool, String> {
   return Ok(receipt_json_id(startup_last_update_marker(evidence)?) > 0)
+}
+
+fn startup_has_lifecycle_marker(evidence: Json) -> Result<Bool, String> {
+  return Ok(receipt_json_id(startup_last_lifecycle_marker(evidence)?) > 0)
+}
+
+fn startup_previous_session_incomplete(evidence: Json) -> Result<Bool, String> {
+  let marker = startup_last_lifecycle_marker(evidence)?
+  if receipt_json_id(marker) == 0 {
+    return Ok(false)
+  }
+  return Ok(receipt_lifecycle_status(marker) != "shutdown_clean")
 }
 
 fn startup_rejected_after_accepted(evidence: Json) -> Result<Bool, String> {
@@ -1277,6 +1467,28 @@ fn receipt_json_revision(receipt: Json) -> Int {
   }
 }
 
+fn receipt_lifecycle_status(receipt: Json) -> String {
+  match get_string(get_value_or_empty_payload(receipt), "status") {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      return ""
+    }
+  }
+}
+
+fn get_value_or_empty_payload(receipt: Json) -> Json {
+  match get_value(receipt, "payload") {
+    Ok(value) => {
+      return value
+    }
+    Err(msg) => {
+      return object1("kind", string_value("empty"))
+    }
+  }
+}
+
 fn latest_json_receipt(receipts: Json, app_id: String) -> Result<Json, String> {
   let count = array_len(receipts)?
   if count == 0 {
@@ -1306,6 +1518,20 @@ fn latest_event_receipt_by_accepted(receipts: Json, app_id: String, accepted: Bo
   while index < count {
     let receipt = array_get(receipts, index)?
     if event_receipt_accepted(receipt)? == accepted {
+      selected = receipt
+    }
+    index += 1
+  }
+  return Ok(selected)
+}
+
+fn latest_lifecycle_receipt_by_status(receipts: Json, app_id: String, status: String) -> Result<Json, String> {
+  let count = array_len(receipts)?
+  let index = 0
+  let selected = receipt_placeholder(app_id).as_json()
+  while index < count {
+    let receipt = array_get(receipts, index)?
+    if receipt_lifecycle_status(receipt) == status {
       selected = receipt
     }
     index += 1

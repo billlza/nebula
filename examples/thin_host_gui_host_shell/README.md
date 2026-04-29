@@ -26,5 +26,7 @@ Preview closure markers:
 - startup recovery policy: `app-local-startup-policy:` publishes
   `nebula.app-local.startup-recovery-policy.v1` from the local receipt DB before new commands run;
   it is diagnostic-only and keeps `action_owner="app"`
+- runtime lifecycle: `app-local-lifecycle:` publishes `nebula.app-local.lifecycle-marker.v1` for
+  `startup_started`, `app_ready`, and `shutdown_clean` evidence
 - deploy examples under `deploy/` are schema fixtures for host packaging/update contracts only;
   they are not signing, notarization, store packaging, or auto-update implementation
