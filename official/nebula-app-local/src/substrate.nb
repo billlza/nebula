@@ -38,6 +38,41 @@ struct AppLocalPrincipal {
   auth_mode: String
 }
 
+struct AppLocalCommandContext {
+  command_id: String
+  correlation_id: String
+  state_revision: Int
+  principal: AppLocalPrincipal
+  now_unix_ms: Int
+}
+
+struct AppLocalEvent {
+  event_kind: String
+  command_id: String
+  correlation_id: String
+  state_revision: Int
+  actor_subject: String
+  accepted: Bool
+  message: String
+}
+
+struct AppLocalRecoveryMarker {
+  app_id: String
+  correlation_id: String
+  state_revision: Int
+  status: String
+  path: String
+}
+
+struct AppLocalUpdateMarker {
+  app_id: String
+  correlation_id: String
+  state_revision: Int
+  status: String
+  manifest_path: String
+  manifest_sha256: String
+}
+
 fn app_local_config(app_id: String,
                     data_backend: String,
                     sqlite_path: String,
@@ -229,6 +264,178 @@ fn AppLocalPrincipal_as_json(self: AppLocalPrincipal) -> Json {
                  string_value(self.role),
                  "auth_mode",
                  string_value(self.auth_mode))
+}
+
+fn command_context(command_id: String,
+                   correlation_id: String,
+                   state_revision: Int,
+                   principal_value: AppLocalPrincipal,
+                   now_unix_ms: Int) -> Result<AppLocalCommandContext, String> {
+  if command_id == "" {
+    return Err("app-local substrate command_id is required")
+  }
+  if correlation_id == "" {
+    return Err("app-local substrate correlation_id is required")
+  }
+  if state_revision < 0 {
+    return Err("app-local substrate state_revision must be non-negative")
+  }
+  if now_unix_ms < 0 {
+    return Err("app-local substrate now_unix_ms must be non-negative")
+  }
+  principal(principal_value.subject, principal_value.role, principal_value.auth_mode)?
+  return Ok(AppLocalCommandContext(command_id, correlation_id, state_revision, principal_value, now_unix_ms))
+}
+
+fn AppLocalCommandContext_as_json(self: AppLocalCommandContext) -> Json {
+  return object8("schema",
+                 string_value("nebula.app-local.command-context.v1"),
+                 "command_id",
+                 string_value(self.command_id),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "actor_subject",
+                 string_value(self.principal.subject),
+                 "actor_role",
+                 string_value(self.principal.role),
+                 "auth_mode",
+                 string_value(self.principal.auth_mode),
+                 "now_unix_ms",
+                 int_value(self.now_unix_ms))
+}
+
+fn next_state_revision(context: AppLocalCommandContext, accepted: Bool) -> Int {
+  if accepted {
+    return context.state_revision + 1
+  }
+  return context.state_revision
+}
+
+fn app_local_event(event_kind: String,
+                   context: AppLocalCommandContext,
+                   accepted: Bool,
+                   message: String) -> Result<AppLocalEvent, String> {
+  if event_kind == "" {
+    return Err("app-local substrate event_kind is required")
+  }
+  return Ok(AppLocalEvent(event_kind,
+                          context.command_id,
+                          context.correlation_id,
+                          next_state_revision(context, accepted),
+                          context.principal.subject,
+                          accepted,
+                          message))
+}
+
+fn command_accepted_event(context: AppLocalCommandContext, event_kind: String, message: String) -> Result<AppLocalEvent, String> {
+  return app_local_event(event_kind, context, true, message)
+}
+
+fn command_rejected_event(context: AppLocalCommandContext, message: String) -> Result<AppLocalEvent, String> {
+  return app_local_event("command_rejected", context, false, message)
+}
+
+fn AppLocalEvent_as_json(self: AppLocalEvent) -> Json {
+  return object8("schema",
+                 string_value("nebula.app-local.event.v1"),
+                 "event_kind",
+                 string_value(self.event_kind),
+                 "command_id",
+                 string_value(self.command_id),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "actor_subject",
+                 string_value(self.actor_subject),
+                 "accepted",
+                 bool_value(self.accepted),
+                 "message",
+                 string_value(self.message))
+}
+
+fn recovery_marker(app_id: String,
+                   correlation_id: String,
+                   state_revision: Int,
+                   status: String,
+                   path: String) -> Result<AppLocalRecoveryMarker, String> {
+  if app_id == "" {
+    return Err("app-local substrate recovery app_id is required")
+  }
+  if correlation_id == "" {
+    return Err("app-local substrate recovery correlation_id is required")
+  }
+  if state_revision < 0 {
+    return Err("app-local substrate recovery state_revision must be non-negative")
+  }
+  if status == "" {
+    return Err("app-local substrate recovery status is required")
+  }
+  if path == "" {
+    return Err("app-local substrate recovery path is required")
+  }
+  return Ok(AppLocalRecoveryMarker(app_id, correlation_id, state_revision, status, path))
+}
+
+fn AppLocalRecoveryMarker_as_json(self: AppLocalRecoveryMarker) -> Json {
+  return object6("schema",
+                 string_value("nebula.app-local.recovery-marker.v1"),
+                 "app_id",
+                 string_value(self.app_id),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "status",
+                 string_value(self.status),
+                 "path",
+                 string_value(self.path))
+}
+
+fn update_marker(app_id: String,
+                 correlation_id: String,
+                 state_revision: Int,
+                 status: String,
+                 manifest_path: String,
+                 manifest_sha256: String) -> Result<AppLocalUpdateMarker, String> {
+  if app_id == "" {
+    return Err("app-local substrate update app_id is required")
+  }
+  if correlation_id == "" {
+    return Err("app-local substrate update correlation_id is required")
+  }
+  if state_revision < 0 {
+    return Err("app-local substrate update state_revision must be non-negative")
+  }
+  if status == "" {
+    return Err("app-local substrate update status is required")
+  }
+  if manifest_path == "" {
+    return Err("app-local substrate update manifest_path is required")
+  }
+  if manifest_sha256 == "" {
+    return Err("app-local substrate update manifest_sha256 is required")
+  }
+  return Ok(AppLocalUpdateMarker(app_id, correlation_id, state_revision, status, manifest_path, manifest_sha256))
+}
+
+fn AppLocalUpdateMarker_as_json(self: AppLocalUpdateMarker) -> Json {
+  return object7("schema",
+                 string_value("nebula.app-local.update-marker.v1"),
+                 "app_id",
+                 string_value(self.app_id),
+                 "correlation_id",
+                 string_value(self.correlation_id),
+                 "state_revision",
+                 int_value(self.state_revision),
+                 "status",
+                 string_value(self.status),
+                 "manifest_path",
+                 string_value(self.manifest_path),
+                 "manifest_sha256",
+                 string_value(self.manifest_sha256))
 }
 
 fn validate_background_stages(stages: Json) -> Result<Bool, String> {

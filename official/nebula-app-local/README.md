@@ -9,12 +9,22 @@ Current surface:
 - `substrate::AppLocalConfig`
 - `substrate::AppLocalPreflight`
 - `substrate::AppLocalPrincipal`
+- `substrate::AppLocalCommandContext`
+- `substrate::AppLocalEvent`
+- `substrate::AppLocalRecoveryMarker`
+- `substrate::AppLocalUpdateMarker`
 - `substrate::app_local_config(...) -> Result<AppLocalConfig, String>`
 - `substrate::config_from_env(default_app_id, default_sqlite_path, default_principal_subject, default_observe_service) -> Result<AppLocalConfig, String>`
 - `substrate::validate_config(config) -> Result<Bool, String>`
 - `substrate::preflight(config) -> Result<AppLocalPreflight, String>`
 - `substrate::principal(subject, role, auth_mode) -> Result<AppLocalPrincipal, String>`
 - `substrate::principal_from_claims(claims, role) -> Result<AppLocalPrincipal, String>`
+- `substrate::command_context(command_id, correlation_id, state_revision, principal, now_unix_ms) -> Result<AppLocalCommandContext, String>`
+- `substrate::next_state_revision(context, accepted) -> Int`
+- `substrate::command_accepted_event(context, event_kind, message) -> Result<AppLocalEvent, String>`
+- `substrate::command_rejected_event(context, message) -> Result<AppLocalEvent, String>`
+- `substrate::recovery_marker(app_id, correlation_id, state_revision, status, path) -> Result<AppLocalRecoveryMarker, String>`
+- `substrate::update_marker(app_id, correlation_id, state_revision, status, manifest_path, manifest_sha256) -> Result<AppLocalUpdateMarker, String>`
 - `substrate::validate_background_stages(stages) -> Result<Bool, String>`
 - `substrate::emit_preflight_observe(config, report)`
 
@@ -50,6 +60,15 @@ Current guarantees:
   runtime probing is attempted.
 - Auth principal carriage is explicit and can be derived from `nebula-auth` JWT claims without adding
   login, session, or OIDC client behavior.
+- Command context helpers standardize `command_id`, `correlation_id`, `state_revision`,
+  `now_unix_ms`, and actor principal carriage for app-core command processing.
+- Accepted command events advance `state_revision`; rejected command events preserve it and use the
+  stable `command_rejected` event kind.
+- Recovery markers use `nebula.app-local.recovery-marker.v1` and carry app id, correlation id, state
+  revision, status, and host-owned marker path.
+- Update markers use `nebula.app-local.update-marker.v1` and carry app id, correlation id, state
+  revision, status, manifest path, and manifest checksum. They do not download, sign, notarize, or
+  apply updates.
 - Jobs integration is limited to DAG validation in this package; worker lease/outbox storage remains
   in `nebula-jobs`.
 - Observe integration emits log-first preflight events and delta-counter metrics through

@@ -1,0 +1,306 @@
+id = "TST-309-app-local-runtime-context-contract-smoke"
+suite = "test"
+description = "nebula-app-local standardizes command context, state revision, rejection, and recovery marker contracts"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/app_local_runtime_context_contract")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "app-local-runtime-context-contract"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+app_local = {{ path = "{repo / 'official' / 'nebula-app-local'}" }}
+''', encoding="utf-8")
+
+(app / "src" / "main.nb").write_text(r'''module main
+import app_local::substrate
+import std::json
+import std::result
+
+fn fail() -> Void {
+  expect_eq(1, 0)
+}
+
+fn expect_text(actual: String, expected: String) -> Void {
+  if actual != expected {
+    print(actual)
+    fail()
+  }
+}
+
+fn expect_event_error(result: Result<AppLocalEvent, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn expect_context_error(result: Result<AppLocalCommandContext, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn expect_marker_error(result: Result<AppLocalRecoveryMarker, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn expect_update_error(result: Result<AppLocalUpdateMarker, String>, expected: String) -> Void {
+  match result {
+    Ok(_) => {
+      fail()
+    }
+    Err(msg) => {
+      expect_text(msg, expected)
+    }
+  }
+}
+
+fn principal_value() -> AppLocalPrincipal {
+  return AppLocalPrincipal("local-operator", "app.local.writer", "internal")
+}
+
+fn sample_context() -> Result<AppLocalCommandContext, String> {
+  return command_context("cmd-1", "corr-1", 7, principal_value(), 1777431000000)
+}
+
+fn verify_context_json(context: AppLocalCommandContext) -> Result<Bool, String> {
+  let value = context.as_json()
+  let schema = get_string(value, "schema")?
+  let command_id = get_string(value, "command_id")?
+  let correlation_id = get_string(value, "correlation_id")?
+  let actor = get_string(value, "actor_subject")?
+  let revision = get_int(value, "state_revision")?
+  return Ok(schema == "nebula.app-local.command-context.v1" &&
+            command_id == "cmd-1" &&
+            correlation_id == "corr-1" &&
+            actor == "local-operator" &&
+            revision == 7)
+}
+
+fn verify_event_json(event_value: AppLocalEvent, expected_kind: String, expected_revision: Int, expected_accepted: Bool) -> Result<Bool, String> {
+  let value = event_value.as_json()
+  let schema = get_string(value, "schema")?
+  let kind = get_string(value, "event_kind")?
+  let revision = get_int(value, "state_revision")?
+  let accepted = get_bool(value, "accepted")?
+  let correlation_id = get_string(value, "correlation_id")?
+  return Ok(schema == "nebula.app-local.event.v1" &&
+            kind == expected_kind &&
+            revision == expected_revision &&
+            accepted == expected_accepted &&
+            correlation_id == "corr-1")
+}
+
+fn verify_events(context: AppLocalCommandContext) -> Result<Bool, String> {
+  let accepted = command_accepted_event(context, "settings.updated", "ok")?
+  if !verify_event_json(accepted, "settings.updated", 8, true)? {
+    return Ok(false)
+  }
+  let rejected = command_rejected_event(context, "stale command")?
+  if !verify_event_json(rejected, "command_rejected", 7, false)? {
+    return Ok(false)
+  }
+  return Ok(next_state_revision(context, true) == 8 && next_state_revision(context, false) == 7)
+}
+
+fn verify_recovery_marker() -> Result<Bool, String> {
+  let marker = recovery_marker("app.local.demo", "corr-1", 8, "crash_detected", "/tmp/app.marker")?
+  let value = marker.as_json()
+  let schema = get_string(value, "schema")?
+  let app_id = get_string(value, "app_id")?
+  let revision = get_int(value, "state_revision")?
+  let status = get_string(value, "status")?
+  return Ok(schema == "nebula.app-local.recovery-marker.v1" &&
+            app_id == "app.local.demo" &&
+            revision == 8 &&
+            status == "crash_detected")
+}
+
+fn verify_update_marker() -> Result<Bool, String> {
+  let marker = update_marker("app.local.demo", "corr-1", 8, "staged", "/tmp/update.json", "abc123")?
+  let value = marker.as_json()
+  let schema = get_string(value, "schema")?
+  let status = get_string(value, "status")?
+  let checksum = get_string(value, "manifest_sha256")?
+  return Ok(schema == "nebula.app-local.update-marker.v1" && status == "staged" &&
+            checksum == "abc123")
+}
+
+fn verify_context_negative_contracts() -> Void {
+  expect_context_error(command_context("", "corr-1", 0, principal_value(), 1),
+                       "app-local substrate command_id is required")
+  expect_context_error(command_context("cmd-1", "", 0, principal_value(), 1),
+                       "app-local substrate correlation_id is required")
+  expect_context_error(command_context("cmd-1", "corr-1", -1, principal_value(), 1),
+                       "app-local substrate state_revision must be non-negative")
+  expect_context_error(command_context("cmd-1", "corr-1", 0, principal_value(), -1),
+                       "app-local substrate now_unix_ms must be non-negative")
+}
+
+fn verify_event_negative_contracts() -> Void {
+  match sample_context() {
+    Ok(context) => {
+      expect_event_error(command_accepted_event(context, "", "bad"),
+                         "app-local substrate event_kind is required")
+    }
+    Err(msg) => {
+      print(msg)
+      fail()
+    }
+  }
+}
+
+fn verify_recovery_negative_contracts() -> Void {
+  expect_marker_error(recovery_marker("", "corr-1", 1, "ok", "/tmp/marker"),
+                      "app-local substrate recovery app_id is required")
+  expect_marker_error(recovery_marker("app", "", 1, "ok", "/tmp/marker"),
+                      "app-local substrate recovery correlation_id is required")
+  expect_marker_error(recovery_marker("app", "corr-1", -1, "ok", "/tmp/marker"),
+                      "app-local substrate recovery state_revision must be non-negative")
+  expect_marker_error(recovery_marker("app", "corr-1", 1, "", "/tmp/marker"),
+                      "app-local substrate recovery status is required")
+  expect_marker_error(recovery_marker("app", "corr-1", 1, "ok", ""),
+                      "app-local substrate recovery path is required")
+}
+
+fn verify_update_negative_contracts() -> Void {
+  expect_update_error(update_marker("", "corr-1", 1, "staged", "/tmp/update.json", "abc"),
+                      "app-local substrate update app_id is required")
+  expect_update_error(update_marker("app", "", 1, "staged", "/tmp/update.json", "abc"),
+                      "app-local substrate update correlation_id is required")
+  expect_update_error(update_marker("app", "corr-1", -1, "staged", "/tmp/update.json", "abc"),
+                      "app-local substrate update state_revision must be non-negative")
+  expect_update_error(update_marker("app", "corr-1", 1, "", "/tmp/update.json", "abc"),
+                      "app-local substrate update status is required")
+  expect_update_error(update_marker("app", "corr-1", 1, "staged", "", "abc"),
+                      "app-local substrate update manifest_path is required")
+  expect_update_error(update_marker("app", "corr-1", 1, "staged", "/tmp/update.json", ""),
+                      "app-local substrate update manifest_sha256 is required")
+}
+
+fn verify_negative_contracts() -> Void {
+  verify_context_negative_contracts()
+  verify_event_negative_contracts()
+  verify_recovery_negative_contracts()
+  verify_update_negative_contracts()
+}
+
+fn verify_runtime_contract() -> Result<Bool, String> {
+  let context = sample_context()?
+  if !verify_context_json(context)? {
+    return Ok(false)
+  }
+  if !verify_events(context)? {
+    return Ok(false)
+  }
+  if !verify_recovery_marker()? {
+    return Ok(false)
+  }
+  return verify_update_marker()
+}
+
+fn main() -> Int {
+  match verify_runtime_contract() {
+    Ok(ok) => {
+      if !ok {
+        print("app-local-runtime-context-contract-bad")
+        return 1
+      }
+    }
+    Err(msg) => {
+      print(msg)
+      return 1
+    }
+  }
+  verify_negative_contracts()
+  print("app-local-runtime-context-contract-ok")
+  return 0
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "fetch", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], check=True, capture_output=True, text=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"app-local runtime context check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True)
+if run.returncode != 0 or "app-local-runtime-context-contract-ok" not in run.stdout:
+    print(run.stdout, end="")
+    print(run.stderr, end="")
+    raise SystemExit("app-local runtime context smoke failed")
+print("app-local-runtime-context-contract-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-runtime-context-contract-ok"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = (repo / "official" / "nebula-app-local" / "README.md").read_text(encoding="utf-8")
+doc = (repo / "docs" / "app_local_substrate.md").read_text(encoding="utf-8")
+for marker in [
+    "AppLocalCommandContext",
+    "AppLocalEvent",
+    "AppLocalRecoveryMarker",
+    "AppLocalUpdateMarker",
+    "command_rejected",
+    "recovery-marker.v1",
+    "update-marker.v1",
+]:
+    if marker not in readme:
+        raise SystemExit(f"nebula-app-local README missing runtime marker: {marker}")
+for marker in [
+    "Runtime Context",
+    "Accepted command events advance the state revision",
+    "Rejected command events preserve",
+    "nebula.app-local.recovery-marker.v1",
+    "nebula.app-local.update-marker.v1",
+    "media player, game, editor, or operations console",
+]:
+    if marker not in doc:
+        raise SystemExit(f"app-local substrate doc missing runtime marker: {marker}")
+print("app-local-runtime-context-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["app-local-runtime-context-docs-ok"]

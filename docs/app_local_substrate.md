@@ -63,6 +63,30 @@ A substrate startup preflight should report:
 Secrets must never appear in stdout, stderr, observe logs, or preflight JSON. Diagnostics should show
 presence, source, and status, not secret payloads.
 
+## Runtime Context
+
+`official/nebula-app-local` also standardizes the narrow runtime context that every app-core command
+can carry:
+
+- `command_id`
+- `correlation_id`
+- `state_revision`
+- `actor_subject` and `actor_role`
+- `auth_mode`
+- `now_unix_ms`
+
+Accepted command events advance the state revision by one. Rejected command events preserve the
+incoming revision and use the stable `command_rejected` event kind. This keeps stale-command
+rejection, replay, telemetry, and crash correlation generic enough for a media player, game, editor, or operations console.
+
+Recovery markers use `nebula.app-local.recovery-marker.v1` and carry app id, correlation id, state
+revision, status, and a host-owned marker path. They are a contract for staging diagnostics, not a
+crash uploader or auto-recovery daemon.
+
+Update markers use `nebula.app-local.update-marker.v1` and carry app id, correlation id, state
+revision, status, manifest path, and manifest checksum. They are a sidecar contract for host-owned
+bundle/update flows, not a downloader, signer, notarization flow, rollback engine, or auto-updater.
+
 ## App Boundaries
 
 The substrate is allowed to standardize:
