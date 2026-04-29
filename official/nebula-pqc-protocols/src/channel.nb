@@ -506,8 +506,9 @@ fn initiate(peer_kem_public_key: MlKem768PublicKey,
                           wire_encapsulation.envelope().ciphertext_hex(),
                           public_key_hex,
                           signature_hex)
+  let hello_hash_hex = hex(sha3_256(hello.unsigned_bytes()))
   return Ok(ClientInit(hello,
-                       hex(sha3_256(hello.unsigned_bytes())),
+                       hello_hash_hex,
                        wire_encapsulation.shared_secret()))
 }
 

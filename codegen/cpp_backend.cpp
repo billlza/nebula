@@ -549,7 +549,9 @@ struct EmitCtx {
 };
 
 static std::string emit_expr(const EmitCtx& ctx, const Expr& e);
-static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e);
+static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e,
+                                           const std::vector<nebula::nir::ExprPtr>& sibling_args,
+                                           std::size_t sibling_index);
 
 static bool is_synthetic_try_name(std::string_view name) {
   return name.starts_with("__nebula_try_");
@@ -968,7 +970,7 @@ static std::string emit_construct_call(const EmitCtx& ctx, const std::string& ty
   os << type_name << "(";
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (i) os << ", ";
-    os << emit_construct_arg_expr(ctx, *args[i]);
+    os << emit_construct_arg_expr(ctx, *args[i], args, i);
   }
   os << ")";
   return os.str();
@@ -987,7 +989,7 @@ static std::string emit_heap_make(PrefixKind k, const EmitCtx& ctx, const std::s
   os << maker << "<" << type_name << ">(";
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (i) os << ", ";
-    os << emit_construct_arg_expr(ctx, *args[i]);
+    os << emit_construct_arg_expr(ctx, *args[i], args, i);
   }
   os << ")";
   return os.str();
@@ -1008,7 +1010,7 @@ static std::string emit_construct_call(const EmitCtx& ctx,
     os << "{";
     for (std::size_t i = 0; i < construct.args.size(); ++i) {
       if (i) os << ", ";
-      os << emit_construct_arg_expr(ctx, *construct.args[i]);
+      os << emit_construct_arg_expr(ctx, *construct.args[i], construct.args, i);
     }
     os << "}";
   }
@@ -1039,7 +1041,7 @@ static std::string emit_heap_make(PrefixKind k,
     os << "{";
     for (std::size_t i = 0; i < construct.args.size(); ++i) {
       if (i) os << ", ";
-      os << emit_construct_arg_expr(ctx, *construct.args[i]);
+      os << emit_construct_arg_expr(ctx, *construct.args[i], construct.args, i);
     }
     os << "}";
   }
@@ -1614,21 +1616,35 @@ static bool expr_is_synthetic_try_payload(const Expr& expr) {
   return subject != nullptr && is_synthetic_try_name(subject->name);
 }
 
-static bool expr_is_last_use_movable_local(const EmitCtx& ctx, const Expr& expr) {
+static const Expr::VarRef* expr_last_use_movable_local_ref(const EmitCtx& ctx, const Expr& expr) {
   const auto* var = std::get_if<Expr::VarRef>(&expr.node);
-  if (var == nullptr || var->var == 0) return false;
-  if (!ty_is_movable_value(expr.ty)) return false;
-  if (!ctx.local_value_vars.contains(var->var)) return false;
+  if (var == nullptr || var->var == 0) return nullptr;
+  if (!ty_is_movable_value(expr.ty)) return nullptr;
+  if (!ctx.local_value_vars.contains(var->var)) return nullptr;
   const auto declared_in = ctx.local_value_decl_block.find(var->var);
   if (declared_in == ctx.local_value_decl_block.end() || declared_in->second != ctx.current_block) {
-    return false;
+    return nullptr;
   }
-  if (member_access_uses_arrow(ctx, var->var)) return false;
-  return !current_block_uses_var_after_current_stmt(ctx, var->var);
+  if (member_access_uses_arrow(ctx, var->var)) return nullptr;
+  if (current_block_uses_var_after_current_stmt(ctx, var->var)) return nullptr;
+  return var;
 }
 
-static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e) {
-  if (expr_is_last_use_movable_local(ctx, e)) {
+static bool sibling_construct_args_use_var(const std::vector<nebula::nir::ExprPtr>& args,
+                                           std::size_t current_index,
+                                           VarId target) {
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (i == current_index) continue;
+    if (expr_uses_var(*args[i], target)) return true;
+  }
+  return false;
+}
+
+static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e,
+                                           const std::vector<nebula::nir::ExprPtr>& sibling_args,
+                                           std::size_t sibling_index) {
+  const Expr::VarRef* movable = expr_last_use_movable_local_ref(ctx, e);
+  if (movable != nullptr && !sibling_construct_args_use_var(sibling_args, sibling_index, movable->var)) {
     return "std::move(" + emit_expr(ctx, e) + ")";
   }
   return emit_expr(ctx, e);
