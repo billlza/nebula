@@ -97,6 +97,8 @@ required = [
     "thin-host-gui-shell-crash-state-revision=3",
     "thin-host-gui-shell-recovery-log=logs/thin-host-gui-host-shell.ndjson",
     "thin-host-gui-shell-recovery-policy=manual-preview",
+    "app-local-recovery:",
+    "app-local-update:",
     "thin-host-gui-shell-end renders=6",
 ]
 for marker in required:
@@ -104,14 +106,25 @@ for marker in required:
         raise SystemExit(f"missing launch marker {marker!r}: {output!r}")
 if "thin-host-gui-shell-error" in output:
     raise SystemExit(output)
+if "app-local-error:" in output:
+    raise SystemExit(output)
 
 events = []
 snapshots = []
+app_events = []
+app_recovery = []
+app_updates = []
 for line in output.splitlines():
     if line.startswith("event:"):
         events.append(json.loads(line[len("event:"):]))
     if line.startswith("snapshot:"):
         snapshots.append(json.loads(line[len("snapshot:"):]))
+    if line.startswith("app-local-event:"):
+        app_events.append(json.loads(line[len("app-local-event:"):]))
+    if line.startswith("app-local-recovery:"):
+        app_recovery.append(json.loads(line[len("app-local-recovery:"):]))
+    if line.startswith("app-local-update:"):
+        app_updates.append(json.loads(line[len("app-local-update:"):]))
 
 if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
     raise SystemExit(f"unexpected event correlation sequence: {events!r}")
@@ -127,6 +140,34 @@ if bundle_manifest["crash"]["last_event_correlation_id"] != events[-1]["correlat
     raise SystemExit("bundle crash correlation id does not match final event")
 if bundle_manifest["crash"]["last_state_revision"] != events[-1]["state_revision"]:
     raise SystemExit("bundle crash state revision does not match final event")
+if [item["event_kind"] for item in app_events] != [
+    "ui_action_applied",
+    "command_rejected",
+    "command_rejected",
+    "ui_action_applied",
+    "ui_shell_quit",
+]:
+    raise SystemExit(f"unexpected app-local sidecar events: {app_events!r}")
+if [item["state_revision"] for item in app_events] != [1, 1, 1, 2, 3]:
+    raise SystemExit(f"unexpected app-local sidecar revisions: {app_events!r}")
+if [item["command_id"] for item in app_events] != [
+    "targets.refresh:gui-1",
+    "thin-host-command:gui-stale",
+    "thin-host-command:gui-unknown",
+    "targets.filter:gui-2",
+    "quit:gui-3",
+]:
+    raise SystemExit(f"unexpected app-local sidecar command ids: {app_events!r}")
+if len(app_recovery) != 1 or app_recovery[0]["schema"] != "nebula.app-local.recovery-marker.v1":
+    raise SystemExit(f"missing app-local recovery marker: {app_recovery!r}")
+if app_recovery[0]["correlation_id"] != events[-1]["correlation_id"]:
+    raise SystemExit("app-local recovery correlation id does not match final event")
+if len(app_updates) != 1 or app_updates[0]["schema"] != "nebula.app-local.update-marker.v1":
+    raise SystemExit(f"missing app-local update marker: {app_updates!r}")
+if app_updates[0]["manifest_path"] != bundle_manifest["update_manifest"]["path"]:
+    raise SystemExit("app-local update marker path does not match bundle manifest")
+if app_updates[0]["manifest_sha256"] != bundle_manifest["update_manifest"]["sha256"]:
+    raise SystemExit("app-local update marker checksum does not match bundle manifest")
 
 (stage / "artifact.sha256").write_text(f"{artifact_sha}  bin/{bundle_manifest['entry']['binary']}\\n", encoding="utf-8")
 print("thin-host-app-bundle-preview-ok")

@@ -1,6 +1,6 @@
 schema_version = 2
 root_package = "thin-host-gui-host-shell"
-root_manifest_hash = "51dd78b411b4fdfe"
+root_manifest_hash = "d26c765b01a799a3"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
@@ -14,12 +14,128 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "51dd78b411b4fdfe"
-source_fingerprint = "7f6cde9c7f24292c"
-integrity_fingerprint = "46bae0ab732089d9"
+manifest_hash = "d26c765b01a799a3"
+source_fingerprint = "6a0b1abd1e488de1"
+integrity_fingerprint = "d9d96da3350d5c9e"
 is_root = 1
 host_cxx = ["host.cpp"]
-dependencies = ["bridge=nebula-thin-host-bridge", "ui=nebula-ui"]
+dependencies = ["app_local=nebula-app-local", "bridge=nebula-thin-host-bridge", "ui=nebula-ui"]
+
+[[package]]
+name = "nebula-app-local"
+version = "0.1.0"
+root = "../../official/nebula-app-local"
+manifest = "../../official/nebula-app-local/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-app-local"
+resolved_rev = ""
+manifest_hash = "a413ae56e70bbe2f"
+source_fingerprint = "5d7ba618661439de"
+integrity_fingerprint = "682b3d13c64c587a"
+is_root = 0
+dependencies = ["app_config=nebula-config", "auth_pkg=nebula-auth", "db_postgres=nebula-db-postgres", "jobs=nebula-jobs", "observe=nebula-observe"]
+
+[[package]]
+name = "nebula-auth"
+version = "0.1.0"
+root = "../../official/nebula-auth"
+manifest = "../../official/nebula-auth/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-auth"
+resolved_rev = ""
+manifest_hash = "3001bd4e24c54ba6"
+source_fingerprint = "f632ca718b48402e"
+integrity_fingerprint = "2ed00c956b25c1e4"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-config"
+version = "0.1.0"
+root = "../../official/nebula-config"
+manifest = "../../official/nebula-config/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-config"
+resolved_rev = ""
+manifest_hash = "d1a9ed532ab65b9e"
+source_fingerprint = "b3515cb727a50bfb"
+integrity_fingerprint = "ec8cd676d0985b6b"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-db-postgres"
+version = "0.1.0"
+root = "../../official/nebula-db-postgres"
+manifest = "../../official/nebula-db-postgres/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-db-postgres"
+resolved_rev = ""
+manifest_hash = "d52f52e5c4f2a1f8"
+source_fingerprint = "d094dc31f20662b1"
+integrity_fingerprint = "14644b48dfd62784"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-db-sqlite"
+version = "0.1.0"
+root = "../../official/nebula-db-sqlite"
+manifest = "../../official/nebula-db-sqlite/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-db-sqlite"
+resolved_rev = ""
+manifest_hash = "fc4d07adad75b3ed"
+source_fingerprint = "c4a7b1f99f1715f4"
+integrity_fingerprint = "8ec068b6856bb59f"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = []
+
+[[package]]
+name = "nebula-jobs"
+version = "0.1.0"
+root = "../../official/nebula-jobs"
+manifest = "../../official/nebula-jobs/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-jobs"
+resolved_rev = ""
+manifest_hash = "fe187ccc7970baf9"
+source_fingerprint = "3696eefc8ede27e7"
+integrity_fingerprint = "327dee5cf33984a3"
+is_root = 0
+dependencies = ["db_sqlite=nebula-db-sqlite"]
+
+[[package]]
+name = "nebula-observe"
+version = "0.1.0"
+root = "../../official/nebula-observe"
+manifest = "../../official/nebula-observe/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-observe"
+resolved_rev = ""
+manifest_hash = "9a8a10871f57579b"
+source_fingerprint = "c61413f4bbd8e08c"
+integrity_fingerprint = "fe583625075a78d"
+is_root = 0
+dependencies = []
 
 [[package]]
 name = "nebula-thin-host-bridge"

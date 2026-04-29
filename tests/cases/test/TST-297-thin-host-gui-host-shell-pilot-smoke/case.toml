@@ -40,14 +40,28 @@ for marker in required:
         raise SystemExit(f"missing marker {marker!r}: {output!r}")
 if "thin-host-gui-shell-error" in output:
     raise SystemExit(output)
+if "app-local-error:" in output:
+    raise SystemExit(output)
 
 events = []
 snapshots = []
+app_contexts = []
+app_events = []
+app_recovery = []
+app_updates = []
 for line in output.splitlines():
     if line.startswith("event:"):
         events.append(json.loads(line[len("event:"):]))
     if line.startswith("snapshot:"):
         snapshots.append(json.loads(line[len("snapshot:"):]))
+    if line.startswith("app-local-context:"):
+        app_contexts.append(json.loads(line[len("app-local-context:"):]))
+    if line.startswith("app-local-event:"):
+        app_events.append(json.loads(line[len("app-local-event:"):]))
+    if line.startswith("app-local-recovery:"):
+        app_recovery.append(json.loads(line[len("app-local-recovery:"):]))
+    if line.startswith("app-local-update:"):
+        app_updates.append(json.loads(line[len("app-local-update:"):]))
 
 if [event["kind"] for event in events] != [
     "ui_shell_booted",
@@ -64,6 +78,46 @@ if [event["correlation_id"] for event in events] != ["boot", "gui-1", "gui-stale
     raise SystemExit(f"unexpected correlation ids: {events!r}")
 if [event["state_revision"] for event in events] != [0, 1, 1, 1, 2, 3]:
     raise SystemExit(f"unexpected event revisions: {events!r}")
+if [item["schema"] for item in app_contexts] != ["nebula.app-local.command-context.v1"] * 5:
+    raise SystemExit(f"unexpected app-local context schemas: {app_contexts!r}")
+if [item["correlation_id"] for item in app_contexts] != ["gui-1", "gui-stale", "gui-unknown", "gui-2", "gui-3"]:
+    raise SystemExit(f"unexpected app-local context correlations: {app_contexts!r}")
+if [item["state_revision"] for item in app_contexts] != [0, 1, 1, 1, 2]:
+    raise SystemExit(f"unexpected app-local context revisions: {app_contexts!r}")
+if [item["command_id"] for item in app_contexts] != [
+    "targets.refresh:gui-1",
+    "thin-host-command:gui-stale",
+    "thin-host-command:gui-unknown",
+    "targets.filter:gui-2",
+    "quit:gui-3",
+]:
+    raise SystemExit(f"unexpected app-local command ids: {app_contexts!r}")
+if [item["actor_subject"] for item in app_contexts] != ["local-operator"] * 5:
+    raise SystemExit(f"unexpected app-local context actor: {app_contexts!r}")
+if [item["schema"] for item in app_events] != ["nebula.app-local.event.v1"] * 5:
+    raise SystemExit(f"unexpected app-local event schemas: {app_events!r}")
+if [item["event_kind"] for item in app_events] != [
+    "ui_action_applied",
+    "command_rejected",
+    "command_rejected",
+    "ui_action_applied",
+    "ui_shell_quit",
+]:
+    raise SystemExit(f"unexpected app-local event kinds: {app_events!r}")
+if [item["accepted"] for item in app_events] != [True, False, False, True, True]:
+    raise SystemExit(f"unexpected app-local accepted flags: {app_events!r}")
+if [item["state_revision"] for item in app_events] != [1, 1, 1, 2, 3]:
+    raise SystemExit(f"unexpected app-local event revisions: {app_events!r}")
+if len(app_recovery) != 1 or app_recovery[0]["schema"] != "nebula.app-local.recovery-marker.v1":
+    raise SystemExit(f"missing app-local recovery marker: {app_recovery!r}")
+if app_recovery[0]["correlation_id"] != "gui-3" or app_recovery[0]["state_revision"] != 3:
+    raise SystemExit(f"bad app-local recovery marker: {app_recovery!r}")
+if len(app_updates) != 1 or app_updates[0]["schema"] != "nebula.app-local.update-marker.v1":
+    raise SystemExit(f"missing app-local update marker: {app_updates!r}")
+if app_updates[0]["manifest_path"] != "deploy/update/manifest.preview.json":
+    raise SystemExit(f"bad app-local update marker path: {app_updates!r}")
+if len(app_updates[0].get("manifest_sha256", "")) != 64:
+    raise SystemExit(f"bad app-local update marker checksum: {app_updates!r}")
 if events[2]["payload"].get("reason") != "stale thin-host GUI command state_revision":
     raise SystemExit(f"stale command rejection reason missing: {events[2]!r}")
 if events[3]["payload"].get("reason") != "unknown thin-host GUI command kind":
