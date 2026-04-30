@@ -4,6 +4,7 @@ import bridge::host_bridge
 import jobs::contracts
 import jobs::graph
 import jobs::sqlite
+import media_store
 import std::bytes
 import std::json
 import std::result
@@ -15,6 +16,7 @@ extern fn host_player_next_command_text() -> String
 extern fn host_player_publish_event(event: String) -> Void
 extern fn host_player_publish_snapshot(snapshot: String) -> Void
 extern fn host_player_render_tree(tree: String) -> Void
+extern fn host_player_sidecar_manifest_text() -> String
 extern fn host_player_end(correlation_id: String, state_revision: Int) -> Void
 
 struct MediaState {
@@ -28,6 +30,13 @@ struct MediaState {
   last_action: String,
   last_error: String,
   transport_status: String,
+  selected_media_id: String,
+  selected_media_title: String,
+  playback_status: String,
+  playback_position_ms: Int,
+  download_progress_percent: Int,
+  sidecar_status: String,
+  recovery_recommendation: String,
   revision: Int
 }
 
@@ -61,6 +70,10 @@ fn receipt_db_path() -> String {
 
 fn jobs_db_path() -> String {
   return "work/thin_host_media_player/jobs.db"
+}
+
+fn media_store_db_path() -> String {
+  return "work/thin_host_media_player/media.db"
 }
 
 fn app_id() -> String {
@@ -100,6 +113,13 @@ fn initial_state() -> MediaState {
                     "boot",
                     "",
                     "idle",
+                    "",
+                    "",
+                    "stopped",
+                    0,
+                    0,
+                    "unknown",
+                    "clean_start",
                     0)
 }
 
@@ -163,6 +183,97 @@ fn publish_startup_recovery_policy(runtime: MediaRuntime) -> Result<Bool, String
   return Ok(true)
 }
 
+fn validate_sidecar_manifest_schema(manifest: Json) -> Result<Bool, String> {
+  match get_string(manifest, "schema") {
+    Ok(schema) => {
+      if schema != "media-player.host-sidecar.v1" {
+        return Err("unsupported media-player host sidecar schema")
+      }
+    }
+    Err(_) => {
+      return Err("missing media-player host sidecar schema")
+    }
+  }
+  return Ok(true)
+}
+
+fn validate_sidecar_manifest_fields(manifest: Json) -> Result<Bool, String> {
+  require_payload_string(manifest, "file_picker", "media-player sidecar file_picker is required")?
+  require_payload_string(manifest, "codec_adapter", "media-player sidecar codec_adapter is required")?
+  require_payload_string(manifest, "player_adapter", "media-player sidecar player_adapter is required")?
+  require_payload_string(manifest, "torrent_adapter", "media-player sidecar torrent_adapter is required")?
+  return Ok(true)
+}
+
+fn sidecar_manifest() -> Result<Json, String> {
+  let manifest = parse(host_player_sidecar_manifest_text())?
+  validate_sidecar_manifest_schema(manifest)?
+  validate_sidecar_manifest_fields(manifest)?
+  return Ok(manifest)
+}
+
+fn sidecar_status_from_manifest(manifest: Json) -> String {
+  let codec = payload_string_or(manifest, "codec_adapter", "unknown")
+  let torrent = payload_string_or(manifest, "torrent_adapter", "unknown")
+  return text_join(text_join("codec=", codec), text_join(";torrent=", torrent))
+}
+
+fn state_with_startup_evidence(state: MediaState, policy: AppLocalStartupRecoveryPolicy, manifest: Json) -> MediaState {
+  return MediaState(state.library_count,
+                    state.import_queue_count,
+                    state.active_downloads,
+                    state.completed_downloads,
+                    state.audio_quality,
+                    state.video_quality,
+                    state.bitrate_policy,
+                    state.last_action,
+                    state.last_error,
+                    state.transport_status,
+                    state.selected_media_id,
+                    state.selected_media_title,
+                    state.playback_status,
+                    state.playback_position_ms,
+                    state.download_progress_percent,
+                    sidecar_status_from_manifest(manifest),
+                    policy.recommendation,
+                    state.revision)
+}
+
+fn media_recovery_diagnostics(policy: AppLocalStartupRecoveryPolicy, manifest: Json) -> Json {
+  return object6("schema",
+                 string_value("media-player.recovery-diagnostics.v1"),
+                 "latest_revision",
+                 int_value(policy.latest_state_revision),
+                 "latest_correlation_id",
+                 string_value(policy.latest_correlation_id),
+                 "recommendation",
+                 string_value(policy.recommendation),
+                 "reason",
+                 string_value(policy.reason),
+                 "sidecars",
+                 manifest)
+}
+
+fn publish_media_recovery_diagnostics(policy: AppLocalStartupRecoveryPolicy, manifest: Json) -> Void {
+  let diagnostics = media_recovery_diagnostics(policy, manifest)
+  print(text_join("media-player-recovery-diagnostics:", stringify(diagnostics)))
+}
+
+fn record_boot_media_store(state: MediaState, policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
+  record_recovery_diagnostic(media_store_db_path(), policy.recommendation, policy.reason, state.revision)?
+  return record_playback_settings(media_store_db_path(), state.audio_quality, state.video_quality, state.bitrate_policy, state.revision)
+}
+
+fn prepare_boot_state(runtime: MediaRuntime, state: MediaState) -> Result<MediaState, String> {
+  media_store_initialize(media_store_db_path())?
+  let policy = startup_recovery_policy(runtime.config.sqlite_path, runtime.config.app_id, 10)?
+  publish_app_local_startup_policy(policy)
+  let manifest = sidecar_manifest()?
+  publish_media_recovery_diagnostics(policy, manifest)
+  record_boot_media_store(state, policy)?
+  return Ok(state_with_startup_evidence(state, policy, manifest))
+}
+
 fn publish_lifecycle_marker(runtime: MediaRuntime, status: String, reason: String, revision: Int) -> Result<Bool, String> {
   let marker = lifecycle_marker(runtime.config.app_id,
                                 runtime_session_id(),
@@ -176,19 +287,42 @@ fn publish_lifecycle_marker(runtime: MediaRuntime, status: String, reason: Strin
 }
 
 fn publish_startup_diagnostics(runtime: MediaRuntime) -> Result<Bool, String> {
-  publish_runtime_preflight(runtime)?
-  return publish_startup_recovery_policy(runtime)
+  return publish_runtime_preflight(runtime)
+}
+
+fn state_library_payload(state: MediaState) -> Json {
+  return object2("items", int_value(state.library_count), "import_queue", int_value(state.import_queue_count))
+}
+
+fn state_downloads_payload(state: MediaState) -> Json {
+  return object4("active", int_value(state.active_downloads), "completed", int_value(state.completed_downloads), "transport_status", string_value(state.transport_status), "progress_percent", int_value(state.download_progress_percent))
+}
+
+fn state_playback_payload(state: MediaState) -> Json {
+  return object5("audio_quality", string_value(state.audio_quality), "video_quality", string_value(state.video_quality), "bitrate_policy", string_value(state.bitrate_policy), "status", string_value(state.playback_status), "position_ms", int_value(state.playback_position_ms))
+}
+
+fn state_selection_payload(state: MediaState) -> Json {
+  return object2("media_id", string_value(state.selected_media_id), "title", string_value(state.selected_media_title))
+}
+
+fn state_runtime_payload(state: MediaState) -> Json {
+  return object2("sidecar_status", string_value(state.sidecar_status), "recovery_recommendation", string_value(state.recovery_recommendation))
 }
 
 fn state_payload(state: MediaState) -> Json {
-  return object7("schema",
+  return object9("schema",
                  string_value("media-player.snapshot.v1"),
                  "library",
-                 object2("items", int_value(state.library_count), "import_queue", int_value(state.import_queue_count)),
+                 state_library_payload(state),
                  "downloads",
-                 object3("active", int_value(state.active_downloads), "completed", int_value(state.completed_downloads), "transport_status", string_value(state.transport_status)),
+                 state_downloads_payload(state),
                  "playback",
-                 object3("audio_quality", string_value(state.audio_quality), "video_quality", string_value(state.video_quality), "bitrate_policy", string_value(state.bitrate_policy)),
+                 state_playback_payload(state),
+                 "selection",
+                 state_selection_payload(state),
+                 "runtime",
+                 state_runtime_payload(state),
                  "last_action",
                  string_value(state.last_action),
                  "last_error",
@@ -274,15 +408,7 @@ fn record_host_snapshot_readiness_marker(runtime: MediaRuntime, correlation_id: 
 }
 
 fn payload_value(command_text: String) -> Result<Json, String> {
-  let value = parse(command_text)?
-  match get_value(value, "payload") {
-    Ok(payload) => {
-      return Ok(payload)
-    }
-    Err(_) => {
-      return Ok(object1("empty", bool_value(true)))
-    }
-  }
+  return command_payload_or_empty(command_text)
 }
 
 fn payload_string_or(payload: Json, key: String, fallback: String) -> String {
@@ -307,12 +433,34 @@ fn payload_bool_or(payload: Json, key: String, fallback: Bool) -> Bool {
   }
 }
 
+fn payload_int_or(payload: Json, key: String, fallback: Int) -> Int {
+  match get_int(payload, key) {
+    Ok(value) => {
+      return value
+    }
+    Err(_) => {
+      return fallback
+    }
+  }
+}
+
 fn require_payload_string(payload: Json, key: String, message: String) -> Result<String, String> {
   let value = payload_string_or(payload, key, "")
   if value == "" {
     return Err(message)
   }
   return Ok(value)
+}
+
+fn require_payload_int(payload: Json, key: String, message: String) -> Result<Int, String> {
+  match get_int(payload, key) {
+    Ok(value) => {
+      return Ok(value)
+    }
+    Err(_) => {
+      return Err(message)
+    }
+  }
 }
 
 fn legal_torrent_policy(policy: String) -> Bool {
@@ -361,6 +509,8 @@ fn step(state: MediaState,
 
 fn import_file_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
   validate_file_payload(payload)?
+  let media_id = payload_string_or(payload, "media_id", "media:sample-public-domain")
+  let title = payload_string_or(payload, "title", "Sample Public Domain Clip")
   let next_state = MediaState(state.library_count + 1,
                               state.import_queue_count + 1,
                               state.active_downloads,
@@ -371,6 +521,13 @@ fn import_file_step(state: MediaState, command: ThinHostCommand, payload: Json) 
                               command.kind(),
                               "",
                               "local_file_imported",
+                              media_id,
+                              title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return Ok(step(state, next_state, false, "library_file_imported", command, "local media file imported"))
 }
@@ -387,6 +544,13 @@ fn import_torrent_step(state: MediaState, command: ThinHostCommand, payload: Jso
                               command.kind(),
                               "",
                               "transport_stub_queued",
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              0,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return Ok(step(state, next_state, false, "download_import_queued", command, "legal torrent import queued for host sidecar"))
 }
@@ -403,6 +567,13 @@ fn set_audio_quality_step(state: MediaState, command: ThinHostCommand, payload: 
                               command.kind(),
                               "",
                               state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return Ok(step(state, next_state, false, "playback_audio_quality_set", command, "audio quality updated"))
 }
@@ -419,6 +590,13 @@ fn set_video_quality_step(state: MediaState, command: ThinHostCommand, payload: 
                               command.kind(),
                               "",
                               state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return Ok(step(state, next_state, false, "playback_video_quality_set", command, "video quality updated"))
 }
@@ -435,8 +613,153 @@ fn set_bitrate_policy_step(state: MediaState, command: ThinHostCommand, payload:
                               command.kind(),
                               "",
                               state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return Ok(step(state, next_state, false, "playback_bitrate_policy_set", command, "bitrate policy updated"))
+}
+
+fn select_media_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  if state.library_count <= 0 {
+    return Err("media library is empty")
+  }
+  let media_id = require_payload_string(payload, "media_id", "media_id is required")?
+  let title = require_payload_string(payload, "title", "media title is required")?
+  if media_id != state.selected_media_id || title != state.selected_media_title {
+    return Err("media item is not in Nebula media library")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              media_id,
+                              title,
+                              "selected",
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "library_item_selected", command, "media item selected"))
+}
+
+fn open_selected_playback_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  if state.selected_media_id == "" {
+    return Err("no media item selected")
+  }
+  if !payload_bool_or(payload, "player_sidecar_ready", false) {
+    return Err("player sidecar unavailable")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              "sidecar_open_requested",
+                              0,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_sidecar_open_requested", command, "host player sidecar open requested"))
+}
+
+fn playback_progress_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  let media_id = require_payload_string(payload, "media_id", "media_id is required")?
+  if media_id != state.selected_media_id {
+    return Err("playback progress media_id mismatch")
+  }
+  let position_ms = require_payload_int(payload, "position_ms", "playback position_ms is required")?
+  if position_ms < 0 {
+    return Err("playback position_ms must be non-negative")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              "playing",
+                              position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_progress_recorded", command, "host player sidecar progress recorded"))
+}
+
+fn completed_downloads_after_progress(state: MediaState, progress_percent: Int) -> Int {
+  if progress_percent == 100 && state.active_downloads > 0 {
+    return state.completed_downloads + 1
+  }
+  return state.completed_downloads
+}
+
+fn active_downloads_after_progress(state: MediaState, progress_percent: Int) -> Int {
+  if progress_percent == 100 && state.active_downloads > 0 {
+    return state.active_downloads - 1
+  }
+  return state.active_downloads
+}
+
+fn download_status_after_progress(progress_percent: Int) -> String {
+  if progress_percent == 100 {
+    return "download_complete"
+  }
+  return "downloading"
+}
+
+fn download_progress_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  let progress_percent = require_payload_int(payload, "progress_percent", "download progress_percent is required")?
+  if progress_percent < 0 || progress_percent > 100 {
+    return Err("download progress_percent must be between 0 and 100")
+  }
+  if state.active_downloads <= 0 {
+    return Err("no active download for progress update")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              active_downloads_after_progress(state, progress_percent),
+                              completed_downloads_after_progress(state, progress_percent),
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              download_status_after_progress(progress_percent),
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "download_progress_recorded", command, "host torrent sidecar progress recorded"))
 }
 
 fn download_status_step(state: MediaState,
@@ -455,8 +778,22 @@ fn download_status_step(state: MediaState,
                               command.kind(),
                               "",
                               status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return step(state, next_state, false, event_kind, command, message)
+}
+
+fn require_active_download(state: MediaState, reason: String) -> Result<Bool, String> {
+  if state.active_downloads <= 0 {
+    return Err(reason)
+  }
+  return Ok(true)
 }
 
 fn quit_step(state: MediaState, command: ThinHostCommand) -> MediaStep {
@@ -470,6 +807,13 @@ fn quit_step(state: MediaState, command: ThinHostCommand) -> MediaStep {
                               command.kind(),
                               "",
                               state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
                               state.revision + 1)
   return step(state, next_state, true, "media_player_quit", command, "host requested quit")
 }
@@ -480,6 +824,9 @@ fn apply_import_command(state: MediaState, command: ThinHostCommand, payload: Js
   }
   if command.kind() == "library.import_torrent" {
     return import_torrent_step(state, command, payload)
+  }
+  if command.kind() == "library.select_item" {
+    return select_media_step(state, command, payload)
   }
   return Err("not an import command")
 }
@@ -494,48 +841,67 @@ fn apply_playback_command(state: MediaState, command: ThinHostCommand, payload: 
   if command.kind() == "playback.set_bitrate_policy" {
     return set_bitrate_policy_step(state, command, payload)
   }
+  if command.kind() == "playback.open_selected" {
+    return open_selected_playback_step(state, command, payload)
+  }
+  if command.kind() == "playback.progress" {
+    return playback_progress_step(state, command, payload)
+  }
   return Err("not a playback command")
 }
 
-fn apply_download_command(state: MediaState, command: ThinHostCommand) -> Result<MediaStep, String> {
+fn apply_download_command(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
   if command.kind() == "download.pause" {
+    require_active_download(state, "no active download to pause")?
     return Ok(download_status_step(state, command, "download_paused", "paused", "download paused", 0))
   }
   if command.kind() == "download.resume" {
+    require_active_download(state, "no active download to resume")?
     return Ok(download_status_step(state, command, "download_resumed", "downloading", "download resumed", 0))
   }
   if command.kind() == "download.cancel" {
+    require_active_download(state, "no active download to cancel")?
     return Ok(download_status_step(state, command, "download_cancelled", "cancelled", "download cancelled", -1))
+  }
+  if command.kind() == "download.progress" {
+    return download_progress_step(state, command, payload)
   }
   return Err("not a download command")
 }
 
+fn is_library_command(kind: String) -> Bool {
+  return kind == "library.import_file" || kind == "library.import_torrent" || kind == "library.select_item"
+}
+
+fn is_playback_command(kind: String) -> Bool {
+  if kind == "playback.set_audio_quality" || kind == "playback.set_video_quality" {
+    return true
+  }
+  if kind == "playback.set_bitrate_policy" || kind == "playback.open_selected" {
+    return true
+  }
+  return kind == "playback.progress"
+}
+
+fn is_download_command(kind: String) -> Bool {
+  if kind == "download.pause" || kind == "download.resume" {
+    return true
+  }
+  return kind == "download.cancel" || kind == "download.progress"
+}
+
 fn apply_command_kind(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
-  if command.kind() == "library.import_file" {
+  let kind = command.kind()
+  if is_library_command(kind) {
     return apply_import_command(state, command, payload)
   }
-  if command.kind() == "library.import_torrent" {
-    return apply_import_command(state, command, payload)
-  }
-  if command.kind() == "playback.set_audio_quality" {
+  if is_playback_command(kind) {
     return apply_playback_command(state, command, payload)
   }
-  if command.kind() == "playback.set_video_quality" {
-    return apply_playback_command(state, command, payload)
+  if is_download_command(kind) {
+    return apply_download_command(state, command, payload)
   }
-  if command.kind() == "playback.set_bitrate_policy" {
-    return apply_playback_command(state, command, payload)
-  }
-  if command.kind() == "download.pause" {
-    return apply_download_command(state, command)
-  }
-  if command.kind() == "download.resume" {
-    return apply_download_command(state, command)
-  }
-  if command.kind() == "download.cancel" {
-    return apply_download_command(state, command)
-  }
-  if command.kind() == "quit" {
+  if kind == "quit" {
     return Ok(quit_step(state, command))
   }
   return Err("unknown media-player command kind")
@@ -578,16 +944,69 @@ fn bridge_event_text(kind: String, state: MediaState, terminal: Bool, correlatio
   return encode_event_text_with_context(kind, state_payload(state), terminal, correlation_id, state.revision)
 }
 
+fn media_file_task_id(correlation_id: String) -> String {
+  return text_join("file-import:", correlation_id)
+}
+
+fn torrent_task_id() -> String {
+  return "torrent-import:public-domain-fixture"
+}
+
+fn download_task_id() -> String {
+  return "download:public-domain-fixture"
+}
+
+fn record_media_file_import(step_value: MediaStep) -> Result<Bool, String> {
+  record_media_item(media_store_db_path(), step_value.state.selected_media_id, step_value.state.selected_media_title, "file", "sha256-public-domain-file", step_value.state.revision)?
+  return record_import_task(media_store_db_path(), media_file_task_id(step_value.correlation_id), "file", "completed", step_value.state.revision, step_value.correlation_id)
+}
+
+fn record_media_torrent_import(step_value: MediaStep) -> Result<Bool, String> {
+  record_import_task(media_store_db_path(), torrent_task_id(), "torrent", "queued", step_value.state.revision, step_value.correlation_id)?
+  return record_download_task(media_store_db_path(), download_task_id(), "sha256-public-domain-torrent", 0, "queued", step_value.state.revision, step_value.correlation_id)
+}
+
+fn record_media_download_state(step_value: MediaStep) -> Result<Bool, String> {
+  return record_download_task(media_store_db_path(),
+                              download_task_id(),
+                              "sha256-public-domain-torrent",
+                              step_value.state.download_progress_percent,
+                              step_value.state.transport_status,
+                              step_value.state.revision,
+                              step_value.correlation_id)
+}
+
+fn record_media_store_for_step(step_value: MediaStep) -> Result<Bool, String> {
+  if step_value.event_kind == "library_file_imported" {
+    return record_media_file_import(step_value)
+  }
+  if step_value.event_kind == "download_import_queued" {
+    return record_media_torrent_import(step_value)
+  }
+  if step_value.event_kind == "download_progress_recorded" || step_value.event_kind == "download_paused" || step_value.event_kind == "download_resumed" || step_value.event_kind == "download_cancelled" {
+    return record_media_download_state(step_value)
+  }
+  if step_value.event_kind == "playback_audio_quality_set" || step_value.event_kind == "playback_video_quality_set" || step_value.event_kind == "playback_bitrate_policy_set" {
+    return record_playback_settings(media_store_db_path(), step_value.state.audio_quality, step_value.state.video_quality, step_value.state.bitrate_policy, step_value.state.revision)
+  }
+  return Ok(true)
+}
+
+fn finish_terminal_step(runtime: MediaRuntime, step_value: MediaStep) -> Result<Bool, String> {
+  publish_app_local_shutdown(runtime, step_value.correlation_id, step_value.state.revision)?
+  publish_lifecycle_marker(runtime, "shutdown_clean", "normal quit", step_value.state.revision)?
+  host_player_end(step_value.correlation_id, step_value.state.revision)
+  return Ok(true)
+}
+
 fn handle_applied_step(runtime: MediaRuntime, step_value: MediaStep) -> Result<Bool, String> {
   host_player_publish_event(bridge_event_text(step_value.event_kind, step_value.state, step_value.terminal, step_value.correlation_id))
   publish_media_event(step_value.event_kind, step_value.state, true, step_value.correlation_id, step_value.message, step_value.terminal)
   publish_app_local_accepted(runtime, step_value)?
+  record_media_store_for_step(step_value)?
   render_state(runtime, step_value.state, step_value.correlation_id)?
   if step_value.terminal {
-    publish_app_local_shutdown(runtime, step_value.correlation_id, step_value.state.revision)?
-    publish_lifecycle_marker(runtime, "shutdown_clean", "normal quit", step_value.state.revision)?
-    host_player_end(step_value.correlation_id, step_value.state.revision)
-    return Ok(true)
+    return finish_terminal_step(runtime, step_value)
   }
   return Ok(false)
 }
@@ -603,6 +1022,13 @@ fn rejected_state(state: MediaState, reason: String) -> MediaState {
                     state.last_action,
                     reason,
                     state.transport_status,
+                    state.selected_media_id,
+                    state.selected_media_title,
+                    state.playback_status,
+                    state.playback_position_ms,
+                    state.download_progress_percent,
+                    state.sidecar_status,
+                    state.recovery_recommendation,
                     state.revision)
 }
 
@@ -739,13 +1165,20 @@ fn publish_boot_event(state: MediaState) -> Void {
   publish_media_event("media_player_booted", state, true, "boot", "media player booted", false)
 }
 
-fn boot_player(runtime: MediaRuntime, state: MediaState) -> Result<Bool, String> {
-  publish_startup_diagnostics(runtime)?
-  publish_lifecycle_marker(runtime, "startup_started", "media player started", state.revision)?
-  publish_jobs_marker()?
+fn publish_boot_ready(runtime: MediaRuntime, state: MediaState) -> Result<Bool, String> {
   publish_boot_event(state)
   render_state(runtime, state, "boot")?
-  return publish_lifecycle_marker(runtime, "app_ready", "first media-player snapshot rendered", state.revision)
+  publish_lifecycle_marker(runtime, "app_ready", "first media-player snapshot rendered", state.revision)?
+  return Ok(true)
+}
+
+fn boot_player(runtime: MediaRuntime, state: MediaState) -> Result<MediaState, String> {
+  publish_startup_diagnostics(runtime)?
+  let boot_state = prepare_boot_state(runtime, state)?
+  publish_lifecycle_marker(runtime, "startup_started", "media player started", state.revision)?
+  publish_jobs_marker()?
+  publish_boot_ready(runtime, boot_state)?
+  return Ok(boot_state)
 }
 
 fn run_command_loop(runtime: MediaRuntime, state: MediaState) -> Result<MediaCommandOutcome, String> {
@@ -778,7 +1211,9 @@ fn fail_app_local_runtime(runtime: MediaRuntime, msg: String, revision: Int) -> 
 
 fn run_player(runtime: MediaRuntime, state: MediaState) -> Int {
   match boot_player(runtime, state) {
-    Ok(_) => {}
+    Ok(boot_state) => {
+      state = boot_state
+    }
     Err(msg) => {
       return fail_app_local_runtime(runtime, msg, state.revision)
     }

@@ -1,0 +1,143 @@
+module media_store
+import db_sqlite::sqlite
+import std::json
+import std::result
+
+fn no_params() -> Json {
+  return array_build(array_builder())
+}
+
+fn text_param(value: String) -> JsonArrayBuilder {
+  return array_push(array_builder(), string_value(value))
+}
+
+fn text_text_params(first: String, second: String) -> Json {
+  let builder = text_param(first)
+  return array_build(array_push(builder, string_value(second)))
+}
+
+fn text_text_int_params(first: String, second: String, third: Int) -> Json {
+  let builder1 = text_param(first)
+  let builder2 = array_push(builder1, string_value(second))
+  return array_build(array_push(builder2, int_value(third)))
+}
+
+fn media_item_params(media_id: String, title: String, source_kind: String, source_hash: String, revision: Int) -> Json {
+  let builder1 = text_param(media_id)
+  let builder2 = array_push(builder1, string_value(title))
+  let builder3 = array_push(builder2, string_value(source_kind))
+  let builder4 = array_push(builder3, string_value(source_hash))
+  return array_build(array_push(builder4, int_value(revision)))
+}
+
+fn import_task_params(task_id: String, source_kind: String, status: String, revision: Int, correlation_id: String) -> Json {
+  let builder1 = text_param(task_id)
+  let builder2 = array_push(builder1, string_value(source_kind))
+  let builder3 = array_push(builder2, string_value(status))
+  let builder4 = array_push(builder3, int_value(revision))
+  return array_build(array_push(builder4, string_value(correlation_id)))
+}
+
+fn download_task_params(task_id: String, source_hash: String, progress_percent: Int, status: String, revision: Int, correlation_id: String) -> Json {
+  let builder1 = text_param(task_id)
+  let builder2 = array_push(builder1, string_value(source_hash))
+  let builder3 = array_push(builder2, int_value(progress_percent))
+  let builder4 = array_push(builder3, string_value(status))
+  let builder5 = array_push(builder4, int_value(revision))
+  return array_build(array_push(builder5, string_value(correlation_id)))
+}
+
+fn recovery_params(recommendation: String, reason: String, revision: Int) -> Json {
+  let builder1 = text_param(recommendation)
+  let builder2 = array_push(builder1, string_value(reason))
+  return array_build(array_push(builder2, int_value(revision)))
+}
+
+fn create_library_table(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_library_items (media_id TEXT PRIMARY KEY, title TEXT NOT NULL, source_kind TEXT NOT NULL, source_hash TEXT NOT NULL, created_revision INTEGER NOT NULL)")?
+  return Ok(true)
+}
+
+fn create_settings_table(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_revision INTEGER NOT NULL)")?
+  return Ok(true)
+}
+
+fn create_task_tables(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_import_tasks (task_id TEXT PRIMARY KEY, source_kind TEXT NOT NULL, status TEXT NOT NULL, state_revision INTEGER NOT NULL, correlation_id TEXT NOT NULL)")?
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_download_tasks (task_id TEXT PRIMARY KEY, source_hash TEXT NOT NULL, progress_percent INTEGER NOT NULL, status TEXT NOT NULL, state_revision INTEGER NOT NULL, correlation_id TEXT NOT NULL)")?
+  return Ok(true)
+}
+
+fn create_recovery_table(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_recovery_diagnostics (id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation TEXT NOT NULL, reason TEXT NOT NULL, state_revision INTEGER NOT NULL)")?
+  return Ok(true)
+}
+
+fn create_secondary_tables(conn: Connection) -> Result<Bool, String> {
+  create_task_tables(conn)?
+  return create_recovery_table(conn)
+}
+
+fn create_primary_tables(conn: Connection) -> Result<Bool, String> {
+  create_library_table(conn)?
+  create_settings_table(conn)?
+  return create_secondary_tables(conn)
+}
+
+fn close_store(conn: Connection) -> Result<Bool, String> {
+  conn.close()?
+  return Ok(true)
+}
+
+fn media_store_initialize(path: String) -> Result<Bool, String> {
+  let conn = open(path)?
+  create_primary_tables(conn)?
+  return close_store(conn)
+}
+
+fn upsert_setting(path: String, key: String, value: String, revision: Int) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_settings(setting_key, setting_value, updated_revision) VALUES (?, ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value, updated_revision=excluded.updated_revision",
+               text_text_int_params(key, value, revision))?
+  conn.close()?
+  return Ok(true)
+}
+
+fn record_playback_settings(path: String, audio_quality: String, video_quality: String, bitrate_policy: String, revision: Int) -> Result<Bool, String> {
+  upsert_setting(path, "audio_quality", audio_quality, revision)?
+  upsert_setting(path, "video_quality", video_quality, revision)?
+  return upsert_setting(path, "bitrate_policy", bitrate_policy, revision)
+}
+
+fn record_media_item(path: String, media_id: String, title: String, source_kind: String, source_hash: String, revision: Int) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_library_items(media_id, title, source_kind, source_hash, created_revision) VALUES (?, ?, ?, ?, ?) ON CONFLICT(media_id) DO UPDATE SET title=excluded.title, source_kind=excluded.source_kind, source_hash=excluded.source_hash, created_revision=excluded.created_revision",
+               media_item_params(media_id, title, source_kind, source_hash, revision))?
+  conn.close()?
+  return Ok(true)
+}
+
+fn record_import_task(path: String, task_id: String, source_kind: String, status: String, revision: Int, correlation_id: String) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_import_tasks(task_id, source_kind, status, state_revision, correlation_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET status=excluded.status, state_revision=excluded.state_revision, correlation_id=excluded.correlation_id",
+               import_task_params(task_id, source_kind, status, revision, correlation_id))?
+  conn.close()?
+  return Ok(true)
+}
+
+fn record_download_task(path: String, task_id: String, source_hash: String, progress_percent: Int, status: String, revision: Int, correlation_id: String) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_download_tasks(task_id, source_hash, progress_percent, status, state_revision, correlation_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET progress_percent=excluded.progress_percent, status=excluded.status, state_revision=excluded.state_revision, correlation_id=excluded.correlation_id",
+               download_task_params(task_id, source_hash, progress_percent, status, revision, correlation_id))?
+  conn.close()?
+  return Ok(true)
+}
+
+fn record_recovery_diagnostic(path: String, recommendation: String, reason: String, revision: Int) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_recovery_diagnostics(recommendation, reason, state_revision) VALUES (?, ?, ?)",
+               recovery_params(recommendation, reason, revision))?
+  conn.close()?
+  return Ok(true)
+}

@@ -10,5 +10,6 @@ host_cxx = ["host.cpp"]
 [dependencies]
 app_local = { path = "../../official/nebula-app-local" }
 bridge = { path = "../../official/nebula-thin-host-bridge" }
+db_sqlite = { path = "../../official/nebula-db-sqlite" }
 jobs = { path = "../../official/nebula-jobs" }
 ui = { path = "../../official/nebula-ui" }

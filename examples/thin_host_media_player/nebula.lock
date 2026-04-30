@@ -1,6 +1,6 @@
 schema_version = 2
 root_package = "thin-host-media-player"
-root_manifest_hash = "6428a8023beb86b5"
+root_manifest_hash = "799a64646263cf48"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
@@ -14,12 +14,12 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "6428a8023beb86b5"
-source_fingerprint = "d3bd09d0c9bfe531"
-integrity_fingerprint = "7fa974047547620"
+manifest_hash = "799a64646263cf48"
+source_fingerprint = "33cc375aee148f68"
+integrity_fingerprint = "780a6f5915ed2dd5"
 is_root = 1
 host_cxx = ["host.cpp"]
-dependencies = ["app_local=nebula-app-local", "bridge=nebula-thin-host-bridge", "jobs=nebula-jobs", "ui=nebula-ui"]
+dependencies = ["app_local=nebula-app-local", "bridge=nebula-thin-host-bridge", "db_sqlite=nebula-db-sqlite", "jobs=nebula-jobs", "ui=nebula-ui"]
 
 [[package]]
 name = "nebula-app-local"
@@ -148,8 +148,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-thin-host-bridge"
 resolved_rev = ""
 manifest_hash = "be49c6a1d6d89b75"
-source_fingerprint = "7594f4be2dbe1c2b"
-integrity_fingerprint = "ec36d87ae2b5173f"
+source_fingerprint = "3b56a8fe46821a53"
+integrity_fingerprint = "3a51049a1e6a809c"
 is_root = 0
 native_cxx_sources = ["native/bridge.cpp"]
 dependencies = []

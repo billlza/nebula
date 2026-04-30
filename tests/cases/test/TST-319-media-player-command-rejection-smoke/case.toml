@@ -60,6 +60,40 @@ payloads = [json.loads(row[0]) for row in app_events]
 if [payload["accepted"] for payload in payloads] != [False, False, False, True]:
     raise SystemExit(f"bad app-local accepted flags: {payloads!r}")
 
+boundary_db = root / "boundary-receipts.db"
+shutil.rmtree(Path("work/thin_host_media_player"), ignore_errors=True)
+boundary_env = {
+    **os.environ,
+    "APP_SQLITE_PATH": str(boundary_db),
+    "NEBULA_MEDIA_PLAYER_COMMAND_MODE": "boundary_rejections",
+}
+boundary_run = subprocess.run([str(entry)], capture_output=True, text=True, env=boundary_env, check=True)
+boundary_events = [
+    json.loads(line[len("media-player-event:"):])
+    for line in boundary_run.stdout.splitlines()
+    if line.startswith("media-player-event:")
+]
+if [event["kind"] for event in boundary_events] != [
+    "media_player_booted",
+    "library_file_imported",
+    "command_rejected",
+    "command_rejected",
+    "command_rejected",
+    "media_player_quit",
+]:
+    raise SystemExit(f"unexpected boundary rejection events: {boundary_events!r}")
+boundary_rejections = [event for event in boundary_events if event["kind"] == "command_rejected"]
+if [event["message"] for event in boundary_rejections] != [
+    "media item is not in Nebula media library",
+    "no active download to cancel",
+    "no active download for progress update",
+]:
+    raise SystemExit(f"unexpected boundary rejection messages: {boundary_rejections!r}")
+if [event["state_revision"] for event in boundary_rejections] != [1, 1, 1]:
+    raise SystemExit(f"boundary rejections must preserve imported revision: {boundary_rejections!r}")
+if boundary_events[-1]["kind"] != "media_player_quit" or boundary_events[-1]["state_revision"] != 2:
+    raise SystemExit(f"boundary quit should advance from imported state: {boundary_events!r}")
+
 print("media-player-command-rejection-ok")
 PY
 """

@@ -30,8 +30,16 @@ if bundle["schema"] != "nebula.gui.preview.package.v1":
     raise SystemExit(f"bad bundle schema: {bundle!r}")
 if bundle["runtime"]["app_core"] != "nebula-first":
     raise SystemExit(f"bundle did not preserve Nebula-first boundary: {bundle!r}")
-if bundle["runtime"]["command_schema"] != "media-player.command.v1":
-    raise SystemExit(f"bad command schema: {bundle!r}")
+if bundle["runtime"]["wire_command_schema"] != "thin-host-bridge.command.v1":
+    raise SystemExit(f"bad wire command schema: {bundle!r}")
+if bundle["runtime"]["domain_command_schema"] != "media-player.command.v1":
+    raise SystemExit(f"bad domain command schema: {bundle!r}")
+if bundle["app_local_substrate"]["media_store"] != "sqlite":
+    raise SystemExit(f"media store substrate missing: {bundle!r}")
+if bundle["host_sidecars"]["codec"] != "native-sidecar-boundary":
+    raise SystemExit(f"codec sidecar boundary missing: {bundle!r}")
+if bundle["host_sidecars"]["torrent_transport"] != "stub-progress-events":
+    raise SystemExit(f"torrent sidecar boundary missing: {bundle!r}")
 update_path = app / bundle["update_manifest"]["path"]
 actual_update_sha = hashlib.sha256(update_path.read_bytes()).hexdigest()
 if actual_update_sha != bundle["update_manifest"]["sha256"]:

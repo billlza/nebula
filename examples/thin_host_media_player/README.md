@@ -10,13 +10,19 @@ markers. It does not own media-player business state.
 
 Preview scope:
 
-- `media-player.command.v1` command handling for import, quality, bitrate, and download controls
+- `thin-host-bridge.command.v1` wire envelopes carrying `media-player.command.v1` domain commands
+  for import, quality, bitrate, and download controls
+- phase1 library selection, playback sidecar open/progress, and torrent progress state
 - `media-player.event.v1` accepted/rejected events with `correlation_id` and `state_revision`
-- `media-player.snapshot.v1` compact host snapshot
+- `media-player.snapshot.v1` compact host snapshot with selection, playback, download, sidecar,
+  and recovery diagnostics
 - app-local preflight, startup recovery policy, lifecycle markers, receipts, and host snapshot
   readiness
+- Nebula-owned SQLite media tables for library items, settings, import tasks, download tasks, and
+  recovery diagnostics
 - jobs DAG retry/dead-letter and outbox dead-letter evidence
 - bundle/update/recovery preview manifests
+- host sidecar manifest for file picker, codec/player, and torrent adapter boundaries
 
 Non-goals:
 

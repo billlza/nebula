@@ -4,7 +4,7 @@ The first full-app validation probe is a thin-host media player. It is a forcing
 app-core, app-local substrate, packaging/update, and performance contracts; it is not a reusable app template
 and not a claim that Nebula owns the native audio/video renderer.
 
-The repo-local skeleton lives in `examples/thin_host_media_player`. Its V1 implementation keeps the
+The repo-local app lives in `examples/thin_host_media_player`. Its V1 implementation keeps the
 media-player state machine, command validation, events, snapshots, SQLite receipts, jobs/outbox,
 observe markers, and update/recovery markers in Nebula. The C++ host file is only a preview adapter
 and command fixture for native shell/UI IR smoke.
@@ -70,18 +70,32 @@ Other platform pieces remain generic capabilities, not media-player-only APIs:
 
 ## First App-Specific Contract Slice
 
-The first skeleton defines `media-player.command.v1` commands:
-   - `library.import_file`
-   - `library.import_torrent`
-   - `playback.set_audio_quality`
-   - `playback.set_video_quality`
-   - `playback.set_bitrate_policy`
-   - `download.pause`
-   - `download.resume`
-   - `download.cancel`
+The first skeleton keeps `thin-host-bridge.command.v1` as the wire envelope and defines
+`media-player.command.v1` as the Nebula-owned domain command set:
+
+1. `library.import_file`
+2. `library.import_torrent`
+3. `library.select_item`
+4. `playback.set_audio_quality`
+5. `playback.set_video_quality`
+6. `playback.set_bitrate_policy`
+7. `playback.open_selected`
+8. `playback.progress`
+9. `download.pause`
+10. `download.resume`
+11. `download.cancel`
+12. `download.progress`
+
+Phase1 adds the first true app flow on top of the skeleton:
+
+1. Host exposes a `media-player.host-sidecar.v1` manifest for file picker, codec/player, and torrent
+   adapter boundaries.
 2. Emit `media-player.event.v1` events with correlation and state revision.
-3. Emit a compact `media-player.snapshot.v1` view model for the host.
-4. Reject illegal/unsupported torrent sources explicitly and preserve state.
-5. Stage a preview bundle/update/recovery manifest before any native renderer claim.
+3. Emit a compact `media-player.snapshot.v1` view model for the host, including selected media,
+   playback sidecar progress, download progress, and startup recovery recommendation.
+4. Persist Nebula-owned SQLite media tables for library items, settings, import tasks, download
+   tasks, and recovery diagnostics; app-local receipts remain the generic runtime evidence layer.
+5. Reject illegal/unsupported torrent sources explicitly and preserve state.
+6. Stage a preview bundle/update/recovery manifest before any native renderer claim.
 
 This app should advance only after the thin-host app shell closure remains green.
