@@ -48,6 +48,7 @@ extern fn __nebula_thin_host_parse_generated_command_text(text: String) -> Resul
 extern fn __nebula_thin_host_generated_command_kind(text: String) -> Result<String, String>
 extern fn __nebula_thin_host_generated_command_correlation_id(text: String) -> Result<String, String>
 extern fn __nebula_thin_host_generated_command_state_revision(text: String) -> Result<Int, String>
+extern fn __nebula_thin_host_generated_command_payload(text: String) -> Result<Json, String>
 
 fn command_schema() -> String {
   return "thin-host-bridge.command.v1"
@@ -218,6 +219,34 @@ fn command_correlation_id_or(text: String, fallback: String) -> String {
     }
     Err(msg) => {
       return fallback
+    }
+  }
+}
+
+fn command_payload_or_empty(text: String) -> Result<Json, String> {
+  match __nebula_thin_host_generated_command_payload(text) {
+    Ok(payload) => {
+      return Ok(payload)
+    }
+    Err(msg) => {
+      if msg != "thin-host command fast path miss" && msg != "thin-host command payload missing" {
+        return Err(msg)
+      }
+      match parse(text) {
+        Ok(value) => {
+          match get_value(value, "payload") {
+            Ok(payload) => {
+              return Ok(payload)
+            }
+            Err(_) => {
+              return Ok(object1("empty", bool_value(true)))
+            }
+          }
+        }
+        Err(_) => {
+          return Err("malformed thin-host command envelope")
+        }
+      }
     }
   }
 }

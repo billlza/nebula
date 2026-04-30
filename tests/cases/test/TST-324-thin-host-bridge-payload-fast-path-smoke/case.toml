@@ -1,0 +1,105 @@
+id = "TST-324-thin-host-bridge-payload-fast-path-smoke"
+suite = "test"
+description = "thin-host bridge decodes generated command payloads through indexed JsonValue traversal"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/thin_host_bridge_payload_fast_path")
+app = root / "app"
+shutil.rmtree(root, ignore_errors=True)
+(app / "src").mkdir(parents=True, exist_ok=True)
+
+(app / "nebula.toml").write_text(f'''schema_version = 1
+
+[package]
+name = "thin-host-bridge-payload-fast-path"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+bridge = {{ path = "{repo / 'official' / 'nebula-thin-host-bridge'}" }}
+''', encoding="utf-8")
+(app / "src" / "main.nb").write_text(r'''module main
+import bridge::host_bridge
+import std::json
+import std::result
+
+fn main() -> Void {
+  match run_smoke() {
+    Ok(_) => {
+      print("thin-host-bridge-payload-fast-path-ok")
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn run_smoke() -> Result<Bool, String> {
+  let command = payload_command_text()
+  let envelope = decode_command_text(command)?
+  verify_envelope(envelope)?
+  let payload = command_payload_or_empty(command)?
+  verify_payload(payload)?
+  return verify_missing_payload()
+}
+
+fn payload_command_text() -> String {
+  return "{\\\"schema\\\":\\\"thin-host-bridge.command.v1\\\",\\\"kind\\\":\\\"playback.progress\\\",\\\"correlation_id\\\":\\\"payload-fast\\\",\\\"state_revision\\\":7,\\\"payload\\\":{\\\"media_id\\\":\\\"media:sample\\\",\\\"position_ms\\\":42000}}"
+}
+
+fn verify_envelope(envelope: ThinHostCommand) -> Result<Bool, String> {
+  if envelope.kind() != "playback.progress" {
+    return Err("thin-host bridge command kind mismatch")
+  }
+  if envelope.correlation_id() != "payload-fast" {
+    return Err("thin-host bridge command correlation mismatch")
+  }
+  if envelope.state_revision() != 7 {
+    return Err("thin-host bridge command revision mismatch")
+  }
+  return Ok(true)
+}
+
+fn verify_payload(payload: Json) -> Result<Bool, String> {
+  let media_id = get_string(payload, "media_id")?
+  let position_ms = get_int(payload, "position_ms")?
+  if media_id != "media:sample" || position_ms != 42000 {
+    return Err("thin-host bridge command payload mismatch")
+  }
+  return Ok(true)
+}
+
+fn verify_missing_payload() -> Result<Bool, String> {
+  let empty_payload = command_payload_or_empty(encode_command_text_with_context("quit", "no-payload", 8))?
+  let flag = get_bool(empty_payload, "empty")?
+  if !flag {
+    return Err("thin-host bridge missing-payload fallback mismatch")
+  }
+  return Ok(true)
+}
+''', encoding="utf-8")
+
+subprocess.run([binary, "update", str(app)], check=True, capture_output=True, text=True)
+check = subprocess.run([binary, "check", str(app)], capture_output=True, text=True, check=True)
+if "warning:" in check.stdout or "warning:" in check.stderr:
+    raise SystemExit(f"bridge payload fast-path check emitted warnings:\\n{check.stdout}\\n{check.stderr}")
+run = subprocess.run([binary, "run", str(app), "--run-gate", "none"], capture_output=True, text=True, check=True)
+print(run.stdout, end="")
+print(run.stderr, end="")
+if "thin-host-bridge-payload-fast-path-ok" not in run.stdout:
+    raise SystemExit("payload fast-path smoke did not report ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["thin-host-bridge-payload-fast-path-ok"]

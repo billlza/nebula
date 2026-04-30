@@ -58,7 +58,14 @@ struct GeneratedCommandView {
   FieldSpan kind;
   FieldSpan correlation_id;
   FieldSpan state_revision;
+  FieldSpan payload;
+  nebula::rt::JsonValueView payload_view;
+  nebula::rt::JsonObjectIndex payload_object_fields;
+  nebula::rt::JsonArrayIndex payload_array_items;
   std::int64_t revision_value = 0;
+  bool has_payload = false;
+  bool payload_has_object_fields = false;
+  bool payload_has_array_items = false;
 };
 
 struct GeneratedCommandCache {
@@ -133,6 +140,64 @@ std::optional<FieldSpan> consume_int_field(std::string_view text,
   return FieldSpan{key_start, key_end, value_start, pos};
 }
 
+std::optional<FieldSpan> consume_json_value_field(std::string_view text,
+                                                  std::size_t& pos,
+                                                  std::string_view key,
+                                                  nebula::rt::JsonValueView& value_view,
+                                                  nebula::rt::JsonObjectIndex& object_fields,
+                                                  bool& has_object_fields,
+                                                  nebula::rt::JsonArrayIndex& array_items,
+                                                  bool& has_array_items) {
+  if (pos >= text.size() || text[pos] != '"') return std::nullopt;
+  const std::size_t key_start = pos + 1;
+  if (text.substr(key_start, key.size()) != key) return std::nullopt;
+  const std::size_t key_end = key_start + key.size();
+  if (key_end >= text.size() || text[key_end] != '"' || key_end + 1 >= text.size() || text[key_end + 1] != ':') {
+    return std::nullopt;
+  }
+  pos = key_end + 2;
+  nebula::rt::JsonCursor cursor(text);
+  cursor.set_pos(pos);
+  cursor.skip_ws();
+  if (cursor.eof()) return std::nullopt;
+  const char ch = cursor.peek();
+  if (ch == '{') {
+    if (!nebula::rt::parse_json_object(cursor, &object_fields, &value_view)) return std::nullopt;
+    has_object_fields = object_fields.complete;
+  } else if (ch == '[') {
+    if (!nebula::rt::parse_json_array(cursor, &array_items, &value_view)) return std::nullopt;
+    has_array_items = true;
+  } else if (!nebula::rt::parse_json_value(cursor, &value_view)) {
+    return std::nullopt;
+  }
+  pos = cursor.pos();
+  return FieldSpan{key_start, key_end, value_view.raw_start, value_view.raw_end};
+}
+
+nebula::rt::JsonValueView relative_child_view(nebula::rt::JsonValueView view, std::size_t start) {
+  view.raw_start -= start;
+  view.raw_end -= start;
+  return view;
+}
+
+nebula::rt::JsonObjectIndex relative_object_index(nebula::rt::JsonObjectIndex fields, std::size_t start) {
+  if (!fields.complete) return fields;
+  for (std::size_t i = 0; i < fields.count; ++i) {
+    auto& field = fields.fields[i];
+    field.key_start -= start;
+    field.key_end -= start;
+    field.value = relative_child_view(field.value, start);
+  }
+  return fields;
+}
+
+nebula::rt::JsonArrayIndex relative_array_index(nebula::rt::JsonArrayIndex items, std::size_t start) {
+  for (auto& item : items.items) {
+    item = relative_child_view(item, start);
+  }
+  return items;
+}
+
 std::optional<GeneratedCommandView> parse_generated_command_view(std::string_view text) {
   std::size_t pos = 0;
   if (!append_literal(text, pos, "{")) return std::nullopt;
@@ -151,9 +216,41 @@ std::optional<GeneratedCommandView> parse_generated_command_view(std::string_vie
   std::int64_t revision = 0;
   auto state_revision = consume_int_field(text, pos, "state_revision", revision);
   if (!state_revision.has_value()) return std::nullopt;
+  FieldSpan payload;
+  nebula::rt::JsonValueView payload_view;
+  nebula::rt::JsonObjectIndex payload_object_fields;
+  nebula::rt::JsonArrayIndex payload_array_items;
+  bool has_payload = false;
+  bool payload_has_object_fields = false;
+  bool payload_has_array_items = false;
+  if (pos < text.size() && text[pos] == ',') {
+    ++pos;
+    auto parsed_payload = consume_json_value_field(text,
+                                                   pos,
+                                                   "payload",
+                                                   payload_view,
+                                                   payload_object_fields,
+                                                   payload_has_object_fields,
+                                                   payload_array_items,
+                                                   payload_has_array_items);
+    if (!parsed_payload.has_value()) return std::nullopt;
+    payload = *parsed_payload;
+    has_payload = true;
+  }
   if (!append_literal(text, pos, "}")) return std::nullopt;
   if (pos != text.size()) return std::nullopt;
-  return GeneratedCommandView{*schema, *kind, *correlation_id, *state_revision, revision};
+  return GeneratedCommandView{*schema,
+                              *kind,
+                              *correlation_id,
+                              *state_revision,
+                              payload,
+                              payload_view,
+                              std::move(payload_object_fields),
+                              std::move(payload_array_items),
+                              revision,
+                              has_payload,
+                              payload_has_object_fields,
+                              payload_has_array_items};
 }
 
 const GeneratedCommandCache* cached_generated_command(std::string_view text) {
@@ -289,6 +386,14 @@ __nebula_thin_host_parse_generated_command_text(std::string text) {
   object_fields.push_back(string_field(parsed->kind));
   object_fields.push_back(string_field(parsed->correlation_id));
   object_fields.push_back(int_field(parsed->state_revision, parsed->revision_value));
+  if (parsed->has_payload) {
+    nebula::rt::JsonObjectField payload_field;
+    payload_field.key_start = parsed->payload.key_start;
+    payload_field.key_end = parsed->payload.key_end;
+    payload_field.key_needs_decode = false;
+    payload_field.value = parsed->payload_view;
+    object_fields.push_back(payload_field);
+  }
 
   nebula::rt::JsonValueView view;
   view.kind = nebula::rt::JsonValueKind::Object;
@@ -323,4 +428,32 @@ __nebula_thin_host_generated_command_state_revision(std::string text) {
     return nebula::rt::err_result<std::int64_t>("thin-host command fast path miss");
   }
   return nebula::rt::ok_result(parsed->view.revision_value);
+}
+
+nebula::rt::Result<nebula::rt::JsonValue, std::string>
+__nebula_thin_host_generated_command_payload(std::string text) {
+  const auto* parsed = cached_generated_command(text);
+  if (parsed == nullptr) {
+    return nebula::rt::err_result<nebula::rt::JsonValue>("thin-host command fast path miss");
+  }
+  if (!parsed->view.has_payload) {
+    return nebula::rt::err_result<nebula::rt::JsonValue>("thin-host command payload missing");
+  }
+  const auto raw = std::string_view(parsed->text).substr(parsed->view.payload.value_start,
+                                                         parsed->view.payload.value_end -
+                                                             parsed->view.payload.value_start);
+  auto view = nebula::rt::json_relative_view(parsed->view.payload_view, parsed->view.payload.value_start);
+  if (view.kind == nebula::rt::JsonValueKind::Object && parsed->view.payload_has_object_fields) {
+    return nebula::rt::ok_result(nebula::rt::JsonValue{
+        std::string(raw),
+        view,
+        relative_object_index(parsed->view.payload_object_fields, parsed->view.payload.value_start)});
+  }
+  if (view.kind == nebula::rt::JsonValueKind::Array && parsed->view.payload_has_array_items) {
+    return nebula::rt::ok_result(nebula::rt::JsonValue{
+        std::string(raw),
+        view,
+        relative_array_index(parsed->view.payload_array_items, parsed->view.payload.value_start)});
+  }
+  return nebula::rt::json_indexed_subvalue(raw, view);
 }
