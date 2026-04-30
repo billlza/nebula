@@ -1,11 +1,11 @@
 schema_version = 2
-root_package = "app-platform-thin-host-bridge-roundtrip"
-root_manifest_hash = "9a7d086ba013f6e7"
+root_package = "app-platform-thin-host-payload-command-roundtrip"
+root_manifest_hash = "f4661fc933f1e55e"
 toolchain_schema_version = 1
 cache_schema_version = 2
 
 [[package]]
-name = "app-platform-thin-host-bridge-roundtrip"
+name = "app-platform-thin-host-payload-command-roundtrip"
 version = "0.1.0"
 root = "."
 manifest = "nebula.toml"
@@ -14,9 +14,9 @@ src_dir = "src"
 source_kind = "root"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "9a7d086ba013f6e7"
-source_fingerprint = "6df9ec785c8fca9"
-integrity_fingerprint = "e5c3bfddc67cd61a"
+manifest_hash = "f4661fc933f1e55e"
+source_fingerprint = "70a8e1af50ac2bc3"
+integrity_fingerprint = "ee12806380eddffa"
 is_root = 1
 dependencies = ["bridge=nebula-thin-host-bridge", "counter=thin-host-counter-core"]
 

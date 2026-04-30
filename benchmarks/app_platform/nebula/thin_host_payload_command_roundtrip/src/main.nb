@@ -1,0 +1,32 @@
+module main
+import counter::counter_core
+
+fn expect_text_eq(actual: String, expected: String) -> Void {
+  if actual == expected {
+  } else {
+    expect_eq(1, 0)
+  }
+}
+
+fn verify_snapshot_text(snapshot_text: String) -> Void {
+  expect_text_eq(snapshot_text,
+                 "{\"schema\":\"thin-host-bridge.snapshot.v1\",\"screen\":\"counter\",\"payload\":{\"counter\":5,\"can_decrement\":true,\"status\":\"busy\",\"last_command\":\"payload_delta\"},\"state_revision\":1}")
+}
+
+@bench
+fn bench_thin_host_payload_command_roundtrip() -> Void {
+  let state = initial_state()
+  let command = payload_delta_command_text_at_revision("payload-1", state.revision(), 5, "payload_delta")
+  match apply_payload_command_text_state(state, command) {
+    Ok(next_state) => {
+      verify_snapshot_text(query_snapshot_text(next_state))
+    }
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+
+fn main() -> Void {
+  print("app-platform-thin-host-payload-command-roundtrip")
+}

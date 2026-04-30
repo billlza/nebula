@@ -17,6 +17,8 @@ the fixed workloads and reference stacks that future APP-platform maturity claim
   - long-lived service plus JSON plus embedded-data CRUD path
 - `thin_host_bridge_roundtrip`
   - host<->core command/query/event bridge round-trip path
+- `thin_host_payload_command_roundtrip`
+  - JSON payload command decode, indexed payload traversal, direct-state reduce, and snapshot path
 - `state_sync_latency`
   - typed internal command/state transition plus terminal snapshot/update propagation path
 - `resident_memory`
@@ -66,6 +68,7 @@ pure Nebula runtime behavior.
   paths:
   - `service_json_db_crud`
   - `thin_host_bridge_roundtrip`
+  - `thin_host_payload_command_roundtrip`
   - `state_sync_latency`
   - `ui_action_roundtrip`
   - `ui_snapshot_render`
@@ -78,6 +81,7 @@ pure Nebula runtime behavior.
   - `cli_cold_start`
   - `service_json_db_crud`
   - `thin_host_bridge_roundtrip`
+  - `thin_host_payload_command_roundtrip`
   - `state_sync_latency`
   - `resident_memory`
   - `nebula_ui_startup`
@@ -104,6 +108,9 @@ pure Nebula runtime behavior.
 - thin-host timed workloads validate canonical event/snapshot wire text in the timed loop, matching
   the C++ reference lane; broader malformed/schema-mismatch parsing remains covered by bridge
   contract tests rather than repeated inside the microbenchmark
+- `thin_host_payload_command_roundtrip` isolates command payload costs from the older no-payload
+  bridge path: JSON remains the wire contract, but payload field access is expected to use indexed
+  traversal once the envelope has been validated.
 
 ## Useful Commands
 
@@ -111,7 +118,7 @@ pure Nebula runtime behavior.
 python3 scripts/app_platform_bench.py verify
 python3 scripts/app_platform_bench.py plan --format json
 python3 scripts/app_platform_bench.py plan
-python3 scripts/app_platform_bench.py run-nebula --binary ./build/nebula --workload thin_host_bridge_roundtrip --workload state_sync_latency --json-out artifacts/app-platform-nebula.json
-python3 scripts/app_platform_bench.py run-reference --stack cpp --workload service_json_db_crud --workload thin_host_bridge_roundtrip --workload state_sync_latency --workload ui_action_roundtrip --workload ui_snapshot_render --workload ui_layout_pass --workload ui_render_list_build --workload ui_hit_test_dispatch --workload ui_patch_apply --workload ui_gpu_submit_smoke --json-out artifacts/app-platform-cpp.json
+python3 scripts/app_platform_bench.py run-nebula --binary ./build/nebula --workload thin_host_bridge_roundtrip --workload thin_host_payload_command_roundtrip --workload state_sync_latency --json-out artifacts/app-platform-nebula.json
+python3 scripts/app_platform_bench.py run-reference --stack cpp --workload service_json_db_crud --workload thin_host_bridge_roundtrip --workload thin_host_payload_command_roundtrip --workload state_sync_latency --workload ui_action_roundtrip --workload ui_snapshot_render --workload ui_layout_pass --workload ui_render_list_build --workload ui_hit_test_dispatch --workload ui_patch_apply --workload ui_gpu_submit_smoke --json-out artifacts/app-platform-cpp.json
 python3 scripts/app_platform_bench.py compare --stack cpp --nebula-json artifacts/app-platform-nebula.json --reference-json artifacts/app-platform-cpp.json
 ```

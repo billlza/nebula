@@ -34,6 +34,11 @@ struct CounterCommandCodeEnvelope {
   state_revision: Int
 }
 
+struct CounterPayloadDelta {
+  delta: Int,
+  label: String
+}
+
 fn initial_state() -> CounterState {
   return CounterState(0, "boot", 0)
 }
@@ -137,6 +142,21 @@ fn command_at_revision(kind: String, correlation_id: String, state_revision: Int
 
 fn command_code_at_revision(kind_code: Int, correlation_id: String, state_revision: Int) -> CounterCommandCodeEnvelope {
   return CounterCommandCodeEnvelope(kind_code, correlation_id, state_revision)
+}
+
+fn payload_delta_command_text_at_revision(correlation_id: String,
+                                          state_revision: Int,
+                                          delta: Int,
+                                          label: String) -> String {
+  let payload_text = object4_text("delta",
+                                  int_value(delta),
+                                  "label",
+                                  string_value(label),
+                                  "trace_id",
+                                  string_value(correlation_id),
+                                  "allow_negative",
+                                  bool_value(false))
+  return encode_command_payload_text_unchecked_with_context("apply_delta", payload_text, correlation_id, state_revision)
 }
 
 fn increment_command_code() -> Int {
@@ -254,6 +274,53 @@ fn apply_command_code_state_envelope(state: CounterState, command: CounterComman
     return Err("stale thin-host command state_revision")
   }
   return reduce_command_code_state(state, command.kind_code)
+}
+
+fn reduce_payload_delta_state(state: CounterState, delta: Int, label: String) -> Result<CounterState, String> {
+  let next_counter = state.counter + delta
+  if next_counter < 0 {
+    return Err("invalid counter transition: cannot apply negative payload below zero")
+  }
+  return Ok(CounterState(next_counter, label, state.revision + 1))
+}
+
+fn payload_command_envelope_for_state(state: CounterState, command_text: String) -> Result<ThinHostCommand, String> {
+  let command = decode_command_text(command_text)?
+  if command.kind() != "apply_delta" {
+    return Err("unknown payload command kind")
+  }
+  if command.state_revision() != state.revision {
+    return Err("stale thin-host command state_revision")
+  }
+  return Ok(command)
+}
+
+fn payload_delta_fields(command_text: String) -> Result<CounterPayloadDelta, String> {
+  let delta = command_payload_int(command_text, "delta")?
+  let label = command_payload_string(command_text, "label")?
+  return Ok(CounterPayloadDelta(delta, label))
+}
+
+fn validate_payload_delta_contract(command: ThinHostCommand, command_text: String) -> Result<Bool, String> {
+  let trace_id = command_payload_string(command_text, "trace_id")?
+  if trace_id != command.correlation_id() {
+    return Err("payload trace_id mismatch")
+  }
+  if command_payload_bool(command_text, "allow_negative")? {
+    return Err("payload allow_negative is not enabled in this lane")
+  }
+  return Ok(true)
+}
+
+fn payload_delta_from_command(command: ThinHostCommand, command_text: String) -> Result<CounterPayloadDelta, String> {
+  validate_payload_delta_contract(command, command_text)?
+  return payload_delta_fields(command_text)
+}
+
+fn apply_payload_command_text_state(state: CounterState, command_text: String) -> Result<CounterState, String> {
+  let command = payload_command_envelope_for_state(state, command_text)?
+  let payload_delta = payload_delta_from_command(command, command_text)?
+  return reduce_payload_delta_state(state, payload_delta.delta, payload_delta.label)
 }
 
 fn apply_command_text(state: CounterState, command_text: String) -> Result<CounterStep, String> {

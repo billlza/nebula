@@ -6578,43 +6578,43 @@ __nebula_rt_process_run(nebula::rt::ProcessCommand command) {
   return nebula::rt::process_run(std::move(command));
 }
 
-inline nebula::rt::Result<std::string, std::string> __nebula_rt_json_get_string(nebula::rt::JsonValue value,
-                                                                                 std::string key) {
+inline nebula::rt::Result<std::string, std::string> __nebula_rt_json_get_string(const nebula::rt::JsonValue& value,
+                                                                                 const std::string& key) {
   return nebula::rt::json_get_string(value, key);
 }
 
-inline nebula::rt::Result<std::int64_t, std::string> __nebula_rt_json_get_int(nebula::rt::JsonValue value,
-                                                                               std::string key) {
+inline nebula::rt::Result<std::int64_t, std::string> __nebula_rt_json_get_int(const nebula::rt::JsonValue& value,
+                                                                               const std::string& key) {
   return nebula::rt::json_get_int(value, key);
 }
 
-inline nebula::rt::Result<bool, std::string> __nebula_rt_json_get_bool(nebula::rt::JsonValue value,
-                                                                        std::string key) {
+inline nebula::rt::Result<bool, std::string> __nebula_rt_json_get_bool(const nebula::rt::JsonValue& value,
+                                                                        const std::string& key) {
   return nebula::rt::json_get_bool(value, key);
 }
 
-inline nebula::rt::Result<nebula::rt::JsonValue, std::string> __nebula_rt_json_get_value(nebula::rt::JsonValue value,
-                                                                                           std::string key) {
+inline nebula::rt::Result<nebula::rt::JsonValue, std::string> __nebula_rt_json_get_value(const nebula::rt::JsonValue& value,
+                                                                                           const std::string& key) {
   return nebula::rt::json_get_value(value, key);
 }
 
-inline nebula::rt::Result<std::string, std::string> __nebula_rt_json_as_string(nebula::rt::JsonValue value) {
+inline nebula::rt::Result<std::string, std::string> __nebula_rt_json_as_string(const nebula::rt::JsonValue& value) {
   return nebula::rt::json_as_string(value);
 }
 
-inline nebula::rt::Result<std::int64_t, std::string> __nebula_rt_json_as_int(nebula::rt::JsonValue value) {
+inline nebula::rt::Result<std::int64_t, std::string> __nebula_rt_json_as_int(const nebula::rt::JsonValue& value) {
   return nebula::rt::json_as_int(value);
 }
 
-inline nebula::rt::Result<bool, std::string> __nebula_rt_json_as_bool(nebula::rt::JsonValue value) {
+inline nebula::rt::Result<bool, std::string> __nebula_rt_json_as_bool(const nebula::rt::JsonValue& value) {
   return nebula::rt::json_as_bool(value);
 }
 
-inline nebula::rt::Result<std::int64_t, std::string> __nebula_rt_json_array_len(nebula::rt::JsonValue value) {
+inline nebula::rt::Result<std::int64_t, std::string> __nebula_rt_json_array_len(const nebula::rt::JsonValue& value) {
   return nebula::rt::json_array_len(value);
 }
 
-inline nebula::rt::Result<nebula::rt::JsonValue, std::string> __nebula_rt_json_array_get(nebula::rt::JsonValue value,
+inline nebula::rt::Result<nebula::rt::JsonValue, std::string> __nebula_rt_json_array_get(const nebula::rt::JsonValue& value,
                                                                                            std::int64_t index) {
   return nebula::rt::json_array_get(value, index);
 }

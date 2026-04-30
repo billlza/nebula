@@ -64,6 +64,16 @@ inline std::string encode_command(const std::string& kind,
          "\",\"state_revision\":" + std::to_string(state_revision) + "}";
 }
 
+inline std::string encode_payload_command(const std::string& kind,
+                                          const std::string& payload,
+                                          const std::string& correlation_id,
+                                          int state_revision) {
+  return "{\"schema\":\"thin-host-bridge.command.v1\",\"kind\":\"" + kind +
+         "\",\"correlation_id\":\"" + correlation_id +
+         "\",\"state_revision\":" + std::to_string(state_revision) +
+         ",\"payload\":" + payload + "}";
+}
+
 inline std::string encode_event(const std::string& kind,
                                 const std::string& payload,
                                 bool terminal,
@@ -107,6 +117,36 @@ inline int int_field(const std::string& text, const std::string& key) {
   const std::size_t value_start = start + marker.size();
   const std::size_t value_end = text.find_first_not_of("-0123456789", value_start);
   return std::stoi(text.substr(value_start, value_end - value_start));
+}
+
+inline bool bool_field(const std::string& text, const std::string& key) {
+  const std::string marker = "\"" + key + "\":";
+  const std::size_t start = text.find(marker);
+  if (start == std::string::npos) {
+    fail("missing bool field: " + key);
+  }
+  const std::size_t value_start = start + marker.size();
+  if (text.compare(value_start, 4, "true") == 0) {
+    return true;
+  }
+  if (text.compare(value_start, 5, "false") == 0) {
+    return false;
+  }
+  fail("invalid bool field: " + key);
+}
+
+inline std::string payload_object(const std::string& command_text) {
+  const std::string marker = "\"payload\":";
+  const std::size_t start = command_text.find(marker);
+  if (start == std::string::npos) {
+    fail("missing command payload");
+  }
+  const std::size_t value_start = start + marker.size();
+  const std::size_t value_end = command_text.rfind('}');
+  if (value_end == std::string::npos || value_end <= value_start) {
+    fail("malformed command payload");
+  }
+  return command_text.substr(value_start, value_end - value_start);
 }
 
 inline Step reduce_command(const State& state,
@@ -215,6 +255,48 @@ inline State apply_command_code_state_envelope(const State& state, const Command
   return reduce_command_code_state(state, command.kind_code);
 }
 
+inline std::string payload_delta_text(const std::string& correlation_id, int delta, const std::string& label) {
+  return "{\"delta\":" + std::to_string(delta) +
+         ",\"label\":\"" + label +
+         "\",\"trace_id\":\"" + correlation_id +
+         "\",\"allow_negative\":false}";
+}
+
+inline std::string payload_delta_command_text_at_revision(const std::string& correlation_id,
+                                                          int state_revision,
+                                                          int delta,
+                                                          const std::string& label) {
+  return encode_payload_command("apply_delta",
+                                payload_delta_text(correlation_id, delta, label),
+                                correlation_id,
+                                state_revision);
+}
+
+inline State reduce_payload_delta_state(const State& state, int delta, const std::string& label) {
+  const int next_counter = state.counter + delta;
+  if (next_counter < 0) {
+    fail("invalid counter transition: cannot apply negative payload below zero");
+  }
+  return State{next_counter, label, state.revision + 1};
+}
+
+inline State apply_payload_command_text_state(const State& state, const std::string& command_text) {
+  expect_eq(string_field(command_text, "schema"), "thin-host-bridge.command.v1", "command schema");
+  const std::string kind = string_field(command_text, "kind");
+  expect_eq(kind, "apply_delta", "payload command kind");
+  const std::string correlation_id = string_field(command_text, "correlation_id");
+  const int revision = int_field(command_text, "state_revision");
+  expect_eq(revision, state.revision, "command state_revision");
+  const std::string payload = payload_object(command_text);
+  const int delta = int_field(payload, "delta");
+  const std::string label = string_field(payload, "label");
+  expect_eq(string_field(payload, "trace_id"), correlation_id, "payload trace_id");
+  if (bool_field(payload, "allow_negative")) {
+    fail("payload allow_negative is not enabled in this lane");
+  }
+  return reduce_payload_delta_state(state, delta, label);
+}
+
 inline std::string event_text(const Step& step) {
   return encode_event(step.event_kind,
                       counter_payload(step.state),
@@ -258,6 +340,20 @@ inline std::uint64_t run_state_sync_tape() {
             "\"payload\":{\"counter\":1,\"can_decrement\":true,\"status\":\"active\","
             "\"last_command\":\"decrement\"},\"state_revision\":3}",
             "state sync snapshot");
+  return checksum_text(snapshot);
+}
+
+inline std::uint64_t run_payload_command_roundtrip() {
+  const State state = initial_state();
+  const std::string command =
+      payload_delta_command_text_at_revision("payload-1", state.revision, 5, "payload_delta");
+  const State next_state = apply_payload_command_text_state(state, command);
+  const std::string snapshot = snapshot_text(next_state);
+  expect_eq(snapshot,
+            "{\"schema\":\"thin-host-bridge.snapshot.v1\",\"screen\":\"counter\","
+            "\"payload\":{\"counter\":5,\"can_decrement\":true,\"status\":\"busy\","
+            "\"last_command\":\"payload_delta\"},\"state_revision\":1}",
+            "payload command snapshot");
   return checksum_text(snapshot);
 }
 

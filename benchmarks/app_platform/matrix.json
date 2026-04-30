@@ -102,6 +102,29 @@
       "comparison_layer": "nebula_owned"
     },
     {
+      "id": "thin_host_payload_command_roundtrip",
+      "category": "thin_host",
+      "description": "Host<->core command bridge path with JSON payload extraction",
+      "timed_scope": "indexed payload command decode, payload field traversal, direct-state reduce, and compact snapshot production",
+      "correctness_contract": [
+        "payload_fields_applied",
+        "stable_snapshot_contract"
+      ],
+      "nebula_paths": [
+        "official/nebula-thin-host-bridge",
+        "examples/thin_host_app_core"
+      ],
+      "nebula_project": "benchmarks/app_platform/nebula/thin_host_payload_command_roundtrip",
+      "reference_projects": {
+        "cpp": "benchmarks/app_platform/reference/cpp/thin_host_payload_command_roundtrip"
+      },
+      "reference_runner": "cpp_bench",
+      "reference_stacks": [
+        "cpp"
+      ],
+      "comparison_layer": "nebula_owned"
+    },
+    {
       "id": "state_sync_latency",
       "category": "thin_host",
       "description": "State transition plus propagated snapshot/update latency",

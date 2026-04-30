@@ -30,6 +30,10 @@ struct ThinHostSnapshot {
 }
 
 extern fn __nebula_thin_host_encode_command_text(kind: String, correlation_id: String, state_revision: Int) -> String
+extern fn __nebula_thin_host_encode_command_payload_text(kind: String,
+                                                         payload_text: String,
+                                                         correlation_id: String,
+                                                         state_revision: Int) -> String
 extern fn __nebula_thin_host_encode_event_text(kind: String,
                                                payload: Json,
                                                terminal: Bool,
@@ -49,6 +53,9 @@ extern fn __nebula_thin_host_generated_command_kind(text: String) -> Result<Stri
 extern fn __nebula_thin_host_generated_command_correlation_id(text: String) -> Result<String, String>
 extern fn __nebula_thin_host_generated_command_state_revision(text: String) -> Result<Int, String>
 extern fn __nebula_thin_host_generated_command_payload(text: String) -> Result<Json, String>
+extern fn __nebula_thin_host_generated_command_payload_string(text: String, key: String) -> Result<String, String>
+extern fn __nebula_thin_host_generated_command_payload_int(text: String, key: String) -> Result<Int, String>
+extern fn __nebula_thin_host_generated_command_payload_bool(text: String, key: String) -> Result<Bool, String>
 
 fn command_schema() -> String {
   return "thin-host-bridge.command.v1"
@@ -112,6 +119,13 @@ fn encode_command_text(kind: String) -> String {
 
 fn encode_command_text_with_context(kind: String, correlation_id: String, state_revision: Int) -> String {
   return __nebula_thin_host_encode_command_text(kind, correlation_id, state_revision)
+}
+
+fn encode_command_payload_text_unchecked_with_context(kind: String,
+                                                      payload_text: String,
+                                                      correlation_id: String,
+                                                      state_revision: Int) -> String {
+  return __nebula_thin_host_encode_command_payload_text(kind, payload_text, correlation_id, state_revision)
 }
 
 fn expect_schema(value: Json, key: String, expected: String, missing_msg: String, unsupported_msg: String) -> Result<Bool, String> {
@@ -247,6 +261,51 @@ fn command_payload_or_empty(text: String) -> Result<Json, String> {
           return Err("malformed thin-host command envelope")
         }
       }
+    }
+  }
+}
+
+fn command_payload_string(text: String, key: String) -> Result<String, String> {
+  match __nebula_thin_host_generated_command_payload_string(text, key) {
+    Ok(value) => {
+      return Ok(value)
+    }
+    Err(msg) => {
+      if msg != "thin-host command fast path miss" {
+        return Err(msg)
+      }
+      let payload = command_payload_or_empty(text)?
+      return get_string(payload, key)
+    }
+  }
+}
+
+fn command_payload_int(text: String, key: String) -> Result<Int, String> {
+  match __nebula_thin_host_generated_command_payload_int(text, key) {
+    Ok(value) => {
+      return Ok(value)
+    }
+    Err(msg) => {
+      if msg != "thin-host command fast path miss" {
+        return Err(msg)
+      }
+      let payload = command_payload_or_empty(text)?
+      return get_int(payload, key)
+    }
+  }
+}
+
+fn command_payload_bool(text: String, key: String) -> Result<Bool, String> {
+  match __nebula_thin_host_generated_command_payload_bool(text, key) {
+    Ok(value) => {
+      return Ok(value)
+    }
+    Err(msg) => {
+      if msg != "thin-host command fast path miss" {
+        return Err(msg)
+      }
+      let payload = command_payload_or_empty(text)?
+      return get_bool(payload, key)
     }
   }
 }

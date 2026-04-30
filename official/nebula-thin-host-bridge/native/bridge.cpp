@@ -198,6 +198,78 @@ nebula::rt::JsonArrayIndex relative_array_index(nebula::rt::JsonArrayIndex items
   return items;
 }
 
+bool field_key_equals(std::string_view text,
+                      const nebula::rt::JsonObjectField& field,
+                      std::string_view key) {
+  const auto raw_key = text.substr(field.key_start, field.key_end - field.key_start);
+  if (!field.key_needs_decode) return raw_key == key;
+  std::string decoded_key;
+  return nebula::rt::decode_json_string_content(raw_key, decoded_key) && decoded_key == key;
+}
+
+const nebula::rt::JsonObjectField* find_payload_field(const GeneratedCommandView& view,
+                                                      std::string_view text,
+                                                      std::string_view key) {
+  if (!view.has_payload || !view.payload_has_object_fields) return nullptr;
+  for (std::size_t i = 0; i < view.payload_object_fields.count; ++i) {
+    const auto& field = view.payload_object_fields.fields[i];
+    if (field_key_equals(text, field, key)) return &field;
+  }
+  return nullptr;
+}
+
+nebula::rt::Result<std::string, std::string> payload_string_field(const GeneratedCommandCache& parsed,
+                                                                  std::string_view key) {
+  const auto* field = find_payload_field(parsed.view, parsed.text, key);
+  if (field == nullptr) {
+    return nebula::rt::err_result<std::string>("thin-host command payload string field not found: " +
+                                               std::string(key));
+  }
+  if (field->value.kind != nebula::rt::JsonValueKind::String) {
+    return nebula::rt::err_result<std::string>("thin-host command payload field is not a string: " +
+                                               std::string(key));
+  }
+  const auto raw = std::string_view(parsed.text).substr(field->value.raw_start + 1,
+                                                        field->value.raw_end - field->value.raw_start - 2);
+  if (!field->value.string_needs_decode) {
+    return nebula::rt::ok_result(std::string(raw));
+  }
+  std::string out;
+  if (!nebula::rt::decode_json_string_content(raw, out)) {
+    return nebula::rt::err_result<std::string>("thin-host command payload field is not a string: " +
+                                               std::string(key));
+  }
+  return nebula::rt::ok_result(out);
+}
+
+nebula::rt::Result<std::int64_t, std::string> payload_int_field(const GeneratedCommandCache& parsed,
+                                                                std::string_view key) {
+  const auto* field = find_payload_field(parsed.view, parsed.text, key);
+  if (field == nullptr) {
+    return nebula::rt::err_result<std::int64_t>("thin-host command payload int field not found: " +
+                                                std::string(key));
+  }
+  if (field->value.kind != nebula::rt::JsonValueKind::Int) {
+    return nebula::rt::err_result<std::int64_t>("thin-host command payload field is not an int: " +
+                                                std::string(key));
+  }
+  return nebula::rt::ok_result(field->value.int_value);
+}
+
+nebula::rt::Result<bool, std::string> payload_bool_field(const GeneratedCommandCache& parsed,
+                                                         std::string_view key) {
+  const auto* field = find_payload_field(parsed.view, parsed.text, key);
+  if (field == nullptr) {
+    return nebula::rt::err_result<bool>("thin-host command payload bool field not found: " +
+                                        std::string(key));
+  }
+  if (field->value.kind != nebula::rt::JsonValueKind::Bool) {
+    return nebula::rt::err_result<bool>("thin-host command payload field is not a bool: " +
+                                        std::string(key));
+  }
+  return nebula::rt::ok_result(field->value.bool_value);
+}
+
 std::optional<GeneratedCommandView> parse_generated_command_view(std::string_view text) {
   std::size_t pos = 0;
   if (!append_literal(text, pos, "{")) return std::nullopt;
@@ -312,6 +384,27 @@ std::string __nebula_thin_host_encode_command_text(std::string kind,
   return out;
 }
 
+std::string __nebula_thin_host_encode_command_payload_text(std::string kind,
+                                                           std::string payload_text,
+                                                           std::string correlation_id,
+                                                           std::int64_t state_revision) {
+  const std::string revision = std::to_string(state_revision);
+  std::string out;
+  out.reserve(104 + kind.size() + payload_text.size() + correlation_id.size() + revision.size());
+  out.push_back('{');
+  append_thin_host_schema(out, "thin-host-bridge.command.v1");
+  out.push_back(',');
+  append_json_string_field(out, "kind", kind);
+  out.push_back(',');
+  append_json_string_field(out, "correlation_id", correlation_id);
+  out.push_back(',');
+  append_json_int_text_field(out, "state_revision", revision);
+  out += ",\"payload\":";
+  out += payload_text;
+  out.push_back('}');
+  return out;
+}
+
 std::string __nebula_thin_host_encode_event_text(std::string kind,
                                                  nebula::rt::JsonValue payload,
                                                  bool terminal,
@@ -402,7 +495,8 @@ __nebula_thin_host_parse_generated_command_text(std::string text) {
   return nebula::rt::ok_result(nebula::rt::JsonValue{std::move(text), view, std::move(object_fields)});
 }
 
-nebula::rt::Result<std::string, std::string> __nebula_thin_host_generated_command_kind(std::string text) {
+nebula::rt::Result<std::string, std::string>
+__nebula_thin_host_generated_command_kind(const std::string& text) {
   const auto* parsed = cached_generated_command(text);
   if (parsed == nullptr) {
     return nebula::rt::err_result<std::string>("thin-host command fast path miss");
@@ -412,7 +506,7 @@ nebula::rt::Result<std::string, std::string> __nebula_thin_host_generated_comman
 }
 
 nebula::rt::Result<std::string, std::string>
-__nebula_thin_host_generated_command_correlation_id(std::string text) {
+__nebula_thin_host_generated_command_correlation_id(const std::string& text) {
   const auto* parsed = cached_generated_command(text);
   if (parsed == nullptr) {
     return nebula::rt::err_result<std::string>("thin-host command fast path miss");
@@ -422,7 +516,7 @@ __nebula_thin_host_generated_command_correlation_id(std::string text) {
 }
 
 nebula::rt::Result<std::int64_t, std::string>
-__nebula_thin_host_generated_command_state_revision(std::string text) {
+__nebula_thin_host_generated_command_state_revision(const std::string& text) {
   const auto* parsed = cached_generated_command(text);
   if (parsed == nullptr) {
     return nebula::rt::err_result<std::int64_t>("thin-host command fast path miss");
@@ -431,7 +525,7 @@ __nebula_thin_host_generated_command_state_revision(std::string text) {
 }
 
 nebula::rt::Result<nebula::rt::JsonValue, std::string>
-__nebula_thin_host_generated_command_payload(std::string text) {
+__nebula_thin_host_generated_command_payload(const std::string& text) {
   const auto* parsed = cached_generated_command(text);
   if (parsed == nullptr) {
     return nebula::rt::err_result<nebula::rt::JsonValue>("thin-host command fast path miss");
@@ -456,4 +550,31 @@ __nebula_thin_host_generated_command_payload(std::string text) {
         relative_array_index(parsed->view.payload_array_items, parsed->view.payload.value_start)});
   }
   return nebula::rt::json_indexed_subvalue(raw, view);
+}
+
+nebula::rt::Result<std::string, std::string>
+__nebula_thin_host_generated_command_payload_string(const std::string& text, const std::string& key) {
+  const auto* parsed = cached_generated_command(text);
+  if (parsed == nullptr) {
+    return nebula::rt::err_result<std::string>("thin-host command fast path miss");
+  }
+  return payload_string_field(*parsed, key);
+}
+
+nebula::rt::Result<std::int64_t, std::string>
+__nebula_thin_host_generated_command_payload_int(const std::string& text, const std::string& key) {
+  const auto* parsed = cached_generated_command(text);
+  if (parsed == nullptr) {
+    return nebula::rt::err_result<std::int64_t>("thin-host command fast path miss");
+  }
+  return payload_int_field(*parsed, key);
+}
+
+nebula::rt::Result<bool, std::string>
+__nebula_thin_host_generated_command_payload_bool(const std::string& text, const std::string& key) {
+  const auto* parsed = cached_generated_command(text);
+  if (parsed == nullptr) {
+    return nebula::rt::err_result<bool>("thin-host command fast path miss");
+  }
+  return payload_bool_field(*parsed, key);
 }

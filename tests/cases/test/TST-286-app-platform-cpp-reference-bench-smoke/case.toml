@@ -24,6 +24,8 @@ result = subprocess.run([
     '--workload',
     'thin_host_bridge_roundtrip',
     '--workload',
+    'thin_host_payload_command_roundtrip',
+    '--workload',
     'state_sync_latency',
     '--json-out',
     str(out_path),
@@ -36,7 +38,7 @@ payload = json.loads(out_path.read_text(encoding='utf-8'))
 if payload.get('kind') != 'app_platform_reference_results' or payload.get('stack') != 'cpp':
     raise SystemExit(f'unexpected reference payload: {payload!r}')
 results = {item['workload']: item for item in payload.get('results', [])}
-for workload in ('service_json_db_crud', 'thin_host_bridge_roundtrip', 'state_sync_latency'):
+for workload in ('service_json_db_crud', 'thin_host_bridge_roundtrip', 'thin_host_payload_command_roundtrip', 'state_sync_latency'):
     item = results.get(workload)
     if not item:
         raise SystemExit(f'missing reference workload result: {payload!r}')

@@ -3,6 +3,50 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "python3 - <<'PY'\nimport json\nimport os\nimport subprocess\nfrom pathlib import Path\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nout_path = Path('work/app_platform_nebula_thin_host.json')\nout_path.parent.mkdir(parents=True, exist_ok=True)\nresult = subprocess.run([\n    'python3',\n    str(repo_root / 'scripts' / 'app_platform_bench.py'),\n    'run-nebula',\n    '--binary',\n    os.environ['NEBULA_BINARY'],\n    '--workload',\n    'thin_host_bridge_roundtrip',\n    '--workload',\n    'state_sync_latency',\n    '--json-out',\n    str(out_path),\n], capture_output=True, text=True, check=False)\nprint(result.stdout, end='')\nprint(result.stderr, end='')\nif result.returncode != 0:\n    raise SystemExit(result.returncode)\npayload = json.loads(out_path.read_text(encoding='utf-8'))\nif payload.get('kind') != 'app_platform_nebula_results':\n    raise SystemExit(f'unexpected payload kind: {payload!r}')\nresults = {item['workload']: item for item in payload.get('results', [])}\nfor workload in ('thin_host_bridge_roundtrip', 'state_sync_latency'):\n    if workload not in results:\n        raise SystemExit(f'missing workload result: {payload!r}')\n    item = results[workload]\n    if item.get('status') != 'ok':\n        raise SystemExit(f'workload did not run successfully: {item!r}')\n    metrics = item.get('metrics', {})\n    if 'mean_ms' not in metrics or 'throughput_ops_s' not in metrics:\n        raise SystemExit(f'workload metrics missing expected fields: {item!r}')\nprint('app-platform-nebula-thin-host-bench-ok')\nPY"
+run = """
+python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+out_path = Path('work/app_platform_nebula_thin_host.json')
+out_path.parent.mkdir(parents=True, exist_ok=True)
+result = subprocess.run([
+    'python3',
+    str(repo_root / 'scripts' / 'app_platform_bench.py'),
+    'run-nebula',
+    '--binary',
+    os.environ['NEBULA_BINARY'],
+    '--workload',
+    'thin_host_bridge_roundtrip',
+    '--workload',
+    'thin_host_payload_command_roundtrip',
+    '--workload',
+    'state_sync_latency',
+    '--json-out',
+    str(out_path),
+], capture_output=True, text=True, check=False)
+print(result.stdout, end='')
+print(result.stderr, end='')
+if result.returncode != 0:
+    raise SystemExit(result.returncode)
+payload = json.loads(out_path.read_text(encoding='utf-8'))
+if payload.get('kind') != 'app_platform_nebula_results':
+    raise SystemExit(f'unexpected payload kind: {payload!r}')
+results = {item['workload']: item for item in payload.get('results', [])}
+for workload in ('thin_host_bridge_roundtrip', 'thin_host_payload_command_roundtrip', 'state_sync_latency'):
+    if workload not in results:
+        raise SystemExit(f'missing workload result: {payload!r}')
+    item = results[workload]
+    if item.get('status') != 'ok':
+        raise SystemExit(f'workload did not run successfully: {item!r}')
+    metrics = item.get('metrics', {})
+    if 'mean_ms' not in metrics or 'throughput_ops_s' not in metrics:
+        raise SystemExit(f'workload metrics missing expected fields: {item!r}')
+print('app-platform-nebula-thin-host-bench-ok')
+PY
+"""
 expect_rc = 0
 expect_stdout_contains = ["app-platform-nebula-thin-host-bench-ok"]

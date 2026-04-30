@@ -414,6 +414,22 @@ static bool extern_uses_hosted_const_ref_contract(const Function& fn) {
       "__nebula_ui_headless_dispatch_action_wire",
       "__nebula_ui_headless_dispatch_action_summary_wire",
       "__nebula_ui_typed_snapshot_text",
+      "__nebula_rt_json_get_string",
+      "__nebula_rt_json_get_int",
+      "__nebula_rt_json_get_bool",
+      "__nebula_rt_json_get_value",
+      "__nebula_rt_json_as_string",
+      "__nebula_rt_json_as_int",
+      "__nebula_rt_json_as_bool",
+      "__nebula_rt_json_array_len",
+      "__nebula_rt_json_array_get",
+      "__nebula_thin_host_generated_command_kind",
+      "__nebula_thin_host_generated_command_correlation_id",
+      "__nebula_thin_host_generated_command_state_revision",
+      "__nebula_thin_host_generated_command_payload",
+      "__nebula_thin_host_generated_command_payload_string",
+      "__nebula_thin_host_generated_command_payload_int",
+      "__nebula_thin_host_generated_command_payload_bool",
   };
   return kConstRefExterns.contains(fn.name);
 }

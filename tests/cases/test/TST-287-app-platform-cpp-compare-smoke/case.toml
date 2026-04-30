@@ -28,6 +28,8 @@ nebula = subprocess.run([
     'service_json_db_crud',
     '--workload',
     'thin_host_bridge_roundtrip',
+    '--workload',
+    'thin_host_payload_command_roundtrip',
     '--json-out',
     str(nebula_out),
 ], capture_output=True, text=True, check=False)
@@ -46,6 +48,8 @@ reference = subprocess.run([
     'service_json_db_crud',
     '--workload',
     'thin_host_bridge_roundtrip',
+    '--workload',
+    'thin_host_payload_command_roundtrip',
     '--json-out',
     str(cpp_out),
 ], capture_output=True, text=True, check=False)
@@ -82,7 +86,7 @@ if not toolchains.get('nebula', {}).get('clang++', {}).get('available'):
 if not toolchains.get('reference', {}).get('clang++', {}).get('available'):
     raise SystemExit(f'comparison payload lost reference toolchain details: {payload!r}')
 results = {item['workload']: item for item in payload.get('results', [])}
-for workload in ('service_json_db_crud', 'thin_host_bridge_roundtrip'):
+for workload in ('service_json_db_crud', 'thin_host_bridge_roundtrip', 'thin_host_payload_command_roundtrip'):
     item = results.get(workload)
     if not item or item.get('status') != 'ok':
         raise SystemExit(f'missing successful comparison result for {workload}: {payload!r}')

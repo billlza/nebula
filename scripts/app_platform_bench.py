@@ -20,6 +20,7 @@ EXPECTED_WORKLOAD_IDS = [
     "cli_cold_start",
     "service_json_db_crud",
     "thin_host_bridge_roundtrip",
+    "thin_host_payload_command_roundtrip",
     "state_sync_latency",
     "resident_memory",
     "nebula_ui_startup",

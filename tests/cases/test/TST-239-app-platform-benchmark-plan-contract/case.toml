@@ -35,6 +35,7 @@ expected = [
     'cli_cold_start',
     'service_json_db_crud',
     'thin_host_bridge_roundtrip',
+    'thin_host_payload_command_roundtrip',
     'state_sync_latency',
     'resident_memory',
     'nebula_ui_startup',
@@ -69,6 +70,12 @@ if workloads['thin_host_bridge_roundtrip'].get('reference_stacks') != ['cpp']:
     raise SystemExit(f'missing cpp thin_host_bridge_roundtrip reference stack: {workloads!r}')
 if workloads['thin_host_bridge_roundtrip'].get('reference_projects', {}).get('cpp') != 'benchmarks/app_platform/reference/cpp/thin_host_bridge_roundtrip':
     raise SystemExit(f'missing cpp thin_host_bridge_roundtrip reference project: {workloads!r}')
+if workloads['thin_host_payload_command_roundtrip'].get('nebula_project') != 'benchmarks/app_platform/nebula/thin_host_payload_command_roundtrip':
+    raise SystemExit(f'missing runnable thin_host_payload_command_roundtrip project: {workloads!r}')
+if workloads['thin_host_payload_command_roundtrip'].get('reference_stacks') != ['cpp']:
+    raise SystemExit(f'missing cpp thin_host_payload_command_roundtrip reference stack: {workloads!r}')
+if workloads['thin_host_payload_command_roundtrip'].get('reference_projects', {}).get('cpp') != 'benchmarks/app_platform/reference/cpp/thin_host_payload_command_roundtrip':
+    raise SystemExit(f'missing cpp thin_host_payload_command_roundtrip reference project: {workloads!r}')
 if workloads['state_sync_latency'].get('nebula_project') != 'benchmarks/app_platform/nebula/state_sync_latency':
     raise SystemExit(f'missing runnable state_sync_latency project: {workloads!r}')
 if workloads['state_sync_latency'].get('reference_stacks') != ['cpp']:

@@ -1,0 +1,11 @@
+schema_version = 1
+
+[package]
+name = "app-platform-thin-host-payload-command-roundtrip"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+bridge = { path = "../../../../official/nebula-thin-host-bridge" }
+counter = { path = "../../../../examples/thin_host_app_core/packages/counter_core" }
