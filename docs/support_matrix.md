@@ -22,6 +22,11 @@ Installed GA surface:
 - release documentation
 - optional Linux backend SDK (`nebula-service`, `nebula-observe`, backend docs/examples) when explicitly installed
 
+The installed component profile is documented in `docs/toolchain_profile.md`: Nebula ships the
+compiler/CLI, bundled standard-library sources, runtime headers, hosted-registry helpers, and docs,
+while host C++ compilers, `git`, Python registry helpers, and CMake source-build tooling remain
+external prerequisites.
+
 Backend service GA target:
 
 - Production services: Linux x86_64

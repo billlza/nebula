@@ -191,6 +191,7 @@ def package_backend_sdk(repo_root: Path, version: str, output_dir: Path) -> Path
         "README.md",
         "docs/service_profile.md",
         "docs/support_matrix.md",
+        "docs/toolchain_profile.md",
         "docs/reverse_proxy_deployment.md",
         "docs/backend_operator_guide.md",
         "docs/official_package_tiering.md",

@@ -3,6 +3,9 @@
 Nebula 1.0 GA covers the compiler, CLI, package workflow, bundled `std`, runtime headers, release
 documentation, and the optional Linux backend SDK asset.
 
+For the Rustup-style component view of what is installed and what remains an external prerequisite,
+see `docs/toolchain_profile.md`.
+
 The binary archives, install scripts, and Homebrew formula do **not** install:
 
 - a host C++23 compiler
@@ -105,6 +108,7 @@ Typical uninstall targets are:
 - `include/runtime/*`
 - `share/nebula/registry/*`
 - `share/nebula/std/*`
+- `share/doc/nebula/toolchain_profile.md`
 - `share/nebula/sdk/backend/*` when the backend SDK was installed
 - `share/doc/nebula/*`
 - `share/nebula/install-manifest.txt`
