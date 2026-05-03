@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "b6368d27473c2a4e"
-source_fingerprint = "1babdc1294206944"
-integrity_fingerprint = "c72f2f4620c1a9f8"
+source_fingerprint = "6e1d77ff2705dfa9"
+integrity_fingerprint = "c361755be6befae2"
 is_root = 1
 dependencies = ["ui=nebula-ui"]
 
@@ -31,8 +31,8 @@ source_kind = "path"
 source_hint = "../../../../official/nebula-ui"
 resolved_rev = ""
 manifest_hash = "7cf960897430a38e"
-source_fingerprint = "ab51d55a1f3f01d1"
-integrity_fingerprint = "86e7d8a59c8d59ed"
+source_fingerprint = "2423a4cb44dd1241"
+integrity_fingerprint = "b7318197c79ac148"
 is_root = 0
 native_cxx_sources = ["native/headless_bridge.cpp"]
 dependencies = []

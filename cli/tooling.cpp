@@ -3550,7 +3550,9 @@ void collect_async_expr_facts(const Expr& expr, AsyncFunctionFacts& facts) {
 std::vector<std::string> carried_values_after_await(const AsyncFunctionFacts& facts,
                                                     const nebula::frontend::Span& await_span) {
   std::set<std::string> carried;
-  for (const auto& [name, decl_span] : facts.declarations) {
+  for (const auto& declaration : facts.declarations) {
+    const std::string& name = declaration.first;
+    const auto& decl_span = declaration.second;
     if (decl_span.start.offset >= await_span.start.offset) continue;
     const bool referenced_after =
         std::any_of(facts.references.begin(), facts.references.end(), [&](const auto& ref) {

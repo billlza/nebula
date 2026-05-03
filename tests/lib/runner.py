@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -17,12 +19,30 @@ class RunnerConfig:
         self.timeout_sec = timeout_sec
 
 
+def _python_shim_dir(sandbox: Path) -> Path:
+    shim_dir = sandbox / ".nebula-test-python"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    python = Path(sys.executable).resolve()
+    if os.name == "nt":
+        for name in ("python.cmd", "python3.cmd"):
+            (shim_dir / name).write_text(f'@"{python}" %*\r\n', encoding="utf-8")
+        return shim_dir
+
+    for name in ("python", "python3"):
+        target = shim_dir / name
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(python)
+    return shim_dir
+
+
 def run_cases(cases: list[dict[str, Any]], cfg: RunnerConfig) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
     for case in cases:
         t0 = time.perf_counter()
         sandbox = make_case_sandbox(case["id"], cfg.tests_root)
+        python_shim = _python_shim_dir(sandbox)
         status = "passed"
         fail_reason = ""
         matched_assertions = 0
@@ -44,6 +64,9 @@ def run_cases(cases: list[dict[str, Any]], cfg: RunnerConfig) -> list[dict[str, 
                         "NEBULA_BINARY": str(cfg.binary),
                         "NEBULA_REPO_ROOT": str(cfg.tests_root.parent),
                         "NEBULA_TESTS_ROOT": str(cfg.tests_root),
+                        "NEBULA_TEST_PYTHON": sys.executable,
+                        "PYTHON": sys.executable,
+                        "PATH": os.pathsep.join([str(python_shim), os.environ.get("PATH", "")]),
                     },
                 )
                 all_output_parts.append(

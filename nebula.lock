@@ -1,21 +1,21 @@
 schema_version = 2
-root_package = "release_control_plane_workspace"
+root_package = "nebula"
 root_manifest_hash = ""
 toolchain_schema_version = 1
 cache_schema_version = 2
 
 [[package]]
-name = "release_control_plane_workspace"
+name = "nebula"
 version = "0.1.0"
-root = "examples"
+root = "."
 manifest = ""
-entry = "release_control_plane_workspace"
+entry = "nebula.lock"
 src_dir = "."
 source_kind = "implicit"
 source_hint = ""
 resolved_rev = ""
-manifest_hash = "fddfe00a327c7c77"
-source_fingerprint = "13a03137f8273ad8"
-integrity_fingerprint = "5448424247b6f599"
+manifest_hash = "1d457d71c3cf1a0c"
+source_fingerprint = "ce7ed47729a11cdf"
+integrity_fingerprint = "723146b1d3c470c5"
 is_root = 1
 dependencies = []

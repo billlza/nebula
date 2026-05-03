@@ -3095,7 +3095,19 @@ Future<Result<void, std::string>> client_write_request_async(TlsClientStream sel
                                                           end_stream,
                                                           "tls stream is closed");
   if (result_is_err(wrote_headers)) {
-    co_return result_err_variant_move(wrote_headers);
+    std::string message =
+        result_err_move(wrote_headers);
+    if (end_stream && socket_error_indicates_peer_drop(self.state->last_socket_error)) {
+      append_http2_phase_event(self.state->http2,
+                               "request_write_observed",
+                               "outbound",
+                               "HEADERS",
+                               stream_id,
+                               "peer_close_race",
+                               "peer_closed_after_end_stream_headers");
+      co_return nebula::rt::ok_void_result();
+    }
+    co_return nebula::rt::err_void_result(std::move(message));
   }
   append_http2_phase_event(self.state->http2,
                            "stream_open",
@@ -3259,18 +3271,6 @@ Future<Result<HttpClientResponse, std::string>> client_read_response_async(
         co_return err_result<HttpClientResponse>("HTTP/2 response body exceeds configured limit");
       }
       body.append(frame.payload);
-      auto conn_window = co_await write_window_update_async(
-          self.state, self.state->http2, 0, static_cast<std::uint32_t>(frame.payload.size()), "tls stream is closed");
-      if (result_is_err(conn_window)) {
-        co_return err_result<HttpClientResponse>(
-            result_err_move(conn_window));
-      }
-      auto stream_window = co_await write_window_update_async(
-          self.state, self.state->http2, active_stream_id, static_cast<std::uint32_t>(frame.payload.size()), "tls stream is closed");
-      if (result_is_err(stream_window)) {
-        co_return err_result<HttpClientResponse>(
-            result_err_move(stream_window));
-      }
       if ((frame.flags & kFlagEndStream) != 0) {
         append_http2_phase_event(self.state->http2,
                                  "stream_closed",
@@ -3283,6 +3283,18 @@ Future<Result<HttpClientResponse, std::string>> client_read_response_async(
         self.state->http2.active_request_method.reset();
         self.state->http2.peer_stream_window = self.state->http2.peer_initial_stream_window;
         co_return build_response(response_head, std::move(body));
+      }
+      auto conn_window = co_await write_window_update_async(
+          self.state, self.state->http2, 0, static_cast<std::uint32_t>(frame.payload.size()), "tls stream is closed");
+      if (result_is_err(conn_window)) {
+        co_return err_result<HttpClientResponse>(
+            result_err_move(conn_window));
+      }
+      auto stream_window = co_await write_window_update_async(
+          self.state, self.state->http2, active_stream_id, static_cast<std::uint32_t>(frame.payload.size()), "tls stream is closed");
+      if (result_is_err(stream_window)) {
+        co_return err_result<HttpClientResponse>(
+            result_err_move(stream_window));
       }
       continue;
     }
@@ -3399,6 +3411,10 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
         co_return err_result<HttpRequest>("HTTP/2 request body exceeds configured limit");
       }
       body.append(current.payload);
+      end_stream = (current.flags & kFlagEndStream) != 0;
+      if (end_stream) {
+        break;
+      }
       auto conn_window = co_await write_window_update_async(
           self.state, self.state->http2, 0, static_cast<std::uint32_t>(current.payload.size()), "tls stream is closed");
       if (result_is_err(conn_window)) {
@@ -3411,7 +3427,6 @@ Future<Result<HttpRequest, std::string>> server_read_request_async(TlsServerStre
         co_return err_result<HttpRequest>(
             result_err_move(stream_window));
       }
-      end_stream = (current.flags & kFlagEndStream) != 0;
     }
 
     auto built = build_request(request_head, std::move(body));

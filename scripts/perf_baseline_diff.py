@@ -704,7 +704,7 @@ def main() -> int:
 
     report: dict[str, Any] = {
         "schema_version": 1,
-        "generated_at_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "current": str(Path(args.current)),
         "baseline": str(Path(args.baseline)),
         "thresholds": {

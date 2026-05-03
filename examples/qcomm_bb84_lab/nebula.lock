@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "8b88b6a597201f74"
-source_fingerprint = "b917a532a613dc8d"
-integrity_fingerprint = "60d4bb5b93b47b6f"
+source_fingerprint = "a496512d919bd067"
+integrity_fingerprint = "a286dd7fe0e8acb"
 is_root = 1
 dependencies = ["qcomm=nebula-qcomm-sim"]
 
@@ -31,8 +31,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-crypto"
 resolved_rev = ""
 manifest_hash = "c93977753e56003f"
-source_fingerprint = "a3ded00ec19cc3fd"
-integrity_fingerprint = "7da8f29cbb2d9b89"
+source_fingerprint = "9169dd9df6c23fd2"
+integrity_fingerprint = "6175be24e42f4439"
 is_root = 0
 native_c_sources = ["native/blake3_all.c", "native/mbedtls_private_chachapoly.c", "native/oqs_primitives.c", "native/vendor/oqs_mini/compat.c", "native/vendor/oqs_mini/mldsa65_ref/ntt.c", "native/vendor/oqs_mini/mldsa65_ref/packing.c", "native/vendor/oqs_mini/mldsa65_ref/poly.c", "native/vendor/oqs_mini/mldsa65_ref/polyvec.c", "native/vendor/oqs_mini/mldsa65_ref/reduce.c", "native/vendor/oqs_mini/mldsa65_ref/rounding.c", "native/vendor/oqs_mini/mldsa65_ref/sign.c", "native/vendor/oqs_mini/mldsa65_ref/symmetric-shake.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/compress.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/debug.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/indcpa.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/kem.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly_k.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/sampling.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/verify.c", "native/vendor/oqs_mini/pqclean_shims/fips202.c", "native/vendor/oqs_mini/sha3/sha3.c", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits/KeccakP-1600-opt64.c", "native/vendor/oqs_mini/sha3/xkcp_sha3.c"]
 native_cxx_sources = ["native/bridge.cpp"]
@@ -50,8 +50,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-pqc-protocols"
 resolved_rev = ""
 manifest_hash = "863e088e1a08c455"
-source_fingerprint = "b08bd8718313abd"
-integrity_fingerprint = "a4c1b73ca78a5f2c"
+source_fingerprint = "ecded8f6d5d9cd3d"
+integrity_fingerprint = "47727eb36ac8c7b3"
 is_root = 0
 dependencies = ["crypto=nebula-crypto"]
 
@@ -66,8 +66,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-qcomm-sim"
 resolved_rev = ""
 manifest_hash = "cefe92a03e24ae5b"
-source_fingerprint = "b3fddbf30c28fd12"
-integrity_fingerprint = "e4307e3847753ecd"
+source_fingerprint = "ee1c79e5b1d3b5b"
+integrity_fingerprint = "3b8e3a38cec4e28e"
 is_root = 0
 native_cxx_sources = ["native/bridge.cpp"]
 dependencies = ["crypto=nebula-crypto", "pqc=nebula-pqc-protocols"]

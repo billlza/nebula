@@ -18,7 +18,7 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "cxx=${CXX:-clang++} && \"$cxx\" -std=c++23 work/cabi_static/consumer.cpp generated_cpp/libabi-demo.a -Igenerated_cpp -o work/cabi_static/consumer"
+run = "cxx=${CXX:-clang++} && stdflag=$($cxx -std=c++23 -x c++ -fsyntax-only /dev/null >/dev/null 2>&1 && printf '%s' -std=c++23 || printf '%s' -std=c++2b) && \"$cxx\" \"$stdflag\" work/cabi_static/consumer.cpp generated_cpp/libabi-demo.a -Igenerated_cpp -o work/cabi_static/consumer"
 expect_rc = 0
 
 [[steps]]

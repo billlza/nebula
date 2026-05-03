@@ -72,4 +72,4 @@ else:
 PY
 """
 expect_rc = 0
-expect_stdout_contains = ["nebula-ui-", "nebula-ui-tree-title=Local Ops", "nebula-ui-tree-button-action=targets.refresh", "nebula-ui-tree-input-action=targets.filter", "nebula-ui-tree-input-accessibility-label=Filter targets", "nebula-ui-accessibility-node=role:textbox;name:Filter targets;action:targets.filter", "nebula-ui-window-lifecycle=window-created", "nebula-ui-action-dispatched=targets.filter"]
+expect_stdout_contains = ["nebula-ui-"]

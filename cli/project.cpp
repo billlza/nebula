@@ -512,12 +512,18 @@ std::vector<fs::path> collect_package_source_files(const LockedPackage& pkg,
 std::string package_source_fingerprint(const LockedPackage& pkg, const PackageManifest& manifest) {
   std::ostringstream os;
   for (const auto& file : collect_package_source_files(pkg, manifest)) {
+    std::error_code rel_ec;
+    fs::path fingerprint_path = fs::relative(file, pkg.root, rel_ec);
+    if (rel_ec || fingerprint_path.empty()) {
+      rel_ec.clear();
+      fingerprint_path = file.filename();
+    }
     std::string text;
     if (!read_text_file(file, text)) {
-      os << "missing=" << file.generic_string() << "\n";
+      os << "missing=" << fingerprint_path.generic_string() << "\n";
       continue;
     }
-    os << "path=" << file.generic_string() << "\n";
+    os << "path=" << fingerprint_path.generic_string() << "\n";
     os << "hash=" << stable_hash_string(text) << "\n";
   }
   return stable_hash_string(os.str());

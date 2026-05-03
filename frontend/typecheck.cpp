@@ -2018,8 +2018,7 @@ private:
   }
 
   TUiNode typecheck_ui_node(const UiNode& node) {
-    TUiNode out;
-    out.span = node.span;
+    std::optional<TUiNode> out;
     std::visit(
         [&](auto&& n) {
           using N = std::decay_t<decltype(n)>;
@@ -2036,7 +2035,7 @@ private:
             view.props.reserve(n.props.size());
             for (const auto& prop : n.props) view.props.push_back(typecheck_ui_prop(prop));
             view.children = typecheck_ui_nodes(n.children);
-            out.node = std::move(view);
+            out = TUiNode{node.span, std::move(view)};
           } else if constexpr (std::is_same_v<N, UiNode::If>) {
             TUiNode::If if_node;
             if_node.cond = typecheck_expr(*n.cond);
@@ -2045,7 +2044,7 @@ private:
               error("NBL-UI001", "ui if condition must be Bool", n.cond->span);
             }
             if_node.then_children = typecheck_ui_nodes(n.then_children);
-            out.node = std::move(if_node);
+            out = TUiNode{node.span, std::move(if_node)};
           } else if constexpr (std::is_same_v<N, UiNode::For>) {
             TUiNode::For for_node;
             for_node.var = n.var;
@@ -2055,11 +2054,11 @@ private:
             for_node.binding_id = declare_var(for_node.var, for_node.var_ty, n.var_span);
             for_node.body = typecheck_ui_nodes(n.body);
             pop_scope();
-            out.node = std::move(for_node);
+            out = TUiNode{node.span, std::move(for_node)};
           }
         },
         node.node);
-    return out;
+    return std::move(*out);
   }
 
   TUi typecheck_ui(const Ui& ui) {

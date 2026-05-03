@@ -18,7 +18,7 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "cxx=${CXX:-clang++} && python3 - <<'PY'\nfrom pathlib import Path\nargs = Path('work/cabi_shared/link_args.txt').read_text(encoding='utf-8').splitlines()\ncmd = [__import__('os').environ.get('CXX', 'clang++'), '-std=c++23', 'work/cabi_shared/consumer.cpp', '-Igenerated_cpp', *args, '-o', 'work/cabi_shared/consumer_shared']\nimport subprocess\nraise SystemExit(subprocess.run(cmd, check=False).returncode)\nPY"
+run = "cxx=${CXX:-clang++} && python3 - <<'PY'\nfrom pathlib import Path\nimport os\nimport subprocess\nargs = Path('work/cabi_shared/link_args.txt').read_text(encoding='utf-8').splitlines()\ncxx = os.environ.get('CXX', 'clang++')\nfor flag in ('-std=c++23', '-std=c++2b'):\n    if subprocess.run([cxx, flag, '-x', 'c++', '-fsyntax-only', os.devnull], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:\n        stdflag = flag\n        break\nelse:\n    stdflag = '-std=c++23'\ncmd = [cxx, stdflag, 'work/cabi_shared/consumer.cpp', '-Igenerated_cpp', *args, '-o', 'work/cabi_shared/consumer_shared']\nraise SystemExit(subprocess.run(cmd, check=False).returncode)\nPY"
 expect_rc = 0
 
 [[steps]]

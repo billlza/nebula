@@ -142,6 +142,19 @@ def run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
 
 
+def cxx_standard_flag(clangxx: str) -> str:
+    for flag in ("-std=c++23", "-std=c++2b"):
+        probe = subprocess.run(
+            [clangxx, flag, "-x", "c++", "-fsyntax-only", os.devnull],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return flag
+    return "-std=c++23"
+
+
 def benchmark_build_root() -> Path:
     root = repo_root() / "build" / "app_platform_bench"
     root.mkdir(parents=True, exist_ok=True)
@@ -722,7 +735,7 @@ def run_cpp_reference_workload(workload: dict[str, Any], build_root: Path) -> di
     link_flags = ["-lsqlite3"] if workload["id"] == "service_json_db_crud" else []
     compile_cmd = [
         clang,
-        "-std=c++23",
+        cxx_standard_flag(clang),
         "-O2",
         "-DNDEBUG",
         "-Wall",

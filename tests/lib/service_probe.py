@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
 import selectors
 import subprocess
 import time
@@ -53,7 +55,7 @@ def wait_for_observe_event(proc: subprocess.Popen[str],
         raise ValueError("wait_for_observe_event requires proc.stderr=PIPE")
     selector = selectors.DefaultSelector()
     selector.register(proc.stderr, selectors.EVENT_READ)
-    deadline = time.time() + timeout
+    deadline = time.time() + service_start_timeout(timeout)
     try:
         while time.time() < deadline:
             if proc.poll() is not None:
@@ -85,7 +87,7 @@ def wait_for_observe_event_in_file(log_path: Path,
                                    event_name: str,
                                    timeout: float,
                                    proc: subprocess.Popen[str] | None = None) -> dict[str, Any]:
-    deadline = time.time() + timeout
+    deadline = time.time() + service_start_timeout(timeout)
     offset = 0
     while time.time() < deadline:
         if proc is not None and proc.poll() is not None and not log_path.exists():
@@ -102,3 +104,15 @@ def wait_for_observe_event_in_file(log_path: Path,
     if proc is not None and proc.poll() is not None:
         raise SystemExit(f"process exited before {event_name} appeared: rc={proc.returncode}")
     raise SystemExit(f"timed out waiting for {event_name} in {log_path}")
+
+
+def service_start_timeout(requested: float) -> float:
+    override = os.environ.get("NEBULA_SERVICE_START_TIMEOUT")
+    if override:
+        try:
+            return max(requested, float(override))
+        except ValueError:
+            return requested
+    if platform.system() == "Linux":
+        return max(requested, 90.0)
+    return requested

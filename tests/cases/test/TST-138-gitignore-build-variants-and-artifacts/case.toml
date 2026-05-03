@@ -3,7 +3,7 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "git -C \"$NEBULA_REPO_ROOT\" check-ignore -v build-audit build-multi build-phase2 artifacts > work/gitignore-build-variants.out"
+run = "git -C \"$NEBULA_REPO_ROOT\" check-ignore -v build-audit/ build-multi/ build-phase2/ artifacts/ > work/gitignore-build-variants.out"
 expect_rc = 0
 
 [[steps]]

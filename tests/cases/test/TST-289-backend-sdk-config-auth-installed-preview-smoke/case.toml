@@ -41,7 +41,7 @@ for asset in sorted(root.glob("nebula-*.tar.gz")):
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     checksums.append(f"{h.hexdigest()}  {asset.name}")
-(root / "SHA256SUMS.txt").write_text("\\n".join(checksums) + "\\n", encoding="utf-8")
+(root / "SHA256SUMS.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
 
 install_root = root / "prefix"
 subprocess.run([
@@ -78,7 +78,7 @@ src_dir = "src"
 app_config = { installed = "nebula-config" }
 """, encoding="utf-8")
 secret_path = root / "installed-config.secret"
-secret_path.write_text("from-file\\n", encoding="utf-8")
+secret_path.write_text("from-file\n", encoding="utf-8")
 (config_project / "src" / "main.nb").write_text("""module main
 import app_config::config
 import std::json

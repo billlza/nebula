@@ -3752,6 +3752,30 @@ static std::string default_cxx() {
   return "clang++";
 }
 
+static const char* null_device_path() {
+#if defined(_WIN32)
+  return "NUL";
+#else
+  return "/dev/null";
+#endif
+}
+
+static std::string host_cxx_standard_flag() {
+  const char* override_flag = std::getenv("NEBULA_CXX_STD_FLAG");
+  if (override_flag != nullptr && *override_flag != '\0') return override_flag;
+
+  static const std::string detected = [] {
+    const std::string cxx = default_cxx();
+    for (const char* flag : {"-std=c++23", "-std=c++2b"}) {
+      int rc = 1;
+      (void)run_capture({cxx, flag, "-x", "c++", "-fsyntax-only", null_device_path()}, &rc);
+      if (rc == 0) return std::string(flag);
+    }
+    return std::string("-std=c++23");
+  }();
+  return detected;
+}
+
 static std::vector<std::string> executable_probe_candidates(std::string_view command) {
   std::vector<std::string> out;
   out.emplace_back(command);
@@ -3881,7 +3905,8 @@ static const char* shared_library_link_flag() {
 
 static std::vector<std::string> compile_flags_for(const CliOptions& opt, CompileFlavor flavor) {
   if (flavor == CompileFlavor::Test) {
-    return {"-O1", "-g", "-fno-omit-frame-pointer", "-fsanitize=address,undefined"};
+    return {"-O1", "-g", "-fno-omit-frame-pointer", "-fsanitize=address,undefined",
+            "-fno-sanitize=function"};
   }
   if (flavor == CompileFlavor::Bench) {
     return {"-O2", "-DNDEBUG"};
@@ -3890,6 +3915,14 @@ static std::vector<std::string> compile_flags_for(const CliOptions& opt, Compile
     return {"-O3", "-DNDEBUG"};
   }
   return {"-O0", "-g3"};
+}
+
+static void append_test_executable_link_flags(std::vector<std::string>& cmd,
+                                              CompileFlavor flavor,
+                                              BuildArtifactKind artifact_kind) {
+  (void)cmd;
+  (void)flavor;
+  (void)artifact_kind;
 }
 
 int compile_cpp(const CliOptions& opt,
@@ -3936,9 +3969,10 @@ int compile_cpp(const CliOptions& opt,
   if (!needs_object_pipeline) {
     std::vector<std::string> cmd;
     cmd.push_back(default_cxx());
-    cmd.push_back("-std=c++23");
+    cmd.push_back(host_cxx_standard_flag());
     append_common_compile_args(cmd);
     cmd.push_back(cpp_path.string());
+    append_test_executable_link_flags(cmd, flavor, artifact_kind);
 #if defined(_WIN32)
     cmd.push_back("-lws2_32");
 #endif
@@ -3976,7 +4010,7 @@ int compile_cpp(const CliOptions& opt,
       compile_cmd.push_back("-x");
       compile_cmd.push_back("assembler-with-cpp");
     } else {
-      compile_cmd.push_back("-std=c++23");
+      compile_cmd.push_back(host_cxx_standard_flag());
     }
     if (sources[i].native_input != nullptr) {
       append_source_compile_args(compile_cmd, *sources[i].native_input);
@@ -4014,6 +4048,7 @@ int compile_cpp(const CliOptions& opt,
   }
   for (const auto& flag : flags) cmd.push_back(flag);
   for (const auto& obj : objects) cmd.push_back(obj.string());
+  append_test_executable_link_flags(cmd, flavor, artifact_kind);
 #if defined(_WIN32)
   cmd.push_back("-lws2_32");
 #endif

@@ -265,6 +265,19 @@ def run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
 
 
+def cxx_standard_flag(clangxx: str) -> str:
+    for flag in ("-std=c++23", "-std=c++2b"):
+        probe = subprocess.run(
+            [clangxx, flag, "-x", "c++", "-fsyntax-only", os.devnull],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return flag
+    return "-std=c++23"
+
+
 def path_if_exists(executable: str) -> str:
     return shutil.which(executable) or ""
 
@@ -389,7 +402,7 @@ def compile_cpp_reference(source_path: Path, out_path: Path, needs_crypto_suppor
                 str((repo_root() / "official" / "nebula-crypto" / "native" / "include").resolve()),
             ]
         )
-    cmd = [clangxx, "-std=c++23", "-O2", "-DNDEBUG", *include_flags, str(source_path), "-o", str(out_path)]
+    cmd = [clangxx, cxx_standard_flag(clangxx), "-O2", "-DNDEBUG", *include_flags, str(source_path), "-o", str(out_path)]
     if needs_crypto_support and lib_path is not None:
         cmd.append(str(lib_path))
     return run_command(cmd, repo_root())

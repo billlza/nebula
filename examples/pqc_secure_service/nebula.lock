@@ -15,8 +15,8 @@ source_kind = "root"
 source_hint = ""
 resolved_rev = ""
 manifest_hash = "214be7446ab8cd62"
-source_fingerprint = "37641799184b80c6"
-integrity_fingerprint = "c053798072f6bbf8"
+source_fingerprint = "174a645fd0833dde"
+integrity_fingerprint = "a2fc4ad5b2a52391"
 is_root = 1
 dependencies = ["crypto=nebula-crypto", "pqc=nebula-pqc-protocols", "service=nebula-service"]
 
@@ -31,8 +31,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-crypto"
 resolved_rev = ""
 manifest_hash = "c93977753e56003f"
-source_fingerprint = "a3ded00ec19cc3fd"
-integrity_fingerprint = "7da8f29cbb2d9b89"
+source_fingerprint = "9169dd9df6c23fd2"
+integrity_fingerprint = "6175be24e42f4439"
 is_root = 0
 native_c_sources = ["native/blake3_all.c", "native/mbedtls_private_chachapoly.c", "native/oqs_primitives.c", "native/vendor/oqs_mini/compat.c", "native/vendor/oqs_mini/mldsa65_ref/ntt.c", "native/vendor/oqs_mini/mldsa65_ref/packing.c", "native/vendor/oqs_mini/mldsa65_ref/poly.c", "native/vendor/oqs_mini/mldsa65_ref/polyvec.c", "native/vendor/oqs_mini/mldsa65_ref/reduce.c", "native/vendor/oqs_mini/mldsa65_ref/rounding.c", "native/vendor/oqs_mini/mldsa65_ref/sign.c", "native/vendor/oqs_mini/mldsa65_ref/symmetric-shake.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/compress.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/debug.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/indcpa.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/kem.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/poly_k.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/sampling.c", "native/vendor/oqs_mini/mlkem-native_ml-kem-768_ref/mlkem/verify.c", "native/vendor/oqs_mini/pqclean_shims/fips202.c", "native/vendor/oqs_mini/sha3/sha3.c", "native/vendor/oqs_mini/sha3/xkcp_low/KeccakP-1600/plain-64bits/KeccakP-1600-opt64.c", "native/vendor/oqs_mini/sha3/xkcp_sha3.c"]
 native_cxx_sources = ["native/bridge.cpp"]
@@ -50,8 +50,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-observe"
 resolved_rev = ""
 manifest_hash = "9a8a10871f57579b"
-source_fingerprint = "c61413f4bbd8e08c"
-integrity_fingerprint = "fe583625075a78d"
+source_fingerprint = "a39e9bb4a998b816"
+integrity_fingerprint = "e08f20e1fbc0d8cc"
 is_root = 0
 dependencies = []
 
@@ -66,8 +66,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-pqc-protocols"
 resolved_rev = ""
 manifest_hash = "863e088e1a08c455"
-source_fingerprint = "f5e7a71c78d4ec2"
-integrity_fingerprint = "5e2308357be3b10e"
+source_fingerprint = "ecded8f6d5d9cd3d"
+integrity_fingerprint = "47727eb36ac8c7b3"
 is_root = 0
 dependencies = ["crypto=nebula-crypto"]
 
@@ -82,8 +82,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-service"
 resolved_rev = ""
 manifest_hash = "b21197fb95eca918"
-source_fingerprint = "1eba3ee904a3f49d"
-integrity_fingerprint = "dab33c10722cea02"
+source_fingerprint = "35e4c68e4dd75f28"
+integrity_fingerprint = "6695c5ecf07f63c5"
 is_root = 0
 native_cxx_sources = ["native/bridge.cpp"]
 dependencies = ["observe=nebula-observe", "tlss=nebula-tls-server"]
@@ -99,8 +99,8 @@ source_kind = "path"
 source_hint = "../../official/nebula-tls"
 resolved_rev = ""
 manifest_hash = "cf5e009b92a643a0"
-source_fingerprint = "fd6aad54f9434f6b"
-integrity_fingerprint = "74638e2a70493dc"
+source_fingerprint = "8d2f089aef98c73f"
+integrity_fingerprint = "af8d299769e5aa86"
 is_root = 0
 native_c_sources = ["native/vendor/mbedtls/library/aes.c", "native/vendor/mbedtls/library/asn1parse.c", "native/vendor/mbedtls/library/asn1write.c", "native/vendor/mbedtls/library/base64.c", "native/vendor/mbedtls/library/bignum.c", "native/vendor/mbedtls/library/bignum_core.c", "native/vendor/mbedtls/library/bignum_mod.c", "native/vendor/mbedtls/library/bignum_mod_raw.c", "native/vendor/mbedtls/library/cipher.c", "native/vendor/mbedtls/library/cipher_wrap.c", "native/vendor/mbedtls/library/constant_time.c", "native/vendor/mbedtls/library/ctr_drbg.c", "native/vendor/mbedtls/library/debug.c", "native/vendor/mbedtls/library/ecdh.c", "native/vendor/mbedtls/library/ecdsa.c", "native/vendor/mbedtls/library/ecp.c", "native/vendor/mbedtls/library/ecp_curves.c", "native/vendor/mbedtls/library/ecp_curves_new.c", "native/vendor/mbedtls/library/entropy.c", "native/vendor/mbedtls/library/entropy_poll.c", "native/vendor/mbedtls/library/error.c", "native/vendor/mbedtls/library/gcm.c", "native/vendor/mbedtls/library/hkdf.c", "native/vendor/mbedtls/library/md.c", "native/vendor/mbedtls/library/oid.c", "native/vendor/mbedtls/library/pem.c", "native/vendor/mbedtls/library/pk.c", "native/vendor/mbedtls/library/pk_ecc.c", "native/vendor/mbedtls/library/pk_wrap.c", "native/vendor/mbedtls/library/pkparse.c", "native/vendor/mbedtls/library/platform.c", "native/vendor/mbedtls/library/platform_util.c", "native/vendor/mbedtls/library/psa_crypto.c", "native/vendor/mbedtls/library/psa_crypto_aead.c", "native/vendor/mbedtls/library/psa_crypto_cipher.c", "native/vendor/mbedtls/library/psa_crypto_client.c", "native/vendor/mbedtls/library/psa_crypto_driver_wrappers_no_static.c", "native/vendor/mbedtls/library/psa_crypto_ecp.c", "native/vendor/mbedtls/library/psa_crypto_ffdh.c", "native/vendor/mbedtls/library/psa_crypto_hash.c", "native/vendor/mbedtls/library/psa_crypto_mac.c", "native/vendor/mbedtls/library/psa_crypto_rsa.c", "native/vendor/mbedtls/library/psa_crypto_slot_management.c", "native/vendor/mbedtls/library/psa_crypto_storage.c", "native/vendor/mbedtls/library/psa_its_file.c", "native/vendor/mbedtls/library/psa_util.c", "native/vendor/mbedtls/library/rsa.c", "native/vendor/mbedtls/library/rsa_alt_helpers.c", "native/vendor/mbedtls/library/sha1.c", "native/vendor/mbedtls/library/sha256.c", "native/vendor/mbedtls/library/sha512.c", "native/vendor/mbedtls/library/ssl_cache.c", "native/vendor/mbedtls/library/ssl_ciphersuites.c", "native/vendor/mbedtls/library/ssl_client.c", "native/vendor/mbedtls/library/ssl_debug_helpers_generated.c", "native/vendor/mbedtls/library/ssl_msg.c", "native/vendor/mbedtls/library/ssl_ticket.c", "native/vendor/mbedtls/library/ssl_tls.c", "native/vendor/mbedtls/library/ssl_tls12_client.c", "native/vendor/mbedtls/library/ssl_tls12_server.c", "native/vendor/mbedtls/library/ssl_tls13_client.c", "native/vendor/mbedtls/library/ssl_tls13_generic.c", "native/vendor/mbedtls/library/ssl_tls13_keys.c", "native/vendor/mbedtls/library/ssl_tls13_server.c", "native/vendor/mbedtls/library/version_features.c", "native/vendor/mbedtls/library/x509.c", "native/vendor/mbedtls/library/x509_crt.c"]
 native_cxx_sources = ["native/bridge.cpp"]
@@ -119,7 +119,7 @@ source_kind = "path"
 source_hint = "../../official/nebula-tls-server"
 resolved_rev = ""
 manifest_hash = "b07b661615ab0ddc"
-source_fingerprint = "3950932094ce541f"
-integrity_fingerprint = "8f90c51dfa5d5c4b"
+source_fingerprint = "9bfc1309c07db163"
+integrity_fingerprint = "276577cc976e299c"
 is_root = 0
 dependencies = ["tls=nebula-tls"]

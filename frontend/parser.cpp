@@ -349,10 +349,7 @@ UiNode Parser::parse_ui_view_node() {
   view.props = std::move(props);
   view.children = std::move(children);
 
-  UiNode node;
-  node.span = make_span(start.span.start, end, start.span.source_path);
-  node.node = std::move(view);
-  return node;
+  return UiNode{make_span(start.span.start, end, start.span.source_path), std::move(view)};
 }
 
 UiNode Parser::parse_ui_if_node() {
@@ -364,12 +361,11 @@ UiNode Parser::parse_ui_if_node() {
   if_node.cond = std::move(cond);
   if_node.then_children = std::move(children);
 
-  UiNode node;
-  node.span = make_span(start.span.start,
-                        if_node.then_children.empty() ? start.span.end : if_node.then_children.back().span.end,
-                        start.span.source_path);
-  node.node = std::move(if_node);
-  return node;
+  return UiNode{
+      make_span(start.span.start,
+                if_node.then_children.empty() ? start.span.end : if_node.then_children.back().span.end,
+                start.span.source_path),
+      std::move(if_node)};
 }
 
 UiNode Parser::parse_ui_for_node() {
@@ -385,12 +381,11 @@ UiNode Parser::parse_ui_for_node() {
   for_node.iterable = std::move(iterable);
   for_node.body = std::move(children);
 
-  UiNode node;
-  node.span = make_span(start.span.start,
-                        for_node.body.empty() ? start.span.end : for_node.body.back().span.end,
-                        start.span.source_path);
-  node.node = std::move(for_node);
-  return node;
+  return UiNode{
+      make_span(start.span.start,
+                for_node.body.empty() ? start.span.end : for_node.body.back().span.end,
+                start.span.source_path),
+      std::move(for_node)};
 }
 
 UiNode Parser::parse_ui_node() {
