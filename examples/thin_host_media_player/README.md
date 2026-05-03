@@ -35,3 +35,15 @@ Non-goals:
 Torrent import is limited to legal media: public-domain, open-licensed, or operator-owned content.
 The host or an operator-approved sidecar owns any future network transport; Nebula validates policy
 and persists state/receipts.
+
+Feasibility gate:
+
+```bash
+python3 scripts/verify_thin_host_media_player_app.py --binary ./build/nebula
+```
+
+The verifier stages the preview bundle, builds the entry binary, launches default/phase1/rejection
+modes, then reuses the same receipt DB and Nebula-owned `media.db` for a restart rehydration probe.
+It checks app-local receipts, host snapshot readiness, runtime state, and media SQLite tables.
+Passing it means the validation app is launchable and recoverable as a preview shell; it still does
+not mean codec, renderer, torrent transport, notarization, or auto-update are GA.

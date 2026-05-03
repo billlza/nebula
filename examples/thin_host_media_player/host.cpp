@@ -108,6 +108,11 @@ std::vector<std::string> make_commands() {
         command_text("playback.set_audio_quality", "media-close-2", 1, value_payload("studio")),
     };
   }
+  if (mode != nullptr && std::string(mode) == "rehydration_probe") {
+    return {
+        bare_command_text("quit", "rehydrate-quit", 8),
+    };
+  }
   if (mode != nullptr && std::string(mode) == "boundary_rejections") {
     return {
         command_text("library.import_file", "boundary-file", 0, file_payload()),
@@ -220,7 +225,7 @@ std::string host_player_sidecar_manifest_text() {
          "\"torrent_adapter\":\"stub-progress-events\"}";
 }
 
-void host_player_end(std::string correlation_id, long long state_revision) {
+void host_player_end_impl(const std::string& correlation_id, long long state_revision) {
   const auto lifecycle = nebula::ui::adapter_preview::host_shell_lifecycle_summary(true);
   std::string error;
   if (!nebula::ui::adapter_preview::validate_lifecycle_order(lifecycle, &error)) {
@@ -234,4 +239,12 @@ void host_player_end(std::string correlation_id, long long state_revision) {
   std::cout << "thin-host-media-player-recovery-log=logs/thin-host-media-player.ndjson\n";
   std::cout << "thin-host-media-player-recovery-policy=manual-preview\n";
   std::cout << "thin-host-media-player-end renders=" << g_render_count << "\n";
+}
+
+void host_player_end(std::string correlation_id, long state_revision) {
+  host_player_end_impl(correlation_id, static_cast<long long>(state_revision));
+}
+
+void host_player_end(std::string correlation_id, long long state_revision) {
+  host_player_end_impl(correlation_id, state_revision);
 }

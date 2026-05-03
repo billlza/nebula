@@ -39,6 +39,11 @@ required = [
     "playback.set_audio_quality",
     "playback.set_video_quality",
     "playback.set_bitrate_policy",
+    "scripts/verify_thin_host_media_player_app.py",
+    "stages the bundle assets",
+    "restart rehydration probe",
+    "runtime state",
+    "does not claim a complete",
 ]
 missing = [item for item in required if item not in text]
 if missing:

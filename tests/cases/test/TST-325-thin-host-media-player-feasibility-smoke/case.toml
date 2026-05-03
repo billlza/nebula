@@ -1,0 +1,13 @@
+id = "TST-325-thin-host-media-player-feasibility-smoke"
+suite = "test"
+description = "thin-host media player stages, builds, launches, and persists app evidence across realistic preview modes"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 "$NEBULA_REPO_ROOT/scripts/verify_thin_host_media_player_app.py" \
+  --binary "$NEBULA_BINARY" \
+  --out-root work/thin_host_media_player_feasibility
+"""
+expect_rc = 0
+expect_stdout_contains = ["thin-host-media-player-feasibility-ok"]

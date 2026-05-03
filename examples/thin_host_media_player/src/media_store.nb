@@ -3,6 +3,60 @@ import db_sqlite::sqlite
 import std::json
 import std::result
 
+struct StoredMediaState {
+  library_count: Int,
+  import_queue_count: Int,
+  active_downloads: Int,
+  completed_downloads: Int,
+  audio_quality: String,
+  video_quality: String,
+  bitrate_policy: String,
+  last_action: String,
+  last_error: String,
+  transport_status: String,
+  selected_media_id: String,
+  selected_media_title: String,
+  playback_status: String,
+  playback_position_ms: Int,
+  download_progress_percent: Int,
+  sidecar_status: String,
+  recovery_recommendation: String,
+  revision: Int
+}
+
+struct StoredMediaCounts {
+  library_count: Int,
+  import_queue_count: Int,
+  active_downloads: Int,
+  completed_downloads: Int
+}
+
+struct StoredMediaSettings {
+  audio_quality: String,
+  video_quality: String,
+  bitrate_policy: String
+}
+
+struct StoredMediaActivity {
+  last_action: String,
+  last_error: String,
+  transport_status: String
+}
+
+struct StoredMediaSelection {
+  selected_media_id: String,
+  selected_media_title: String,
+  playback_status: String
+}
+
+struct StoredMediaProgress {
+  playback_position_ms: Int,
+  download_progress_percent: Int,
+  sidecar_status: String,
+  recovery_recommendation: String,
+  revision: Int
+}
+
 fn no_params() -> Json {
   return array_build(array_builder())
 }
@@ -53,6 +107,52 @@ fn recovery_params(recommendation: String, reason: String, revision: Int) -> Jso
   return array_build(array_push(builder2, int_value(revision)))
 }
 
+fn runtime_state_params_counts(state: StoredMediaState) -> JsonArrayBuilder {
+  let builder1 = text_param("current")
+  let builder2 = array_push(builder1, int_value(state.library_count))
+  let builder3 = array_push(builder2, int_value(state.import_queue_count))
+  let builder4 = array_push(builder3, int_value(state.active_downloads))
+  return array_push(builder4, int_value(state.completed_downloads))
+}
+
+fn runtime_state_params_settings(builder: JsonArrayBuilder, state: StoredMediaState) -> JsonArrayBuilder {
+  let builder1 = array_push(builder, string_value(state.audio_quality))
+  let builder2 = array_push(builder1, string_value(state.video_quality))
+  return array_push(builder2, string_value(state.bitrate_policy))
+}
+
+fn runtime_state_params_activity(builder: JsonArrayBuilder, state: StoredMediaState) -> JsonArrayBuilder {
+  let builder1 = array_push(builder, string_value(state.last_action))
+  let builder2 = array_push(builder1, string_value(state.last_error))
+  return array_push(builder2, string_value(state.transport_status))
+}
+
+fn runtime_state_params_base(state: StoredMediaState) -> JsonArrayBuilder {
+  let counts = runtime_state_params_counts(state)
+  let settings = runtime_state_params_settings(counts, state)
+  return runtime_state_params_activity(settings, state)
+}
+
+fn runtime_state_params_selection(builder: JsonArrayBuilder, state: StoredMediaState) -> JsonArrayBuilder {
+  let builder1 = array_push(builder, string_value(state.selected_media_id))
+  let builder2 = array_push(builder1, string_value(state.selected_media_title))
+  return array_push(builder2, string_value(state.playback_status))
+}
+
+fn runtime_state_params_tail(builder: JsonArrayBuilder, state: StoredMediaState) -> Json {
+  let builder1 = array_push(builder, int_value(state.playback_position_ms))
+  let builder2 = array_push(builder1, int_value(state.download_progress_percent))
+  let builder3 = array_push(builder2, string_value(state.sidecar_status))
+  let builder4 = array_push(builder3, string_value(state.recovery_recommendation))
+  return array_build(array_push(builder4, int_value(state.revision)))
+}
+
+fn runtime_state_params(state: StoredMediaState) -> Json {
+  let base = runtime_state_params_base(state)
+  let selection = runtime_state_params_selection(base, state)
+  return runtime_state_params_tail(selection, state)
+}
+
 fn create_library_table(conn: Connection) -> Result<Bool, String> {
   conn.execute0("CREATE TABLE IF NOT EXISTS media_library_items (media_id TEXT PRIMARY KEY, title TEXT NOT NULL, source_kind TEXT NOT NULL, source_hash TEXT NOT NULL, created_revision INTEGER NOT NULL)")?
   return Ok(true)
@@ -74,9 +174,15 @@ fn create_recovery_table(conn: Connection) -> Result<Bool, String> {
   return Ok(true)
 }
 
+fn create_runtime_state_table(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_runtime_state (state_key TEXT PRIMARY KEY, library_count INTEGER NOT NULL, import_queue_count INTEGER NOT NULL, active_downloads INTEGER NOT NULL, completed_downloads INTEGER NOT NULL, audio_quality TEXT NOT NULL, video_quality TEXT NOT NULL, bitrate_policy TEXT NOT NULL, last_action TEXT NOT NULL, last_error TEXT NOT NULL, transport_status TEXT NOT NULL, selected_media_id TEXT NOT NULL, selected_media_title TEXT NOT NULL, playback_status TEXT NOT NULL, playback_position_ms INTEGER NOT NULL, download_progress_percent INTEGER NOT NULL, sidecar_status TEXT NOT NULL, recovery_recommendation TEXT NOT NULL, state_revision INTEGER NOT NULL)")?
+  return Ok(true)
+}
+
 fn create_secondary_tables(conn: Connection) -> Result<Bool, String> {
   create_task_tables(conn)?
-  return create_recovery_table(conn)
+  create_recovery_table(conn)?
+  return create_runtime_state_table(conn)
 }
 
 fn create_primary_tables(conn: Connection) -> Result<Bool, String> {
@@ -140,4 +246,86 @@ fn record_recovery_diagnostic(path: String, recommendation: String, reason: Stri
                recovery_params(recommendation, reason, revision))?
   conn.close()?
   return Ok(true)
+}
+
+fn record_runtime_state(path: String, state: StoredMediaState) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_runtime_state(state_key, library_count, import_queue_count, active_downloads, completed_downloads, audio_quality, video_quality, bitrate_policy, last_action, last_error, transport_status, selected_media_id, selected_media_title, playback_status, playback_position_ms, download_progress_percent, sidecar_status, recovery_recommendation, state_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(state_key) DO UPDATE SET library_count=excluded.library_count, import_queue_count=excluded.import_queue_count, active_downloads=excluded.active_downloads, completed_downloads=excluded.completed_downloads, audio_quality=excluded.audio_quality, video_quality=excluded.video_quality, bitrate_policy=excluded.bitrate_policy, last_action=excluded.last_action, last_error=excluded.last_error, transport_status=excluded.transport_status, selected_media_id=excluded.selected_media_id, selected_media_title=excluded.selected_media_title, playback_status=excluded.playback_status, playback_position_ms=excluded.playback_position_ms, download_progress_percent=excluded.download_progress_percent, sidecar_status=excluded.sidecar_status, recovery_recommendation=excluded.recovery_recommendation, state_revision=excluded.state_revision",
+               runtime_state_params(state))?
+  conn.close()?
+  return Ok(true)
+}
+
+fn runtime_counts_from_row(row: Row) -> Result<StoredMediaCounts, String> {
+  return Ok(StoredMediaCounts(row.get_int_at(0)?,
+                              row.get_int_at(1)?,
+                              row.get_int_at(2)?,
+                              row.get_int_at(3)?))
+}
+
+fn runtime_settings_from_row(row: Row) -> Result<StoredMediaSettings, String> {
+  return Ok(StoredMediaSettings(row.get_string_at(4)?,
+                                row.get_string_at(5)?,
+                                row.get_string_at(6)?))
+}
+
+fn runtime_activity_from_row(row: Row) -> Result<StoredMediaActivity, String> {
+  return Ok(StoredMediaActivity(row.get_string_at(7)?,
+                                row.get_string_at(8)?,
+                                row.get_string_at(9)?))
+}
+
+fn runtime_selection_from_row(row: Row) -> Result<StoredMediaSelection, String> {
+  return Ok(StoredMediaSelection(row.get_string_at(10)?,
+                                 row.get_string_at(11)?,
+                                 row.get_string_at(12)?))
+}
+
+fn runtime_progress_from_row(row: Row) -> Result<StoredMediaProgress, String> {
+  return Ok(StoredMediaProgress(row.get_int_at(13)?,
+                                row.get_int_at(14)?,
+                                row.get_string_at(15)?,
+                                row.get_string_at(16)?,
+                                row.get_int_at(17)?))
+}
+
+fn runtime_state_from_row(row: Row) -> Result<StoredMediaState, String> {
+  let counts = runtime_counts_from_row(row)?
+  let settings = runtime_settings_from_row(row)?
+  let activity = runtime_activity_from_row(row)?
+  let selection = runtime_selection_from_row(row)?
+  let progress = runtime_progress_from_row(row)?
+  return Ok(StoredMediaState(counts.library_count,
+                             counts.import_queue_count,
+                             counts.active_downloads,
+                             counts.completed_downloads,
+                             settings.audio_quality,
+                             settings.video_quality,
+                             settings.bitrate_policy,
+                             activity.last_action,
+                             activity.last_error,
+                             activity.transport_status,
+                             selection.selected_media_id,
+                             selection.selected_media_title,
+                             selection.playback_status,
+                             progress.playback_position_ms,
+                             progress.download_progress_percent,
+                             progress.sidecar_status,
+                             progress.recovery_recommendation,
+                             progress.revision))
+}
+
+fn runtime_state_from_rows(rows: ResultSet) -> Result<StoredMediaState, String> {
+  if rows.len()? == 0 {
+    return Err("media runtime state not found")
+  }
+  return runtime_state_from_row(rows.row(0)?)
+}
+
+fn load_runtime_state(path: String) -> Result<StoredMediaState, String> {
+  let conn = open(path)?
+  let rows = conn.query0("SELECT library_count, import_queue_count, active_downloads, completed_downloads, audio_quality, video_quality, bitrate_policy, last_action, last_error, transport_status, selected_media_id, selected_media_title, playback_status, playback_position_ms, download_progress_percent, sidecar_status, recovery_recommendation, state_revision FROM media_runtime_state WHERE state_key = 'current'")?
+  let state = runtime_state_from_rows(rows)?
+  conn.close()?
+  return Ok(state)
 }

@@ -8,6 +8,7 @@ import media_store
 import std::bytes
 import std::json
 import std::result
+import std::time
 import ui::ui
 
 extern fn host_player_begin() -> Void
@@ -88,6 +89,10 @@ fn runtime_session_id() -> String {
   return "thin-host-media-player-session-0001"
 }
 
+fn lifecycle_correlation_id(status: String, revision: Int) -> String {
+  return text_join(text_join(status, ":"), stringify(int_value(revision)))
+}
+
 fn update_manifest_path() -> String {
   return "deploy/update/manifest.preview.json"
 }
@@ -121,6 +126,48 @@ fn initial_state() -> MediaState {
                     "unknown",
                     "clean_start",
                     0)
+}
+
+fn stored_state_from_media_state(state: MediaState) -> StoredMediaState {
+  return StoredMediaState(state.library_count,
+                          state.import_queue_count,
+                          state.active_downloads,
+                          state.completed_downloads,
+                          state.audio_quality,
+                          state.video_quality,
+                          state.bitrate_policy,
+                          state.last_action,
+                          state.last_error,
+                          state.transport_status,
+                          state.selected_media_id,
+                          state.selected_media_title,
+                          state.playback_status,
+                          state.playback_position_ms,
+                          state.download_progress_percent,
+                          state.sidecar_status,
+                          state.recovery_recommendation,
+                          state.revision)
+}
+
+fn media_state_from_stored_state(state: StoredMediaState) -> MediaState {
+  return MediaState(state.library_count,
+                    state.import_queue_count,
+                    state.active_downloads,
+                    state.completed_downloads,
+                    state.audio_quality,
+                    state.video_quality,
+                    state.bitrate_policy,
+                    state.last_action,
+                    state.last_error,
+                    state.transport_status,
+                    state.selected_media_id,
+                    state.selected_media_title,
+                    state.playback_status,
+                    state.playback_position_ms,
+                    state.download_progress_percent,
+                    state.sidecar_status,
+                    state.recovery_recommendation,
+                    state.revision)
 }
 
 fn shell_principal(runtime: MediaRuntime) -> AppLocalPrincipal {
@@ -261,7 +308,35 @@ fn publish_media_recovery_diagnostics(policy: AppLocalStartupRecoveryPolicy, man
 
 fn record_boot_media_store(state: MediaState, policy: AppLocalStartupRecoveryPolicy) -> Result<Bool, String> {
   record_recovery_diagnostic(media_store_db_path(), policy.recommendation, policy.reason, state.revision)?
-  return record_playback_settings(media_store_db_path(), state.audio_quality, state.video_quality, state.bitrate_policy, state.revision)
+  record_playback_settings(media_store_db_path(), state.audio_quality, state.video_quality, state.bitrate_policy, state.revision)?
+  return record_runtime_state(media_store_db_path(), stored_state_from_media_state(state))
+}
+
+fn persisted_state_matches_policy(state: StoredMediaState, policy: AppLocalStartupRecoveryPolicy) -> Bool {
+  if policy.trace.receipt_count <= 0 {
+    return false
+  }
+  return state.revision == policy.latest_state_revision
+}
+
+fn load_persisted_boot_state(state: MediaState, policy: AppLocalStartupRecoveryPolicy, manifest: Json) -> Result<MediaState, String> {
+  match load_runtime_state(media_store_db_path()) {
+    Ok(stored_state) => {
+      if persisted_state_matches_policy(stored_state, policy) {
+        return Ok(state_with_startup_evidence(media_state_from_stored_state(stored_state), policy, manifest))
+      }
+      if policy.trace.receipt_count == 0 {
+        return Ok(state_with_startup_evidence(state, policy, manifest))
+      }
+      return Err("media runtime state revision does not match app-local recovery receipts")
+    }
+    Err(msg) => {
+      if msg == "media runtime state not found" {
+        return Ok(state_with_startup_evidence(state, policy, manifest))
+      }
+      return Err(msg)
+    }
+  }
 }
 
 fn prepare_boot_state(runtime: MediaRuntime, state: MediaState) -> Result<MediaState, String> {
@@ -270,14 +345,15 @@ fn prepare_boot_state(runtime: MediaRuntime, state: MediaState) -> Result<MediaS
   publish_app_local_startup_policy(policy)
   let manifest = sidecar_manifest()?
   publish_media_recovery_diagnostics(policy, manifest)
-  record_boot_media_store(state, policy)?
-  return Ok(state_with_startup_evidence(state, policy, manifest))
+  let boot_state = load_persisted_boot_state(state, policy, manifest)?
+  record_boot_media_store(boot_state, policy)?
+  return Ok(boot_state)
 }
 
 fn publish_lifecycle_marker(runtime: MediaRuntime, status: String, reason: String, revision: Int) -> Result<Bool, String> {
   let marker = lifecycle_marker(runtime.config.app_id,
                                 runtime_session_id(),
-                                runtime_session_id(),
+                                lifecycle_correlation_id(status, revision),
                                 revision,
                                 status,
                                 reason)?
@@ -1004,6 +1080,7 @@ fn handle_applied_step(runtime: MediaRuntime, step_value: MediaStep) -> Result<B
   publish_media_event(step_value.event_kind, step_value.state, true, step_value.correlation_id, step_value.message, step_value.terminal)
   publish_app_local_accepted(runtime, step_value)?
   record_media_store_for_step(step_value)?
+  record_runtime_state(media_store_db_path(), stored_state_from_media_state(step_value.state))?
   render_state(runtime, step_value.state, step_value.correlation_id)?
   if step_value.terminal {
     return finish_terminal_step(runtime, step_value)
@@ -1073,10 +1150,16 @@ fn media_job_payload() -> Json {
   return object2("source_hash", string_value("fixture-open-media-sha256"), "content_policy", string_value("public-domain"))
 }
 
-fn prepare_media_job_run() -> Result<JobRun, String> {
+fn media_job_event_id(revision: Int, run_seed: Int) -> String {
+  let revision_text = stringify(int_value(revision))
+  let seed_text = stringify(int_value(run_seed))
+  return text_join(text_join(text_join("media-import-event-", revision_text), "-"), seed_text)
+}
+
+fn prepare_media_job_run(revision: Int, run_seed: Int) -> Result<JobRun, String> {
   initialize(jobs_db_path())?
   write_definition(jobs_db_path(), media_job_definition())?
-  return create_run(jobs_db_path(), "media-import", "media-import-event-1", media_job_payload(), "media-player", 1777437000100)
+  return create_run(jobs_db_path(), "media-import", media_job_event_id(revision, run_seed), media_job_payload(), "media-player", 1777437000100)
 }
 
 fn claim_media_scan(now_unix_ms: Int) -> Result<WorkerClaimEnvelope, String> {
@@ -1091,16 +1174,17 @@ fn fail_media_scan(lease_id: String, message: String, now_unix_ms: Int) -> Resul
   return complete_worker(jobs_db_path(), WorkerCompleteRequest("media-worker", lease_id, "failed", message, null_value(), now_unix_ms))
 }
 
-fn run_media_worker_retry_smoke() -> Result<JobRun, String> {
-  prepare_media_job_run()?
+fn run_media_worker_retry_smoke(revision: Int, run_seed: Int) -> Result<JobRun, String> {
+  prepare_media_job_run(revision, run_seed)?
   let claim1 = claim_media_scan(1777437000200)?
   fail_media_scan(claim1.lease.lease_id, "metadata scan retry", 1777437000300)?
   let claim2 = claim_media_scan(1777437000400)?
   return fail_media_scan(claim2.lease.lease_id, "metadata scan dead-letter", 1777437000500)
 }
 
-fn run_media_outbox_dead_letter_smoke() -> Result<OutboxMessage, String> {
-  let outbox = enqueue_outbox(jobs_db_path(), "media.import.events", "media-import-event-1", "media-import-event-1", media_job_payload(), 1, 1777437000600)?
+fn run_media_outbox_dead_letter_smoke(revision: Int, run_seed: Int) -> Result<OutboxMessage, String> {
+  let event_id = media_job_event_id(revision, run_seed)
+  let outbox = enqueue_outbox(jobs_db_path(), "media.import.events", event_id, event_id, media_job_payload(), 1, 1777437000600)?
   let outbox_claim = claim_outbox(jobs_db_path(), OutboxClaimRequest("media-relay", "media.import.events", 1777437000700))?
   if outbox_claim.outcome != "claimed" {
     return Err("media outbox did not claim message")
@@ -1127,16 +1211,16 @@ fn jobs_marker_json(failed_run: JobRun, dead: OutboxMessage) -> Json {
                  bool_value(dead.status == "dead_letter"))
 }
 
-fn run_media_jobs_outbox_smoke() -> Result<Json, String> {
-  let failed_run = run_media_worker_retry_smoke()?
-  let dead = run_media_outbox_dead_letter_smoke()?
+fn run_media_jobs_outbox_smoke(revision: Int, run_seed: Int) -> Result<Json, String> {
+  let failed_run = run_media_worker_retry_smoke(revision, run_seed)?
+  let dead = run_media_outbox_dead_letter_smoke(revision, run_seed)?
   return Ok(jobs_marker_json(failed_run, dead))
 }
 
-fn publish_jobs_marker() -> Result<Bool, String> {
+fn publish_jobs_marker(revision: Int) -> Result<Bool, String> {
   let definition = media_job_definition()
   validate_stage_graph(definition.stages)?
-  let marker = run_media_jobs_outbox_smoke()?
+  let marker = run_media_jobs_outbox_smoke(revision, unix_millis())?
   print(text_join("media-player-jobs:", stringify(marker)))
   return Ok(true)
 }
@@ -1160,14 +1244,22 @@ fn publish_app_local_shutdown(runtime: MediaRuntime, correlation_id: String, rev
   return Ok(true)
 }
 
+fn boot_correlation_id(state: MediaState) -> String {
+  if state.revision == 0 {
+    return "boot"
+  }
+  return text_join("boot-revision-", stringify(int_value(state.revision)))
+}
+
 fn publish_boot_event(state: MediaState) -> Void {
-  host_player_publish_event(bridge_event_text("media_player_booted", state, false, "boot"))
-  publish_media_event("media_player_booted", state, true, "boot", "media player booted", false)
+  let correlation_id = boot_correlation_id(state)
+  host_player_publish_event(bridge_event_text("media_player_booted", state, false, correlation_id))
+  publish_media_event("media_player_booted", state, true, correlation_id, "media player booted", false)
 }
 
 fn publish_boot_ready(runtime: MediaRuntime, state: MediaState) -> Result<Bool, String> {
   publish_boot_event(state)
-  render_state(runtime, state, "boot")?
+  render_state(runtime, state, boot_correlation_id(state))?
   publish_lifecycle_marker(runtime, "app_ready", "first media-player snapshot rendered", state.revision)?
   return Ok(true)
 }
@@ -1175,8 +1267,8 @@ fn publish_boot_ready(runtime: MediaRuntime, state: MediaState) -> Result<Bool, 
 fn boot_player(runtime: MediaRuntime, state: MediaState) -> Result<MediaState, String> {
   publish_startup_diagnostics(runtime)?
   let boot_state = prepare_boot_state(runtime, state)?
-  publish_lifecycle_marker(runtime, "startup_started", "media player started", state.revision)?
-  publish_jobs_marker()?
+  publish_lifecycle_marker(runtime, "startup_started", "media player started", boot_state.revision)?
+  publish_jobs_marker(boot_state.revision)?
   publish_boot_ready(runtime, boot_state)?
   return Ok(boot_state)
 }

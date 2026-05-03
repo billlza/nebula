@@ -98,4 +98,17 @@ Phase1 adds the first true app flow on top of the skeleton:
 5. Reject illegal/unsupported torrent sources explicitly and preserve state.
 6. Stage a preview bundle/update/recovery manifest before any native renderer claim.
 
+The long-run preflight for this validation app is:
+
+```bash
+python3 scripts/verify_thin_host_media_player_app.py --binary ./build/nebula
+```
+
+That script is intentionally more app-like than the focused unit smokes: it stages the bundle assets,
+builds the entry binary, launches default/phase1/rejection modes, reuses the same receipt DB plus
+Nebula-owned `media.db` for a restart rehydration probe, and verifies app-local receipts, host
+snapshot readiness, recovery/update markers, runtime state, and media SQLite rows. A pass proves the
+preview shell is operational enough to exercise platform gaps; it does not claim a complete
+codec/player engine, native renderer, torrent network stack, notarized package, or auto-updater.
+
 This app should advance only after the thin-host app shell closure remains green.
