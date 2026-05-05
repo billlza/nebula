@@ -1,6 +1,6 @@
 # thin-host-media-player
 
-Nebula-first validation APP skeleton for the thin-host direction.
+Nebula-first validation APP for the thin-host direction.
 
 The media player app core is written in Nebula: command validation, state transitions, domain events,
 snapshots, SQLite app-local receipts, startup recovery policy, jobs/outbox smoke, observe preflight,
@@ -13,6 +13,7 @@ Preview scope:
 - `thin-host-bridge.command.v1` wire envelopes carrying `media-player.command.v1` domain commands
   for import, quality, bitrate, and download controls
 - phase1 library selection, playback sidecar open/progress, and torrent progress state
+- opt-in native media gate for libmpv playback and libtorrent-rasterbar loopback proof
 - `media-player.event.v1` accepted/rejected events with `correlation_id` and `state_revision`
 - `media-player.snapshot.v1` compact host snapshot with selection, playback, download, sidecar,
   and recovery diagnostics
@@ -24,7 +25,7 @@ Preview scope:
 - bundle/update/recovery preview manifests
 - host sidecar manifest for file picker, codec/player, and torrent adapter boundaries
 
-Non-goals:
+Default contract non-goals:
 
 - native audio/video renderer
 - codec engine
@@ -32,9 +33,20 @@ Non-goals:
 - piracy search, DRM bypass, tracker scraping, or hidden executable payload handling
 - App Store packaging, notarization, auto-updater, or GUI GA
 
+The default suite still uses deterministic stub progress events so the repo can build without
+platform media libraries. The real media gate is separate and opt-in:
+
+```bash
+python3 scripts/verify_thin_host_media_player_native.py --binary ./build/nebula
+```
+
+That gate requires libmpv and libtorrent-rasterbar development files. Missing dependencies are a hard
+failure for the native gate and produce install diagnostics; they do not silently downgrade into a
+fake media pass.
+
 Torrent import is limited to legal media: public-domain, open-licensed, or operator-owned content.
-The host or an operator-approved sidecar owns any future network transport; Nebula validates policy
-and persists state/receipts.
+The host or an operator-approved sidecar owns network transport; Nebula validates policy and persists
+state/receipts.
 
 Feasibility gate:
 
@@ -46,4 +58,4 @@ The verifier stages the preview bundle, builds the entry binary, launches defaul
 modes, then reuses the same receipt DB and Nebula-owned `media.db` for a restart rehydration probe.
 It checks app-local receipts, host snapshot readiness, runtime state, and media SQLite tables.
 Passing it means the validation app is launchable and recoverable as a preview shell; it still does
-not mean codec, renderer, torrent transport, notarization, or auto-update are GA.
+not mean renderer, notarization, or auto-update are GA.

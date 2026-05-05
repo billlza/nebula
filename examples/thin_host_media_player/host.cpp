@@ -3,12 +3,54 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
-std::string quoted(const char* value) {
-  return std::string("\"") + value + "\"";
+std::string escape_json(std::string_view value) {
+  std::string out;
+  out.reserve(value.size() + 2);
+  for (const char ch : value) {
+    switch (ch) {
+      case '\\':
+        out += "\\\\";
+        break;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        out += ch;
+        break;
+    }
+  }
+  return out;
+}
+
+std::string json_quote(std::string_view value) {
+  return std::string("\"") + escape_json(value) + "\"";
+}
+
+std::string env_or(const char* name, std::string fallback) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || value[0] == '\0') return fallback;
+  return value;
+}
+
+bool env_enabled(const char* name) {
+  const char* value = std::getenv(name);
+  if (value == nullptr) return false;
+  const std::string text(value);
+  return text == "1" || text == "true" || text == "yes";
 }
 
 std::string command_text(const char* kind,
@@ -16,7 +58,7 @@ std::string command_text(const char* kind,
                          int state_revision,
                          const std::string& payload) {
   return std::string("{\"schema\":\"thin-host-bridge.command.v1\",\"kind\":") +
-         quoted(kind) + ",\"correlation_id\":" + quoted(correlation_id) +
+         json_quote(kind) + ",\"correlation_id\":" + json_quote(correlation_id) +
          ",\"state_revision\":" + std::to_string(state_revision) +
          ",\"payload\":" + payload + "}";
 }
@@ -32,15 +74,33 @@ std::string file_payload() {
          "\"title\":\"Sample Public Domain Clip\"}";
 }
 
+std::string native_file_payload() {
+  return std::string("{\"path\":") +
+         json_quote(env_or("NEBULA_MEDIA_PLAYER_FILE_URI", "file:///fixture/public-domain/sample.mp4")) +
+         ",\"source_hash\":" +
+         json_quote(env_or("NEBULA_MEDIA_PLAYER_FILE_SHA256", "sha256-public-domain-file")) +
+         ",\"media_id\":\"media:sample-public-domain\","
+         "\"title\":\"Sample Public Domain Clip\"}";
+}
+
 std::string torrent_payload(const char* policy, bool transport_available) {
   return std::string("{\"source_uri\":\"magnet:?xt=urn:btih:PUBLICDOMAINFIXTURE\",") +
          "\"source_hash\":\"sha256-public-domain-torrent\"," +
-         "\"policy\":" + quoted(policy) + "," +
+         "\"policy\":" + json_quote(policy) + "," +
+         "\"transport_available\":" + (transport_available ? "true" : "false") + "}";
+}
+
+std::string native_torrent_payload(bool transport_available) {
+  return std::string("{\"source_uri\":") +
+         json_quote(env_or("NEBULA_MEDIA_PLAYER_TORRENT_URI", "magnet:?xt=urn:btih:PUBLICDOMAINFIXTURE")) +
+         ",\"source_hash\":" +
+         json_quote(env_or("NEBULA_MEDIA_PLAYER_TORRENT_SHA256", "sha256-public-domain-torrent")) +
+         ",\"policy\":\"public-domain\","
          "\"transport_available\":" + (transport_available ? "true" : "false") + "}";
 }
 
 std::string value_payload(const char* value) {
-  return std::string("{\"value\":") + quoted(value) + "}";
+  return std::string("{\"value\":") + json_quote(value) + "}";
 }
 
 std::string media_selection_payload() {
@@ -58,8 +118,12 @@ std::string player_open_payload(bool ready) {
 }
 
 std::string playback_progress_payload(const char* media_id, int position_ms) {
-  return std::string("{\"media_id\":") + quoted(media_id) +
+  return std::string("{\"media_id\":") + json_quote(media_id) +
          ",\"position_ms\":" + std::to_string(position_ms) + "}";
+}
+
+std::string seek_payload(int position_ms) {
+  return std::string("{\"position_ms\":") + std::to_string(position_ms) + "}";
 }
 
 std::string download_progress_payload(int progress_percent) {
@@ -140,6 +204,25 @@ std::vector<std::string> make_commands() {
         bare_command_text("quit", "phase1-quit", 7),
     };
   }
+  if (mode != nullptr && std::string(mode) == "native_media") {
+    return {
+        command_text("library.import_file", "native-file", 0, native_file_payload()),
+        command_text("library.select_item", "native-select", 1, media_selection_payload()),
+        command_text("playback.open_selected", "native-open", 2, player_open_payload(true)),
+        command_text("playback.progress", "native-playback-progress", 3,
+                     playback_progress_payload("media:sample-public-domain", 12000)),
+        bare_command_text("playback.pause", "native-pause", 4),
+        bare_command_text("playback.resume", "native-resume", 5),
+        command_text("playback.seek", "native-seek", 6, seek_payload(60000)),
+        command_text("library.import_torrent", "native-torrent", 7,
+                     native_torrent_payload(true)),
+        command_text("download.progress", "native-download-42", 8,
+                     download_progress_payload(42)),
+        command_text("download.progress", "native-download-100", 9,
+                     download_progress_payload(100)),
+        bare_command_text("quit", "native-quit", 10),
+    };
+  }
   return default_commands();
 }
 
@@ -218,6 +301,13 @@ void host_player_render_tree(std::string tree) {
 }
 
 std::string host_player_sidecar_manifest_text() {
+  if (env_enabled("NEBULA_MEDIA_PLAYER_NATIVE_SIDECARS")) {
+    return "{\"schema\":\"media-player.host-sidecar.v1\","
+           "\"file_picker\":\"preview-adapter\","
+           "\"codec_adapter\":\"libmpv-c-api\","
+           "\"player_adapter\":\"libmpv-c-api\","
+           "\"torrent_adapter\":\"libtorrent-rasterbar-loopback\"}";
+  }
   return "{\"schema\":\"media-player.host-sidecar.v1\","
          "\"file_picker\":\"preview-adapter\","
          "\"codec_adapter\":\"native-sidecar-boundary\","

@@ -788,6 +788,91 @@ fn playback_progress_step(state: MediaState, command: ThinHostCommand, payload: 
   return Ok(step(state, next_state, false, "playback_progress_recorded", command, "host player sidecar progress recorded"))
 }
 
+fn playback_pause_step(state: MediaState, command: ThinHostCommand) -> Result<MediaStep, String> {
+  if state.selected_media_id == "" {
+    return Err("no media item selected")
+  }
+  if state.playback_status != "playing" {
+    return Err("playback is not playing")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              "paused",
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_paused", command, "host player sidecar paused playback"))
+}
+
+fn playback_resume_step(state: MediaState, command: ThinHostCommand) -> Result<MediaStep, String> {
+  if state.selected_media_id == "" {
+    return Err("no media item selected")
+  }
+  if state.playback_status != "paused" {
+    return Err("playback is not paused")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              "playing",
+                              state.playback_position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_resumed", command, "host player sidecar resumed playback"))
+}
+
+fn playback_seek_step(state: MediaState, command: ThinHostCommand, payload: Json) -> Result<MediaStep, String> {
+  if state.selected_media_id == "" {
+    return Err("no media item selected")
+  }
+  let position_ms = require_payload_int(payload, "position_ms", "playback position_ms is required")?
+  if position_ms < 0 {
+    return Err("playback position_ms must be non-negative")
+  }
+  let next_state = MediaState(state.library_count,
+                              state.import_queue_count,
+                              state.active_downloads,
+                              state.completed_downloads,
+                              state.audio_quality,
+                              state.video_quality,
+                              state.bitrate_policy,
+                              command.kind(),
+                              "",
+                              state.transport_status,
+                              state.selected_media_id,
+                              state.selected_media_title,
+                              state.playback_status,
+                              position_ms,
+                              state.download_progress_percent,
+                              state.sidecar_status,
+                              state.recovery_recommendation,
+                              state.revision + 1)
+  return Ok(step(state, next_state, false, "playback_seeked", command, "host player sidecar seek recorded"))
+}
+
 fn completed_downloads_after_progress(state: MediaState, progress_percent: Int) -> Int {
   if progress_percent == 100 && state.active_downloads > 0 {
     return state.completed_downloads + 1
@@ -923,6 +1008,15 @@ fn apply_playback_command(state: MediaState, command: ThinHostCommand, payload: 
   if command.kind() == "playback.progress" {
     return playback_progress_step(state, command, payload)
   }
+  if command.kind() == "playback.pause" {
+    return playback_pause_step(state, command)
+  }
+  if command.kind() == "playback.resume" {
+    return playback_resume_step(state, command)
+  }
+  if command.kind() == "playback.seek" {
+    return playback_seek_step(state, command, payload)
+  }
   return Err("not a playback command")
 }
 
@@ -956,7 +1050,10 @@ fn is_playback_command(kind: String) -> Bool {
   if kind == "playback.set_bitrate_policy" || kind == "playback.open_selected" {
     return true
   }
-  return kind == "playback.progress"
+  if kind == "playback.progress" || kind == "playback.pause" {
+    return true
+  }
+  return kind == "playback.resume" || kind == "playback.seek"
 }
 
 fn is_download_command(kind: String) -> Bool {
@@ -1052,6 +1149,27 @@ fn record_media_download_state(step_value: MediaStep) -> Result<Bool, String> {
                               step_value.correlation_id)
 }
 
+fn record_media_playback_event_state(step_value: MediaStep) -> Result<Bool, String> {
+  return record_playback_event(media_store_db_path(),
+                               text_join("playback:", step_value.correlation_id),
+                               step_value.state.selected_media_id,
+                               step_value.event_kind,
+                               step_value.state.playback_position_ms,
+                               step_value.state.playback_status,
+                               step_value.state.revision,
+                               step_value.correlation_id)
+}
+
+fn is_playback_state_event(kind: String) -> Bool {
+  if kind == "playback_sidecar_open_requested" || kind == "playback_progress_recorded" {
+    return true
+  }
+  if kind == "playback_paused" || kind == "playback_resumed" {
+    return true
+  }
+  return kind == "playback_seeked"
+}
+
 fn record_media_store_for_step(step_value: MediaStep) -> Result<Bool, String> {
   if step_value.event_kind == "library_file_imported" {
     return record_media_file_import(step_value)
@@ -1064,6 +1182,9 @@ fn record_media_store_for_step(step_value: MediaStep) -> Result<Bool, String> {
   }
   if step_value.event_kind == "playback_audio_quality_set" || step_value.event_kind == "playback_video_quality_set" || step_value.event_kind == "playback_bitrate_policy_set" {
     return record_playback_settings(media_store_db_path(), step_value.state.audio_quality, step_value.state.video_quality, step_value.state.bitrate_policy, step_value.state.revision)
+  }
+  if is_playback_state_event(step_value.event_kind) {
+    return record_media_playback_event_state(step_value)
   }
   return Ok(true)
 }

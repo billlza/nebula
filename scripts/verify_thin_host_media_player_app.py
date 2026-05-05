@@ -75,6 +75,13 @@ def validate_bundle(app: Path, stage: Path) -> None:
     }
     if sidecars != expected_sidecars:
         fail(f"sidecar boundary drifted: {bundle!r}")
+    native_sidecars = bundle.get("native_sidecars", {})
+    if native_sidecars.get("player") != "libmpv-c-api opt-in":
+        fail(f"native player sidecar gate drifted: {bundle!r}")
+    if native_sidecars.get("torrent_transport") != "libtorrent-rasterbar-loopback opt-in":
+        fail(f"native torrent sidecar gate drifted: {bundle!r}")
+    if native_sidecars.get("required_for_real_media_gate") is not True:
+        fail(f"native sidecar gate is not explicit: {bundle!r}")
     update_rel = bundle.get("update_manifest", {}).get("path")
     update_sha = bundle.get("update_manifest", {}).get("sha256")
     if not isinstance(update_rel, str) or not isinstance(update_sha, str):
@@ -123,6 +130,7 @@ def run_app(
     *,
     preserve_fixed_work: bool = False,
     preserve_receipts: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> str:
     fixed_work = repo_root() / "work" / "thin_host_media_player"
     if not preserve_fixed_work:
@@ -137,6 +145,8 @@ def run_app(
         env["NEBULA_MEDIA_PLAYER_COMMAND_MODE"] = mode
     else:
         env.pop("NEBULA_MEDIA_PLAYER_COMMAND_MODE", None)
+    if extra_env:
+        env.update(extra_env)
     result = run_command([str(entry)], cwd=repo_root(), env=env)
     assert_ok(result, f"media-player launch mode={mode or 'default'}")
     output = result.stdout

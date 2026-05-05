@@ -51,7 +51,7 @@ for forbidden in [
 if "host_cxx = [\\"host.cpp\\"]" not in (app / "nebula.toml").read_text(encoding="utf-8"):
     raise SystemExit("media player host adapter boundary is not explicit")
 for marker in [
-    "Nebula-first validation APP skeleton",
+    "Nebula-first validation APP",
     "does not own media-player business state",
     "Torrent import is limited to legal media",
 ]:

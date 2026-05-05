@@ -7,7 +7,9 @@ and not a claim that Nebula owns the native audio/video renderer.
 The repo-local app lives in `examples/thin_host_media_player`. Its V1 implementation keeps the
 media-player state machine, command validation, events, snapshots, SQLite receipts, jobs/outbox,
 observe markers, and update/recovery markers in Nebula. The C++ host file is only a preview adapter
-and command fixture for native shell/UI IR smoke.
+and command fixture for native shell/UI IR smoke. A separate opt-in native gate compiles a sidecar
+probe for libmpv and libtorrent-rasterbar; it proves the host can attach real media dependencies
+without moving app business state out of Nebula.
 
 The platform should not pre-build media-player-specific capabilities before the app work needs them.
 Generic pieces such as command/event/snapshot envelopes, typed view models, local storage,
@@ -23,6 +25,7 @@ only add media-player-specific commands once the validation app implementation a
 ## Product Scope
 
 - import local audio/video files
+- open, pause, resume, seek, and persist playback observations from the player sidecar
 - choose audio quality, video quality, and bitrate policy from explicit app settings
 - keep playback state, library metadata, and download/import history in the app data plane
 - emit deterministic command/event/snapshot envelopes through `thin-host-bridge.*.v1`
@@ -35,13 +38,15 @@ or media the operator has rights to download. The validation app must not includ
 copyright-bypass, DRM circumvention, tracker scraping for infringing content, or hidden executable
 payload handling.
 
-The first implementation should treat torrent support as a host-owned transport adapter:
+The implementation treats torrent support as a host-owned transport adapter:
 
 - Nebula validates the import request, policy, desired quality, and state transition
 - the host or an operator-approved sidecar owns network I/O and the BitTorrent engine
 - Nebula receives progress/completion/failure events and persists metadata
 - all download events carry `correlation_id`, `state_revision`, source URI hash, and content-policy
   status
+- the opt-in real media gate uses libtorrent-rasterbar loopback evidence; the default suite still
+  uses deterministic stub progress events for portability
 
 ## App-Local Substrate Probe
 
@@ -81,10 +86,13 @@ The first skeleton keeps `thin-host-bridge.command.v1` as the wire envelope and 
 6. `playback.set_bitrate_policy`
 7. `playback.open_selected`
 8. `playback.progress`
-9. `download.pause`
-10. `download.resume`
-11. `download.cancel`
-12. `download.progress`
+9. `playback.pause`
+10. `playback.resume`
+11. `playback.seek`
+12. `download.pause`
+13. `download.resume`
+14. `download.cancel`
+15. `download.progress`
 
 Phase1 adds the first true app flow on top of the skeleton:
 
@@ -109,6 +117,17 @@ builds the entry binary, launches default/phase1/rejection modes, reuses the sam
 Nebula-owned `media.db` for a restart rehydration probe, and verifies app-local receipts, host
 snapshot readiness, recovery/update markers, runtime state, and media SQLite rows. A pass proves the
 preview shell is operational enough to exercise platform gaps; it does not claim a complete
-codec/player engine, native renderer, torrent network stack, notarized package, or auto-updater.
+native renderer, notarized package, or auto-updater.
+
+The opt-in native media proof is:
+
+```bash
+python3 scripts/verify_thin_host_media_player_native.py --binary ./build/nebula
+```
+
+It compiles `examples/thin_host_media_player/native/media_sidecar_probe.cpp` with
+`clang++ -Wall -Wextra -Werror`, requires `pkg-config` entries for libmpv and libtorrent-rasterbar,
+then launches the app in `native_media` mode with the sidecar manifest set to `libmpv-c-api` and
+`libtorrent-rasterbar-loopback`.
 
 This app should advance only after the thin-host app shell closure remains green.

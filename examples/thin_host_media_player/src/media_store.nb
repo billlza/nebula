@@ -101,6 +101,16 @@ fn download_task_params(task_id: String, source_hash: String, progress_percent: 
   return array_build(array_push(builder5, string_value(correlation_id)))
 }
 
+fn playback_event_params(event_id: String, media_id: String, event_kind: String, position_ms: Int, status: String, revision: Int, correlation_id: String) -> Json {
+  let builder1 = text_param(event_id)
+  let builder2 = array_push(builder1, string_value(media_id))
+  let builder3 = array_push(builder2, string_value(event_kind))
+  let builder4 = array_push(builder3, int_value(position_ms))
+  let builder5 = array_push(builder4, string_value(status))
+  let builder6 = array_push(builder5, int_value(revision))
+  return array_build(array_push(builder6, string_value(correlation_id)))
+}
+
 fn recovery_params(recommendation: String, reason: String, revision: Int) -> Json {
   let builder1 = text_param(recommendation)
   let builder2 = array_push(builder1, string_value(reason))
@@ -169,6 +179,11 @@ fn create_task_tables(conn: Connection) -> Result<Bool, String> {
   return Ok(true)
 }
 
+fn create_playback_events_table(conn: Connection) -> Result<Bool, String> {
+  conn.execute0("CREATE TABLE IF NOT EXISTS media_playback_events (event_id TEXT PRIMARY KEY, media_id TEXT NOT NULL, event_kind TEXT NOT NULL, position_ms INTEGER NOT NULL, status TEXT NOT NULL, state_revision INTEGER NOT NULL, correlation_id TEXT NOT NULL)")?
+  return Ok(true)
+}
+
 fn create_recovery_table(conn: Connection) -> Result<Bool, String> {
   conn.execute0("CREATE TABLE IF NOT EXISTS media_recovery_diagnostics (id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation TEXT NOT NULL, reason TEXT NOT NULL, state_revision INTEGER NOT NULL)")?
   return Ok(true)
@@ -181,6 +196,7 @@ fn create_runtime_state_table(conn: Connection) -> Result<Bool, String> {
 
 fn create_secondary_tables(conn: Connection) -> Result<Bool, String> {
   create_task_tables(conn)?
+  create_playback_events_table(conn)?
   create_recovery_table(conn)?
   return create_runtime_state_table(conn)
 }
@@ -236,6 +252,14 @@ fn record_download_task(path: String, task_id: String, source_hash: String, prog
   let conn = open(path)?
   conn.execute("INSERT INTO media_download_tasks(task_id, source_hash, progress_percent, status, state_revision, correlation_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET progress_percent=excluded.progress_percent, status=excluded.status, state_revision=excluded.state_revision, correlation_id=excluded.correlation_id",
                download_task_params(task_id, source_hash, progress_percent, status, revision, correlation_id))?
+  conn.close()?
+  return Ok(true)
+}
+
+fn record_playback_event(path: String, event_id: String, media_id: String, event_kind: String, position_ms: Int, status: String, revision: Int, correlation_id: String) -> Result<Bool, String> {
+  let conn = open(path)?
+  conn.execute("INSERT INTO media_playback_events(event_id, media_id, event_kind, position_ms, status, state_revision, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO UPDATE SET media_id=excluded.media_id, event_kind=excluded.event_kind, position_ms=excluded.position_ms, status=excluded.status, state_revision=excluded.state_revision, correlation_id=excluded.correlation_id",
+               playback_event_params(event_id, media_id, event_kind, position_ms, status, revision, correlation_id))?
   conn.close()?
   return Ok(true)
 }
