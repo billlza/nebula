@@ -1,0 +1,72 @@
+id = "TST-328-nebula-test-rust-style-summary-smoke"
+suite = "test"
+description = "nebula test emits Rust-style pass/fail/ignore summary and keeps counting recoverable test failures"
+
+[[steps]]
+kind = "shell"
+run = """
+rm -rf work/test_summary
+mkdir -p work/test_summary/pass work/test_summary/fail
+mkdir -p work/test_summary/empty
+cat > work/test_summary/pass/summary_pass.nb <<'NB'
+@test
+fn first_pass() -> Void {
+  expect_eq(1 + 1, 2)
+}
+
+@test
+fn second_pass() -> Void {
+  expect_eq(3, 3)
+}
+NB
+
+cat > work/test_summary/fail/summary_fail.nb <<'NB'
+@test
+fn good_case() -> Void {
+  expect_eq(4, 4)
+}
+
+@test
+fn bad_case() -> Void {
+  expect_eq(4, 5)
+}
+NB
+
+cat > work/test_summary/empty/no_tests.nb <<'NB'
+fn main() -> Void {
+  print("no tests here")
+}
+NB
+"""
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--dir", "work/test_summary/pass"]
+expect_rc = 0
+expect_stdout_contains = [
+  "[test] first_pass",
+  "[test] second_pass",
+  "[test] ok",
+  "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in",
+]
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--dir", "work/test_summary/fail"]
+expect_rc = 1
+expect_stdout_contains = [
+  "[test] FAILED bad_case: expect_eq failed: 4 != 5 (expect_eq)",
+  "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in",
+]
+
+[[steps]]
+kind = "nebula"
+command = "test"
+args = ["--dir", "work/test_summary/empty"]
+expect_rc = 0
+expect_stdout_contains = [
+  "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in",
+]

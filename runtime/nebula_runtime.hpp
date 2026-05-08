@@ -74,6 +74,32 @@ public:
   const char* what() const noexcept override { return message_.c_str(); }
 };
 
+class TestFailure final : public std::exception {
+  std::string message_;
+
+public:
+  explicit TestFailure(std::string message) : message_(std::move(message)) {}
+
+  const char* what() const noexcept override { return message_.c_str(); }
+};
+
+inline bool& test_harness_active_storage() {
+  static bool active = false;
+  return active;
+}
+
+inline void set_test_harness_active(bool active) {
+  test_harness_active_storage() = active;
+}
+
+[[noreturn]] inline void fail_test_or_abort(std::string msg) {
+  if (test_harness_active_storage()) {
+    throw TestFailure(std::move(msg));
+  }
+  std::cerr << msg << "\n";
+  std::abort();
+}
+
 [[noreturn]] inline void panic(const std::string& msg) {
   std::cerr << "nebula panic: " << msg << "\n";
   std::abort();
@@ -93,10 +119,10 @@ inline void set_process_args(int argc, char** argv) {
 
 inline void expect_eq_i64(std::int64_t a, std::int64_t b, const char* ctx) {
   if (a != b) {
-    std::cerr << "expect_eq failed: " << a << " != " << b;
-    if (ctx != nullptr) std::cerr << " (" << ctx << ")";
-    std::cerr << "\n";
-    std::abort();
+    std::ostringstream msg;
+    msg << "expect_eq failed: " << a << " != " << b;
+    if (ctx != nullptr) msg << " (" << ctx << ")";
+    fail_test_or_abort(msg.str());
   }
 }
 
@@ -129,7 +155,12 @@ inline std::string argv(std::int64_t index) {
 }
 
 inline void assert(bool cond, std::string msg) {
-  if (!cond) panic(msg.empty() ? "assertion failed" : msg);
+  if (!cond) {
+    if (test_harness_active_storage()) {
+      throw TestFailure(msg.empty() ? "assertion failed" : std::move(msg));
+    }
+    panic(msg.empty() ? "assertion failed" : msg);
+  }
 }
 
 struct Duration {

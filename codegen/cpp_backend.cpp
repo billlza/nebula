@@ -2430,22 +2430,70 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
       out.line("return 0;");
     } else if (opt.main_mode == MainMode::RunTests) {
       // Call all @test functions.
+      out.line("using TestClock = std::chrono::steady_clock;");
+      out.line("auto __nebula_test_started = TestClock::now();");
+      out.line("int __nebula_test_passed = 0;");
+      out.line("int __nebula_test_failed = 0;");
+      out.line("int __nebula_test_ignored = 0;");
+      out.line("int __nebula_test_measured = 0;");
+      out.line("int __nebula_test_filtered_out = 0;");
+      out.line("nebula::rt::set_test_harness_active(true);");
       for (const auto* fn : ordered) {
         if (has_annotation(fn->annotations, "test")) {
-          out.line("std::cerr << \"[test] " + fn->name + "\\n\";");
+          const std::string test_name = escape_string(fn->name);
+          out.line("std::cerr << \"[test] " + test_name + "\\n\";");
           const std::string fn_name =
               emitted_cpp_name_for_identity(function_symbols,
                                             nebula::nir::function_identity(*fn),
                                             fn->name);
+          out.line("try {");
+          out.indent++;
           if (fn->is_async) {
             out.line("nebula::rt::block_on(" + fn_name + "());");
           } else {
             out.line(fn_name + "();");
           }
+          out.line("__nebula_test_passed += 1;");
+          out.indent--;
+          out.line("} catch (const nebula::rt::TestFailure& ex) {");
+          out.indent++;
+          out.line("__nebula_test_failed += 1;");
+          out.line("std::cerr << \"[test] FAILED " + test_name + ": \" << ex.what() << \"\\n\";");
+          out.indent--;
+          out.line("} catch (const nebula::rt::UserPanic& ex) {");
+          out.indent++;
+          out.line("__nebula_test_failed += 1;");
+          out.line("std::cerr << \"[test] FAILED " + test_name + ": \" << ex.what() << \"\\n\";");
+          out.indent--;
+          out.line("} catch (const std::exception& ex) {");
+          out.indent++;
+          out.line("__nebula_test_failed += 1;");
+          out.line("std::cerr << \"[test] FAILED " + test_name + ": \" << ex.what() << \"\\n\";");
+          out.indent--;
+          out.line("} catch (...) {");
+          out.indent++;
+          out.line("__nebula_test_failed += 1;");
+          out.line("std::cerr << \"[test] FAILED " + test_name + ": unknown exception\\n\";");
+          out.indent--;
+          out.line("}");
         }
       }
-      out.line("std::cerr << \"[test] ok\\n\";");
-      out.line("return 0;");
+      out.line("nebula::rt::set_test_harness_active(false);");
+      out.line("auto __nebula_test_finished = TestClock::now();");
+      out.line("auto __nebula_test_centis = std::chrono::duration_cast<std::chrono::milliseconds>("
+               "__nebula_test_finished - __nebula_test_started).count() / 10;");
+      out.line("if (__nebula_test_failed == 0) std::cerr << \"[test] ok\\n\";");
+      out.line("std::cerr << \"test result: \" << (__nebula_test_failed == 0 ? \"ok\" : "
+               "\"FAILED\") << \". \";");
+      out.line("std::cerr << __nebula_test_passed << \" passed; \" << __nebula_test_failed "
+               "<< \" failed; \";");
+      out.line("std::cerr << __nebula_test_ignored << \" ignored; \" << __nebula_test_measured "
+               "<< \" measured; \";");
+      out.line("std::cerr << __nebula_test_filtered_out << \" filtered out; finished in \";");
+      out.line("std::cerr << (__nebula_test_centis / 100) << \".\";");
+      out.line("if ((__nebula_test_centis % 100) < 10) std::cerr << \"0\";");
+      out.line("std::cerr << (__nebula_test_centis % 100) << \"s\\n\";");
+      out.line("return __nebula_test_failed == 0 ? 0 : 1;");
     } else if (opt.main_mode == MainMode::RunBench) {
       out.line("using Clock = std::chrono::steady_clock;");
       out.line("std::vector<double> samples_ms;");

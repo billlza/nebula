@@ -458,6 +458,17 @@ static bool nir_has_fn_with_ann(const nebula::nir::Program& p, const std::string
   return false;
 }
 
+static void emit_zero_test_summary(std::chrono::steady_clock::time_point started) {
+  const auto finished = std::chrono::steady_clock::now();
+  const auto centis =
+      std::chrono::duration_cast<std::chrono::milliseconds>(finished - started).count() / 10;
+  std::cerr << "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; "
+               "0 filtered out; finished in "
+            << (centis / 100) << ".";
+  if ((centis % 100) < 10) std::cerr << "0";
+  std::cerr << (centis % 100) << "s\n";
+}
+
 static bool analyze_loaded_project(const LoadedCompileInput& loaded,
                                    const CliOptions& opt,
                                    CompilePipelineResult& analysis) {
@@ -485,9 +496,13 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
 }
 
 [[maybe_unused]] static int cmd_test_project_target(const CliOptions& opt, const LoadedCompileInput& loaded) {
+  const auto started = std::chrono::steady_clock::now();
   CompilePipelineResult analysis;
   if (!analyze_loaded_project(loaded, opt, analysis)) return 1;
-  if (!nir_has_fn_with_ann(*analysis.nir_prog, "test")) return 0;
+  if (!nir_has_fn_with_ann(*analysis.nir_prog, "test")) {
+    emit_zero_test_summary(started);
+    return 0;
+  }
 
   const fs::path out_cpp = cpp_output_path(loaded.entry_file, opt, "_test");
   const fs::path out_bin = opt.out_dir / (loaded.entry_file.stem().string() + "_test.out");
@@ -4416,6 +4431,7 @@ static int cmd_bench_project_target(const fs::path& target, const CliOptions& op
 
 
 int cmd_test(const CliOptions& opt) {
+  const auto started = std::chrono::steady_clock::now();
   CacheReportScope cache_scope(opt);
   if (is_explicit_project_target(opt.dir)) return cmd_test_project_target(opt.dir, opt);
   const auto files = list_nb_files(opt.dir);
@@ -4431,6 +4447,7 @@ int cmd_test(const CliOptions& opt) {
   }
 
   int failed = 0;
+  bool ran_tests = false;
   const AnalysisProfile requested = opt.profile_explicit ? opt.analysis_profile : AnalysisProfile::Fast;
   const AnalysisProfile resolved_profile = resolve_profile(opt.mode, requested);
   const AnalysisTier tier = resolve_analysis_tier(opt.mode, opt.analysis_tier);
@@ -4469,6 +4486,7 @@ int cmd_test(const CliOptions& opt) {
     }
 
     if (!nir_has_fn_with_ann(*analysis.nir_prog, "test")) continue;
+    ran_tests = true;
 
     const fs::path out_cpp = cpp_output_path(file, opt, "_test");
     const fs::path out_bin = opt.out_dir / (file.stem().string() + "_test.out");
@@ -4504,6 +4522,7 @@ int cmd_test(const CliOptions& opt) {
     }
   }
 
+  if (!failed && !ran_tests) emit_zero_test_summary(started);
   return failed ? 1 : 0;
 }
 

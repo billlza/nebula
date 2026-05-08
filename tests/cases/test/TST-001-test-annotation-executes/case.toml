@@ -11,4 +11,8 @@ kind = "nebula"
 command = "test"
 args = ["--diag-format", "json", "--dir", "work/testdir"]
 expect_rc = 0
-expect_stdout_contains = ["[test] test_add", "[test] ok"]
+expect_stdout_contains = [
+  "[test] test_add",
+  "[test] ok",
+  "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in",
+]
