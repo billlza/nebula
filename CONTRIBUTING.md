@@ -2,6 +2,9 @@
 
 Nebula values small, explicit, high-signal changes.
 
+For the full engineering rulebook, use `docs/engineering_playbook.md`. The rules below are the
+short-form contribution summary.
+
 Guidelines:
 
 - Start with the documented scope and non-goals before proposing expansion.

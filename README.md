@@ -536,6 +536,8 @@ See `spec/SPEC.md` for layered docs:
 - Static Analysis: `spec/static_analysis.md`
 - Tooling/CLI: `spec/tooling_cli.md`
 - Experimental/Infra: `spec/experimental_infra.md`
+- Engineering playbook: `docs/engineering_playbook.md`
+- Current execution plan: `docs/current_execution_plan.md`
 - Service profile: `docs/service_profile.md`
 - Backend developer guide: `docs/backend_developer_guide.md`
 - App platform convergence: `docs/app_platform_convergence.md`
@@ -547,6 +549,7 @@ See `spec/SPEC.md` for layered docs:
 - Stability policy: `docs/stability_policy.md`
 - Package tiering: `docs/official_package_tiering.md`
 - Install lifecycle: `docs/install_lifecycle.md`
+- Release contract index: `docs/release_contract.md`
 - Release verification: `docs/release_verification.md`
 - Release sign-off: `docs/release_signoff.md`
 - RC checklist: `docs/rc_checklist_v1.0.md`
@@ -558,6 +561,7 @@ See `spec/SPEC.md` for layered docs:
 - Changelog: `CHANGELOG.md`
 - Current release notes: `RELEASE_NOTES_v<VERSION>.md`
 - Release process: `RELEASE_PROCESS.md`
+- Release contract index: `docs/release_contract.md`
 - Release verification: `docs/release_verification.md`
 - RC checklist: `docs/rc_checklist_v1.0.md`
 

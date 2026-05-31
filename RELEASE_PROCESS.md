@@ -2,6 +2,7 @@
 
 This document defines the release procedure for Nebula `1.0.x`.
 
+The release-contract index lives in `docs/release_contract.md`.
 Concrete `1.0.0` release-candidate closeout items live in `docs/rc_checklist_v1.0.md`.
 Operational branch-cut / workflow / tag sign-off steps live in `docs/release_signoff.md`.
 
