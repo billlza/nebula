@@ -204,8 +204,13 @@ Example: a warning can still be high-risk.
 - `NBL-T132`: `await` is only valid inside async functions
 - `NBL-T133`: `await` operand must have type `Future<T>` or `Task<T>`
 - `NBL-T134`: phase-1 async functions reject suspension with `ref` parameters
+- `NBL-CLI-SYSTEM-STD`: system/no-std project loading rejects bundled `std::...` imports
+- `NBL-CLI-SYSTEM-NATIVE`: system/no-std project loading rejects reachable `host_cxx` or
+  `[native]` sources because they target the hosted bridge/toolchain profile
 - `NBL-CLI-CABI-HOSTCXX`: library build rejects `host_cxx` sources because the current public ABI
   contract is limited to Nebula-defined exported wrappers
+- `NBL-CLI-CABI-NATIVE`: library build rejects reachable `[native]` package sources because the
+  current public ABI contract is limited to Nebula-defined exported wrappers
 - `NBL-CLI-CABI-NOEXPORT`: `build --emit staticlib|sharedlib` found no root-package
   `@export @abi_c` functions to publish
 - `NBL-CLI-CABI-CONFLICT`: sanitized public C ABI symbol names collided

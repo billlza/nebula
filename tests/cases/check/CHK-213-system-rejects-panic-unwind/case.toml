@@ -4,4 +4,7 @@ command = "check"
 source = "fixtures/system_no_std_ok.nb"
 args = ["--target", "system", "--panic", "unwind"]
 expect_rc = 2
-expect_stdout_contains = ["error: --panic unwind requires the hosted runtime profile"]
+expect_stdout_contains = [
+  "error: --panic unwind requires the hosted runtime profile",
+  "use --panic abort or --panic trap for system/no-std builds",
+]

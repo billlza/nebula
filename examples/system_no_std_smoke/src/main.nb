@@ -1,0 +1,14 @@
+module main
+
+struct Counter {
+  value: Int
+}
+
+fn bump(value: Int) -> Int {
+  let counter = Counter(value)
+  return counter.value + 1
+}
+
+fn main() -> Int {
+  return bump(41) - 42
+}

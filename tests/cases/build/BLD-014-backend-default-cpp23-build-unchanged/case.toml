@@ -1,0 +1,24 @@
+id = "BLD-014-backend-default-cpp23-build-unchanged"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+rm -rf work/backend-default-cpp23
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/main_exit_code_7.nb" \
+  --out-dir work/backend-default-cpp23
+test -f work/backend-default-cpp23/main_exit_code_7.cpp
+test -f work/backend-default-cpp23/main_exit_code_7.out
+test -f work/backend-default-cpp23/main_exit_code_7.out.nebmeta
+grep -F 'nebula-codegen-profile runtime_profile=hosted target=host panic_policy=abort' \
+  work/backend-default-cpp23/main_exit_code_7.cpp
+grep -F 'NEBULA_RUNTIME_PROFILE = "hosted"' work/backend-default-cpp23/main_exit_code_7.cpp
+grep -F 'NEBULA_TARGET = "host"' work/backend-default-cpp23/main_exit_code_7.cpp
+grep -F 'NEBULA_PANIC_POLICY = "abort"' work/backend-default-cpp23/main_exit_code_7.cpp
+grep -F 'runtime_profile=hosted' work/backend-default-cpp23/main_exit_code_7.out.nebmeta
+grep -F 'target=host' work/backend-default-cpp23/main_exit_code_7.out.nebmeta
+grep -F 'panic_policy=abort' work/backend-default-cpp23/main_exit_code_7.out.nebmeta
+'''
+expect_rc = 0
+expect_stdout_contains = ["runtime_profile=hosted target=host panic_policy=abort", "NEBULA_TARGET = \"host\""]

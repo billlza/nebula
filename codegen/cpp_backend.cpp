@@ -2664,4 +2664,40 @@ std::string emit_c_abi_header(const Program& p,
   return out.str();
 }
 
+namespace {
+
+class Cpp23Backend final : public Backend {
+public:
+  std::string name() const override { return "cpp23"; }
+
+  std::string emit_translation_unit(const Program& p,
+                                    const RepOwnerResult& rep_owner,
+                                    const EmitOptions& opt) const override {
+    return emit_cpp23(p, rep_owner, opt);
+  }
+
+  std::vector<CAbiFunction> collect_c_abi_exports(
+      const Program& p,
+      std::optional<std::string_view> package_name) const override {
+    return collect_c_abi_functions(p, package_name);
+  }
+
+  std::string emit_c_abi_header(const Program& p,
+                                const std::vector<CAbiFunction>& exports,
+                                std::string_view header_stem) const override {
+    return nebula::codegen::emit_c_abi_header(p, exports, header_stem);
+  }
+};
+
+} // namespace
+
+const Backend& cpp23_backend() {
+  static const Cpp23Backend backend;
+  return backend;
+}
+
+const Backend& default_backend() {
+  return cpp23_backend();
+}
+
 } // namespace nebula::codegen

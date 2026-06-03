@@ -28,10 +28,29 @@ The experimental system/no-std gate currently:
 - writes runtime profile, target, and panic policy markers into generated C++ artifacts
 - rejects reachable host bridge/native package sources for system/no-std builds
 - rejects `--panic unwind` because no freestanding unwind/runtime ABI exists yet
+- accepts `--panic abort` and `--panic trap` as artifact-visible policies
+- can check and hosted-C++ build the repo-local `examples/system_no_std_smoke` fixture without
+  bundled `std` imports
 
 That profile is useful for CLI tools, backend services, control-plane programs, and thin-host app
 cores. It is not a kernel, bootloader, driver, interrupt-handler, or no-std runtime profile.
 The experimental gate is therefore a contract check, not proof of kernel suitability.
+
+## CLI Gate Matrix
+
+| Input | Current effect |
+| --- | --- |
+| `--target system` | selects system runtime profile, implies no-std, forces strict region |
+| `--target freestanding` | selects system runtime profile, implies no-std, forces strict region |
+| `--target *-none*` / `*unknown-none*` | selects system runtime profile, implies no-std, forces strict region |
+| `--profile system` | selects system runtime profile, implies no-std, forces strict region |
+| `--no-std` | rejects bundled `std::...` imports |
+| `--panic abort` | accepted and recorded in generated artifacts |
+| `--panic trap` | accepted and recorded in generated artifacts |
+| `--panic unwind` with system/no-std | rejected before compilation |
+
+The smoke fixture's build path is still hosted C++23 codegen and uses bundled runtime headers. It is
+not a freestanding runtime build.
 
 ## Required Contract Areas
 
@@ -73,7 +92,8 @@ The first credible system-profile milestone should include:
 
 - a documented `--target`/profile story separate from hosted CLI/service builds (first
   experimental gate exists)
-- a no-std smoke target that does not import hosted `std` modules (first contract tests exist)
+- a no-std smoke target that does not import hosted `std` modules (first repo fixture and contract
+  tests exist)
 - explicit diagnostics for forbidden hosted APIs in system-profile code (first bundled-std import
   diagnostic exists)
 - strict-region behavior without implicit auto-promote for system targets (first CLI policy exists)

@@ -1,0 +1,26 @@
+id = "BLD-013-system-no-std-smoke-build-policy-markers"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+rm -rf work/system-no-std-smoke
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+  --target system --no-std --panic abort --out-dir work/system-no-std-smoke
+test -f work/system-no-std-smoke/main.cpp
+test -f work/system-no-std-smoke/main.out
+test -f work/system-no-std-smoke/main.out.nebmeta
+grep -F '#include "runtime/nebula_runtime.hpp"' work/system-no-std-smoke/main.cpp
+grep -F 'nebula-codegen-profile runtime_profile=system target=system panic_policy=abort' work/system-no-std-smoke/main.cpp
+grep -F 'NEBULA_RUNTIME_PROFILE = "system"' work/system-no-std-smoke/main.cpp
+grep -F 'NEBULA_TARGET = "system"' work/system-no-std-smoke/main.cpp
+grep -F 'NEBULA_PANIC_POLICY = "abort"' work/system-no-std-smoke/main.cpp
+grep -F 'runtime_profile=system' work/system-no-std-smoke/main.out.nebmeta
+grep -F 'target=system' work/system-no-std-smoke/main.out.nebmeta
+grep -F 'panic_policy=abort' work/system-no-std-smoke/main.out.nebmeta
+grep -F 'strict_region=1' work/system-no-std-smoke/main.out.nebmeta
+grep -F 'no_std=1' work/system-no-std-smoke/main.out.nebmeta
+'''
+expect_rc = 0
+expect_stdout_contains = ["runtime_profile=system target=system panic_policy=abort", "NEBULA_PANIC_POLICY = \"abort\""]

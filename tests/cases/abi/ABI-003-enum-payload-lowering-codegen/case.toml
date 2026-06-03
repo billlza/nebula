@@ -1,0 +1,48 @@
+id = "ABI-003-enum-payload-lowering-codegen"
+suite = "abi"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/abi_enum"
+mkdir -p "$root"
+cat > "$root/enum_layout.nb" <<'EOF'
+enum MaybeInt {
+  Some(Int)
+  None(Void)
+}
+
+fn choose(flag: Bool) -> MaybeInt {
+  if flag {
+    return Some(7)
+  }
+  return None()
+}
+
+fn main() -> Int {
+  match choose(true) {
+    Some(value) => { return value }
+    None => { return 0 }
+  }
+}
+EOF
+"$NEBULA_BINARY" build "$root/enum_layout.nb" --emit-cpp --out-dir "$root/out"
+python3 - <<'PY'
+import re
+from pathlib import Path
+cpp = Path("work/abi_enum/out/enum_layout.cpp").read_text(encoding="utf-8")
+checks = {
+    "enum wrapper": r"struct __nebula_ty_[0-9a-f]+_MaybeInt \{",
+    "payload variant": r"struct Some \{\n    std::int64_t value;",
+    "zero payload variant": r"struct None \{\n    None\(\) = default;\n  \};",
+    "variant storage": r"std::variant<Some, None> data;",
+}
+missing = [name for name, pattern in checks.items() if not re.search(pattern, cpp)]
+if missing:
+    raise SystemExit("missing enum lowering fragments: " + ", ".join(missing))
+print("abi-enum-payload-lowering-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["abi-enum-payload-lowering-ok"]

@@ -1,0 +1,93 @@
+id = "TST-333-example-universe-control-plane-smoke"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from cli_service_workspace import http_request, nebula, require_success, start_service, terminate_process
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_universe_control_plane')
+shutil.rmtree(root, ignore_errors=True)
+shutil.copytree(repo_root / 'examples' / 'universe_control_plane', root)
+lock_path = root / 'nebula.lock'
+if lock_path.exists():
+    lock_path.unlink()
+
+require_success(nebula(binary, 'fetch', root), 'universe workspace fetch')
+if not lock_path.exists():
+    raise SystemExit('universe workspace fetch did not write nebula.lock')
+require_success(nebula(binary, 'check', root), 'universe workspace check')
+require_success(nebula(binary, 'build', root / 'apps' / 'ctl', '--out-dir', root / '.ctl-build'), 'universe ctl build')
+require_success(nebula(binary, 'build', root / 'apps' / 'service', '--out-dir', root / '.service-build'), 'universe service build')
+require_success(nebula(binary, 'test', '--dir', root), 'universe workspace test')
+
+state_file = (root / 'state' / 'services.log').resolve()
+state_file.parent.mkdir(parents=True, exist_ok=True)
+env = {**os.environ, 'UNIVERSE_STATE_PATH': str(state_file)}
+
+def run_ctl(*args: str):
+    return nebula(binary, 'run', root / 'apps' / 'ctl', '--run-gate', 'none', '--out-dir', root / '.ctl-run', '--', *args, env=env)
+
+status = run_ctl('status')
+require_success(status, 'ctl status')
+if 'registry=empty' not in status.stdout:
+    raise SystemExit('initial status did not show empty registry')
+
+register = run_ctl('register', 'scheduler')
+require_success(register, 'ctl register')
+if 'registered=scheduler' not in register.stdout:
+    raise SystemExit('register did not print expected result')
+
+desired = run_ctl('desired', 'scheduler', 'running')
+require_success(desired, 'ctl desired running')
+if 'desired=scheduler:desired_running' not in desired.stdout:
+    raise SystemExit('desired running did not print expected result')
+
+listed = run_ctl('list-services')
+require_success(listed, 'ctl list-services')
+for fragment in ['universe-control-plane=hosted', '"name":"scheduler"', '"state":"registered"', '"state":"desired_running"']:
+    if fragment not in listed.stdout:
+        print(listed.stdout, end='')
+        raise SystemExit(f'list-services missing {fragment!r}')
+
+bad_name = run_ctl('register', '..')
+if bad_name.returncode == 0 or 'service name must not be . or ..' not in bad_name.stdout:
+    print(bad_name.stdout, end='')
+    print(bad_name.stderr, end='')
+    raise SystemExit('reserved service name was not rejected')
+
+proc = None
+stderr_lines = []
+try:
+    proc, stderr_lines, port = start_service(binary, root, extra_env={'UNIVERSE_STATE_PATH': str(state_file)})
+    status_code, body, _ = http_request('127.0.0.1', port, 'GET', '/v1/status')
+    if status_code != 200:
+        raise SystemExit(f'/v1/status returned {status_code}: {body}')
+    payload = json.loads(body)
+    if payload.get('service') != 'universe-control-plane':
+        raise SystemExit('status endpoint service name drifted')
+    if 'state_path' in payload:
+        raise SystemExit('status endpoint leaked local state path')
+    if payload.get('storage') != 'file':
+        raise SystemExit('status endpoint storage mode drifted')
+    if '"state":"desired_running"' not in payload.get('registry', ''):
+        raise SystemExit('status endpoint registry did not include desired state')
+finally:
+    if proc is not None:
+        terminate_process(proc)
+
+print('example-universe-control-plane-ok')
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["example-universe-control-plane-ok"]

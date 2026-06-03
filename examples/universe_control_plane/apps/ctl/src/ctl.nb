@@ -1,0 +1,92 @@
+module ctl
+import args
+import core::registry
+import core::text
+import store
+import std::result
+
+fn print_error(msg: String) -> Int {
+  print(msg)
+  return 1
+}
+
+fn print_usage_error(msg: String) -> Int {
+  print(msg)
+  usage()
+  return 2
+}
+
+fn emit_snapshot(snapshot: String) -> Int {
+  print("universe-control-plane=hosted")
+  print(status_text(snapshot))
+  return 0
+}
+
+fn run_status() -> Int {
+  match read_registry_snapshot() {
+    Ok(snapshot) => {
+      return emit_snapshot(snapshot)
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+fn run_register(name: String) -> Int {
+  match append_registry_record(name, state_registered()) {
+    Ok(_) => {
+      print(text_concat("registered=", name))
+      return 0
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+fn run_desired(name: String, desired: String) -> Int {
+  match desired_state_from_cli(desired) {
+    Ok(state) => {
+      match append_registry_record(name, state) {
+        Ok(_) => {
+          print(text_concat3("desired=", name, text_concat(":", state)))
+          return 0
+        }
+        Err(msg) => {
+          return print_error(msg)
+        }
+      }
+    }
+    Err(msg) => {
+      return print_error(msg)
+    }
+  }
+}
+
+fn run_command(parsed: ParsedArgs) -> Int {
+  if parsed.command == "status" {
+    return run_status()
+  }
+  if parsed.command == "list-services" {
+    return run_status()
+  }
+  if parsed.command == "register" {
+    return run_register(parsed.name)
+  }
+  if parsed.command == "desired" {
+    return run_desired(parsed.name, parsed.desired)
+  }
+  return print_usage_error("unknown command")
+}
+
+fn run() -> Int {
+  match parse_args() {
+    Ok(parsed) => {
+      return run_command(parsed)
+    }
+    Err(msg) => {
+      return print_usage_error(msg)
+    }
+  }
+}

@@ -1,0 +1,4 @@
+schema_version = 1
+
+[workspace]
+members = ["apps/ctl", "apps/service", "packages/core"]

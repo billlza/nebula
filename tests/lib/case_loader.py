@@ -35,6 +35,19 @@ def _as_list(value: Any, default: list[Any] | None = None) -> list[Any]:
     raise CaseLoadError(f"expected list, got: {type(value).__name__}")
 
 
+def _get_alias_value(raw: dict[str, Any],
+                     primary: str,
+                     aliases: tuple[str, ...],
+                     default: Any = None) -> Any:
+    present = [key for key in (primary, *aliases) if key in raw]
+    if len(present) > 1:
+        keys = ", ".join(present)
+        raise CaseLoadError(f"use only one spelling for assertion key: {keys}")
+    if present:
+        return raw[present[0]]
+    return default
+
+
 def _normalize_step(raw: dict[str, Any], case_default: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     out["kind"] = str(raw.get("kind", "nebula"))
@@ -65,10 +78,16 @@ def _normalize_step(raw: dict[str, Any], case_default: dict[str, Any]) -> dict[s
     ]
 
     out["expect_diag"] = [
-        dict(x) for x in _as_list(raw.get("expect_diag", case_default.get("expect_diag", [])))
+        dict(x)
+        for x in _as_list(
+            _get_alias_value(raw, "expect_diag", ("expect_diagnostics",),
+                             case_default.get("expect_diag", [])))
     ]
     out["forbid_diag"] = [
-        dict(x) for x in _as_list(raw.get("forbid_diag", case_default.get("forbid_diag", [])))
+        dict(x)
+        for x in _as_list(
+            _get_alias_value(raw, "forbid_diag", ("forbid_diagnostics",),
+                             case_default.get("forbid_diag", [])))
     ]
     out["require_diag_keys"] = [
         str(x)
@@ -115,8 +134,8 @@ def _normalize_case(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
         "expect_stdout_contains": _as_list(raw.get("expect_stdout_contains", [])),
         "forbid_stdout_contains": _as_list(raw.get("forbid_stdout_contains", [])),
         "expect_stdout_regex": _as_list(raw.get("expect_stdout_regex", [])),
-        "expect_diag": _as_list(raw.get("expect_diag", [])),
-        "forbid_diag": _as_list(raw.get("forbid_diag", [])),
+        "expect_diag": _as_list(_get_alias_value(raw, "expect_diag", ("expect_diagnostics",), [])),
+        "forbid_diag": _as_list(_get_alias_value(raw, "forbid_diag", ("forbid_diagnostics",), [])),
         "require_diag_keys": _as_list(raw.get("require_diag_keys", [])),
         "must_exist": _as_list(raw.get("must_exist", [])),
         "must_not_exist": _as_list(raw.get("must_not_exist", [])),

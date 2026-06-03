@@ -5,7 +5,7 @@
 #include <iostream>
 #include <unordered_set>
 
-#include "codegen/cpp_backend.hpp"
+#include "codegen/backend.hpp"
 
 namespace {
 struct CacheReportScope {
@@ -142,7 +142,8 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
   if (library_mode && !loaded.project_name.empty()) {
     eopt.c_abi_export_package = loaded.project_name;
   }
-  const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
+  const auto& backend = nebula::codegen::default_backend();
+  const std::string cpp = backend.emit_translation_unit(*analysis.nir_prog, *analysis.rep_owner, eopt);
 
   if (!write_text_file(out_cpp, cpp)) {
     auto d = make_cli_diag(
@@ -157,8 +158,7 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
 
   std::cerr << "wrote: " << out_cpp.string() << "\n";
   if (library_mode) {
-    const auto exports =
-        nebula::codegen::collect_c_abi_functions(*analysis.nir_prog, loaded.project_name);
+    const auto exports = backend.collect_c_abi_exports(*analysis.nir_prog, loaded.project_name);
     if (exports.empty()) {
       auto d = make_cli_diag(
           nebula::frontend::Severity::Error, "NBL-CLI-CABI-NOEXPORT",
@@ -185,7 +185,7 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
       }
     }
     const fs::path header_path = header_output_path_for(loaded, effective_file, out_bin);
-    const std::string header = nebula::codegen::emit_c_abi_header(
+    const std::string header = backend.emit_c_abi_header(
         *analysis.nir_prog, exports, default_header_stem(loaded, effective_file));
     if (!write_text_file(header_path, header)) {
       auto d = make_cli_diag(
@@ -302,7 +302,8 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
       eopt.runtime_profile = opt.runtime_profile;
       eopt.target = opt.target;
       eopt.panic_policy = opt.panic_policy;
-      cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
+      cpp = nebula::codegen::default_backend().emit_translation_unit(
+          *analysis.nir_prog, *analysis.rep_owner, eopt);
     } else {
       auto d = make_cli_diag(
           nebula::frontend::Severity::Error, "NBL-CLI-CACHE-STATE",

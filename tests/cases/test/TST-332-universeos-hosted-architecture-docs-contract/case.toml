@@ -1,0 +1,36 @@
+id = "TST-332-universeos-hosted-architecture-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+for doc_path in \
+  docs/universeos/architecture.md \
+  docs/universeos/roadmap.md \
+  docs/universeos/qemu_boot_hello.md \
+  rfcs/0002-freestanding-target.md
+do
+  test -f "$NEBULA_REPO_ROOT/$doc_path"
+done
+grep -F 'docs/app_platform_convergence.md' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'docs/service_profile.md' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'docs/system_profile.md' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'docs/universeos_convergence.md' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'Kernel and driver support is blocked' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'Universe CLI tools' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'Universe service manager' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'Thin-host app shell' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'Future no-std/freestanding substrate' "$NEBULA_REPO_ROOT/docs/universeos/architecture.md"
+grep -F 'Phase 1: Hosted Control-Plane Forcing App' "$NEBULA_REPO_ROOT/docs/universeos/roadmap.md"
+grep -F 'x86_64-unknown-none' "$NEBULA_REPO_ROOT/rfcs/0002-freestanding-target.md"
+grep -F 'x86_64-universe-none' "$NEBULA_REPO_ROOT/rfcs/0002-freestanding-target.md"
+grep -F 'Rollback Strategy' "$NEBULA_REPO_ROOT/rfcs/0002-freestanding-target.md"
+grep -F 'Limine' "$NEBULA_REPO_ROOT/docs/universeos/qemu_boot_hello.md"
+grep -F 'Multiboot2' "$NEBULA_REPO_ROOT/docs/universeos/qemu_boot_hello.md"
+grep -F 'UEFI' "$NEBULA_REPO_ROOT/docs/universeos/qemu_boot_hello.md"
+grep -F 'nebula-uos-boot-hello' "$NEBULA_REPO_ROOT/docs/universeos/qemu_boot_hello.md"
+grep -F 'This is a future implementation plan' "$NEBULA_REPO_ROOT/docs/universeos/qemu_boot_hello.md"
+'''
+expect_rc = 0
+expect_stdout_contains = ["Kernel and driver support is blocked", "nebula-uos-boot-hello"]

@@ -1,0 +1,89 @@
+id = "TST-330-language-reference-spec-index-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+required_files = [
+    "spec/language_reference.md",
+    "spec/type_system.md",
+    "spec/ownership_model.md",
+    "spec/region_model.md",
+    "docs/spec_index.md",
+]
+for rel in required_files:
+    path = repo / rel
+    if not path.exists():
+        raise SystemExit(f"missing spec file: {rel}")
+
+reference = (repo / "spec/language_reference.md").read_text(encoding="utf-8")
+required_reference_text = [
+    "## Lexical Model",
+    "## Modules, Imports, And Packages",
+    "## Primitive Types",
+    "## Functions And Methods",
+    "## Structs And Enums",
+    "## Generics",
+    "## Regions",
+    "## Ownership And Promotion",
+    "## Unsafe Boundary",
+    "## Extern And FFI",
+    "## Result And Error Propagation",
+    "## Async And Task Model",
+    "## Match And Control Flow",
+    "## System Profile Relationship",
+    "implemented",
+    "preview",
+    "experimental",
+    "planned",
+    "not yet implemented",
+    "spec/static_analysis.md",
+    "spec/safety_contract.md",
+    "docs/system_profile.md",
+    "docs/universeos_convergence.md",
+]
+for needle in required_reference_text:
+    if needle not in reference:
+        raise SystemExit(f"language reference missing: {needle}")
+
+for rel in ["spec/type_system.md", "spec/ownership_model.md", "spec/region_model.md"]:
+    text = (repo / rel).read_text(encoding="utf-8")
+    for needle in ["## Open Design Questions", "Traits/protocols", "Lifetimes", "Collections", "Closure capture"]:
+        if needle not in text:
+            raise SystemExit(f"{rel} missing open design question text: {needle}")
+
+ownership = (repo / "spec/ownership_model.md").read_text(encoding="utf-8")
+region = (repo / "spec/region_model.md").read_text(encoding="utf-8")
+for needle in ["NBL-R001", "heap-unique", "heap-shared", "spec/region_model.md"]:
+    if needle not in ownership:
+        raise SystemExit(f"ownership model missing: {needle}")
+for needle in ["NBL-R001", "spec/ownership_model.md", "strict-region", "does not provide a freestanding runtime"]:
+    if needle not in region:
+        raise SystemExit(f"region model missing: {needle}")
+
+unsupported_claim_needles = [
+    "supports kernel",
+    "supports drivers",
+    "implements a freestanding runtime",
+    "provides a scheduler",
+    "bootable kernel",
+]
+joined = "\n".join((repo / rel).read_text(encoding="utf-8") for rel in required_files)
+for needle in unsupported_claim_needles:
+    if needle in joined:
+        raise SystemExit(f"unsupported claim found: {needle}")
+
+spec_index = (repo / "docs/spec_index.md").read_text(encoding="utf-8")
+for rel in required_files[:-1]:
+    if rel not in spec_index:
+        raise SystemExit(f"docs/spec_index.md missing {rel}")
+
+print("language-reference-spec-index-ok")
+PY
+'''
+expect_stdout_contains = ["language-reference-spec-index-ok"]

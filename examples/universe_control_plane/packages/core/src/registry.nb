@@ -1,0 +1,134 @@
+module registry
+import text
+import std::json
+import std::result
+
+struct ServiceRecord {
+  name: String
+  state: String
+}
+
+extern fn __nebula_rt_string_len(value: String) -> Int
+
+fn state_registered() -> String {
+  return "registered"
+}
+
+fn state_desired_running() -> String {
+  return "desired_running"
+}
+
+fn state_desired_stopped() -> String {
+  return "desired_stopped"
+}
+
+fn state_observed_running() -> String {
+  return "observed_running"
+}
+
+fn state_observed_failed() -> String {
+  return "observed_failed"
+}
+
+fn empty_registry_text() -> String {
+  return ""
+}
+
+fn validate_service_name(name: String) -> Result<Bool, String> {
+  if name == "" {
+    return Err("service name is required")
+  }
+  if __nebula_rt_string_len(name) > 64 {
+    return Err("service name must be 64 bytes or less")
+  }
+  if name == "." || name == ".." {
+    return Err("service name must not be . or ..")
+  }
+  return Ok(true)
+}
+
+fn desired_state_from_cli(value: String) -> Result<String, String> {
+  if value == "running" {
+    return Ok(state_desired_running())
+  }
+  if value == "stopped" {
+    return Ok(state_desired_stopped())
+  }
+  return Err("desired state must be running or stopped")
+}
+
+fn service_record(name: String, state: String) -> Result<ServiceRecord, String> {
+  validate_service_name(name)?
+  return Ok(ServiceRecord(name, state))
+}
+
+fn service_record_line(record: ServiceRecord) -> String {
+  return text_concat(stringify(object2("name", string_value(record.name), "state", string_value(record.state))), "\n")
+}
+
+fn append_record_line(existing: String, record: ServiceRecord) -> String {
+  return text_concat(existing, service_record_line(record))
+}
+
+fn status_text(snapshot: String) -> String {
+  if snapshot == "" {
+    return "registry=empty"
+  }
+  return snapshot
+}
+
+@test
+fn test_desired_state_mapping() -> Void {
+  match desired_state_from_cli("running") {
+    Ok(value) => {
+      assert(value == state_desired_running(), "running desired state drifted")
+    }
+    Err(msg) => {
+      assert(false, msg)
+    }
+  }
+  match desired_state_from_cli("stopped") {
+    Ok(value) => {
+      assert(value == state_desired_stopped(), "stopped desired state drifted")
+    }
+    Err(msg) => {
+      assert(false, msg)
+    }
+  }
+}
+
+@test
+fn test_service_record_line() -> Void {
+  match service_record("scheduler", state_registered()) {
+    Ok(record) => {
+      assert(service_record_line(record) == "{\"name\":\"scheduler\",\"state\":\"registered\"}\n", "record line drifted")
+    }
+    Err(msg) => {
+      assert(false, msg)
+    }
+  }
+}
+
+@test
+fn test_service_record_line_escapes_delimiters() -> Void {
+  match service_record("sched=uler\nnext", state_registered()) {
+    Ok(record) => {
+      assert(service_record_line(record) == "{\"name\":\"sched=uler\\nnext\",\"state\":\"registered\"}\n", "record escaping drifted")
+    }
+    Err(msg) => {
+      assert(false, msg)
+    }
+  }
+}
+
+@test
+fn test_service_name_rejects_reserved_path_segments() -> Void {
+  match service_record("..", state_registered()) {
+    Ok(record) => {
+      assert(false, service_record_line(record))
+    }
+    Err(msg) => {
+      assert(msg == "service name must not be . or ..", "reserved service name diagnostic drifted")
+    }
+  }
+}

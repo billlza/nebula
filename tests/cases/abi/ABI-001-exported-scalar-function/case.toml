@@ -1,0 +1,55 @@
+id = "ABI-001-exported-scalar-function"
+suite = "abi"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/abi_scalar"
+mkdir -p "$root/src"
+cat > "$root/nebula.toml" <<'EOF'
+schema_version = 1
+
+[package]
+name = "abi-scalar"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+EOF
+cat > "$root/src/main.nb" <<'EOF'
+module main
+
+@export
+@abi_c
+fn add(a: Int, b: Int) -> Int {
+  return a + b
+}
+
+@export
+@abi_c
+fn half(value: Float) -> Float {
+  return value / 2.0
+}
+
+@export
+@abi_c
+fn flip(flag: Bool) -> Bool {
+  return !flag
+}
+
+@export
+@abi_c
+fn ping() -> Void {
+}
+EOF
+"$NEBULA_BINARY" build "$root" --emit staticlib --out-dir "$root/out"
+test -f "$root/out/libabi-scalar.a"
+test -f "$root/out/abi-scalar.h"
+grep -F 'NEBULA_CABI_API int64_t nebula_abi_scalar_main_add(int64_t a, int64_t b);' "$root/out/abi-scalar.h"
+grep -F 'NEBULA_CABI_API double nebula_abi_scalar_main_half(double value);' "$root/out/abi-scalar.h"
+grep -F 'NEBULA_CABI_API bool nebula_abi_scalar_main_flip(bool flag);' "$root/out/abi-scalar.h"
+grep -F 'NEBULA_CABI_API void nebula_abi_scalar_main_ping(void);' "$root/out/abi-scalar.h"
+grep -F 'extern "C" NEBULA_CABI_EXPORT std::int64_t nebula_abi_scalar_main_add(std::int64_t a, std::int64_t b)' "$root/out/main.cpp"
+'''
+expect_rc = 0
+expect_stdout_contains = ["nebula_abi_scalar_main_add", "nebula_abi_scalar_main_ping"]

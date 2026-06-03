@@ -1,0 +1,34 @@
+id = "ABI-005-library-without-export-diagnostic"
+suite = "abi"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/abi_no_export"
+mkdir -p "$root/src"
+cat > "$root/nebula.toml" <<'EOF'
+schema_version = 1
+
+[package]
+name = "abi-no-export"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+EOF
+cat > "$root/src/main.nb" <<'EOF'
+module main
+
+fn value() -> Int {
+  return 7
+}
+EOF
+"$NEBULA_BINARY" build "$root" --emit staticlib --diag-format json
+'''
+expect_rc = 1
+
+[[steps.expect_diag]]
+code = "NBL-CLI-CABI-NOEXPORT"
+severity = "error"
+stage = "build"
+category = "cli"

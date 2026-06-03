@@ -1,0 +1,39 @@
+id = "CHK-217-system-host-cxx-rejected"
+suite = "check"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/system_host_cxx_reject"
+mkdir -p "$root/src"
+cat > "$root/nebula.toml" <<'EOF'
+schema_version = 1
+
+[package]
+name = "system-host-cxx-reject"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+host_cxx = ["host.cpp"]
+EOF
+cat > "$root/src/main.nb" <<'EOF'
+module main
+
+fn main() -> Int {
+  return 0
+}
+EOF
+cat > "$root/host.cpp" <<'EOF'
+#include <cstdint>
+std::int64_t hosted_helper() { return 7; }
+EOF
+"$NEBULA_BINARY" check "$root" --target system --diag-format json
+'''
+expect_rc = 1
+
+[[steps.expect_diag]]
+code = "NBL-CLI-SYSTEM-NATIVE"
+severity = "error"
+stage = "build"
+category = "cli"

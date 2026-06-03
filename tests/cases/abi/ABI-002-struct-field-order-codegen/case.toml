@@ -1,0 +1,50 @@
+id = "ABI-002-struct-field-order-codegen"
+suite = "abi"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/abi_struct"
+mkdir -p "$root"
+cat > "$root/struct_layout.nb" <<'EOF'
+struct Pair {
+  left: Int
+  flag: Bool
+  amount: Float
+}
+
+fn main() -> Int {
+  let pair = Pair(3, true, 4.5)
+  if pair.flag {
+    return pair.left
+  }
+  return 0
+}
+EOF
+"$NEBULA_BINARY" build "$root/struct_layout.nb" --emit-cpp --out-dir "$root/out"
+python3 - <<'PY'
+import re
+from pathlib import Path
+cpp = Path("work/abi_struct/out/struct_layout.cpp").read_text(encoding="utf-8")
+field_pattern = (
+    r"struct __nebula_ty_[0-9a-f]+_Pair \{\n"
+    r"  std::int64_t left;\n"
+    r"  bool flag;\n"
+    r"  double amount;\n"
+)
+ctor_pattern = (
+    r"__nebula_ty_[0-9a-f]+_Pair\(std::int64_t left_, bool flag_, double amount_\)"
+    r" : left\(left_\), flag\(flag_\), amount\(amount_\) \{\}"
+)
+if not re.search(field_pattern, cpp):
+    raise SystemExit("struct fields are not emitted in source order")
+if not re.search(ctor_pattern, cpp):
+    raise SystemExit("struct constructor does not preserve source field order")
+if "struct Pair {" in cpp:
+    raise SystemExit("plain source struct name leaked into generated ABI surface")
+print("abi-struct-field-order-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["abi-struct-field-order-ok"]

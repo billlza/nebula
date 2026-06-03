@@ -17,6 +17,7 @@ Useful filters:
 ```bash
 python3 tests/run.py --suite run --report text
 python3 tests/run.py --suite check --filter 'CHK-*' --report json
+python3 tests/run.py --suite abi --filter 'ABI-*' --report text
 python3 tests/run.py --filter 'RUN-00[1-6]*' --keep-temp
 ```
 
@@ -24,7 +25,7 @@ python3 tests/run.py --filter 'RUN-00[1-6]*' --keep-temp
 
 - `python3 /Users/bill/Desktop/nebula/nebula/tests/run.py`
 - Options:
-  - `--suite all|check|build|run|test|bench|safety`
+  - `--suite all|check|build|run|test|bench|safety|abi`
   - `--filter <glob>`
   - `--report text|json|junit`
   - `--perf-json-out <path>` (non-gating performance summary)
@@ -120,7 +121,7 @@ tests/
   lib/
   fixtures/
   cases/
-    check/ build/ run/ test/ bench/ safety/
+    check/ build/ run/ test/ bench/ safety/ abi/
   artifacts/
 ```
 
@@ -166,10 +167,13 @@ tests/
 - install/release smoke coverage:
   `TST-039`, `TST-040`, `TST-041`, `TST-042`
 - platform/docs/harness stability contracts:
-  `TST-238`, `TST-239`, `TST-280`, `TST-281`, `TST-282`
+  `TST-238`, `TST-239`, `TST-280`, `TST-281`, `TST-282`, `TST-329`, `TST-330`
 - experimental system-profile gates:
   `CHK-204`, `CHK-205`, `CHK-206`, `CHK-207`, `CHK-208`, `CHK-209`, `CHK-210`,
-  `CHK-211`, `CHK-212`, `BLD-011`, `BLD-012`, `RUN-080`
+  `CHK-211`, `CHK-212`, `CHK-213`, `CHK-214`, `CHK-215`, `CHK-216`, `CHK-217`,
+  `CHK-218`, `BLD-011`, `BLD-012`, `BLD-013`, `RUN-080`
+- ABI/layout hosted C++23 goldens:
+  `ABI-001`, `ABI-002`, `ABI-003`, `ABI-004`, `ABI-005`
 
 ### Diagnostics contract (`spec/diagnostics.md`)
 

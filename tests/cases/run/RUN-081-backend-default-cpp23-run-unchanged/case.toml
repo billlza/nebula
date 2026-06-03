@@ -1,0 +1,7 @@
+id = "RUN-081-backend-default-cpp23-run-unchanged"
+suite = "run"
+command = "run"
+source = "fixtures/run_args_passthrough.nb"
+args = ["--run-gate", "none", "--", "alpha", "beta"]
+expect_rc = 0
+expect_stdout_contains = ["argv-ok"]

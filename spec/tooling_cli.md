@@ -124,10 +124,14 @@ Current 1.0 GA scope:
     profile and imply `--no-std`
   - system/no-std rejects `import std::*` during project loading with `NBL-CLI-SYSTEM-STD`
   - system profile forces strict-region behavior even when `--strict-region` is not passed
+  - system/no-std rejects reachable `host_cxx` and `[native]` package sources with
+    `NBL-CLI-SYSTEM-NATIVE`
   - system/no-std rejects `--panic unwind`; abort/trap are the only accepted policies until a
     freestanding unwind/runtime ABI exists
   - generated C++ records `NEBULA_RUNTIME_PROFILE`, `NEBULA_TARGET`, and `NEBULA_PANIC_POLICY`
     so panic and target policy are visible in artifacts
+  - `examples/system_no_std_smoke` is a check/hosted-C++ build fixture for this gate, not a
+    freestanding execution proof
   - this is not yet a freestanding object backend; hosted C++23 codegen and runtime headers remain
     the implementation path until the system profile grows a real no-std runtime
 - current complex-application positioning is intentionally narrow:

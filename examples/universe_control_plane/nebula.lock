@@ -1,0 +1,138 @@
+schema_version = 2
+root_package = "@workspace:universe_control_plane"
+root_manifest_hash = "566d35eeb495b87"
+toolchain_schema_version = 1
+cache_schema_version = 2
+
+[[package]]
+name = "@workspace:universe_control_plane"
+version = "0.1.0"
+root = "."
+manifest = "nebula.toml"
+entry = ""
+src_dir = ""
+source_kind = "workspace"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "566d35eeb495b87"
+source_fingerprint = "449d849321e2630a"
+integrity_fingerprint = "e16caeca9a61f13c"
+is_root = 1
+dependencies = ["universe-control-core=universe-control-core", "universe-control-ctl=universe-control-ctl", "universe-control-service=universe-control-service"]
+
+[[package]]
+name = "nebula-observe"
+version = "0.1.0"
+root = "../../official/nebula-observe"
+manifest = "../../official/nebula-observe/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "installed"
+source_hint = "nebula-observe"
+resolved_rev = ""
+manifest_hash = "9a8a10871f57579b"
+source_fingerprint = "a39e9bb4a998b816"
+integrity_fingerprint = "9cbe308fc358ad3b"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "nebula-service"
+version = "0.1.0"
+root = "../../official/nebula-service"
+manifest = "../../official/nebula-service/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "installed"
+source_hint = "nebula-service"
+resolved_rev = ""
+manifest_hash = "b21197fb95eca918"
+source_fingerprint = "35e4c68e4dd75f28"
+integrity_fingerprint = "37c05daabbc948c1"
+is_root = 0
+native_cxx_sources = ["native/bridge.cpp"]
+dependencies = ["observe=nebula-observe", "tlss=nebula-tls-server"]
+
+[[package]]
+name = "nebula-tls"
+version = "0.1.0"
+root = "../../official/nebula-tls"
+manifest = "../../official/nebula-tls/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-tls"
+resolved_rev = ""
+manifest_hash = "cf5e009b92a643a0"
+source_fingerprint = "5903a605b03d765"
+integrity_fingerprint = "deaf7c4ffe8d90fb"
+is_root = 0
+native_c_sources = ["native/vendor/mbedtls/library/aes.c", "native/vendor/mbedtls/library/asn1parse.c", "native/vendor/mbedtls/library/asn1write.c", "native/vendor/mbedtls/library/base64.c", "native/vendor/mbedtls/library/bignum.c", "native/vendor/mbedtls/library/bignum_core.c", "native/vendor/mbedtls/library/bignum_mod.c", "native/vendor/mbedtls/library/bignum_mod_raw.c", "native/vendor/mbedtls/library/cipher.c", "native/vendor/mbedtls/library/cipher_wrap.c", "native/vendor/mbedtls/library/constant_time.c", "native/vendor/mbedtls/library/ctr_drbg.c", "native/vendor/mbedtls/library/debug.c", "native/vendor/mbedtls/library/ecdh.c", "native/vendor/mbedtls/library/ecdsa.c", "native/vendor/mbedtls/library/ecp.c", "native/vendor/mbedtls/library/ecp_curves.c", "native/vendor/mbedtls/library/ecp_curves_new.c", "native/vendor/mbedtls/library/entropy.c", "native/vendor/mbedtls/library/entropy_poll.c", "native/vendor/mbedtls/library/error.c", "native/vendor/mbedtls/library/gcm.c", "native/vendor/mbedtls/library/hkdf.c", "native/vendor/mbedtls/library/md.c", "native/vendor/mbedtls/library/oid.c", "native/vendor/mbedtls/library/pem.c", "native/vendor/mbedtls/library/pk.c", "native/vendor/mbedtls/library/pk_ecc.c", "native/vendor/mbedtls/library/pk_wrap.c", "native/vendor/mbedtls/library/pkparse.c", "native/vendor/mbedtls/library/platform.c", "native/vendor/mbedtls/library/platform_util.c", "native/vendor/mbedtls/library/psa_crypto.c", "native/vendor/mbedtls/library/psa_crypto_aead.c", "native/vendor/mbedtls/library/psa_crypto_cipher.c", "native/vendor/mbedtls/library/psa_crypto_client.c", "native/vendor/mbedtls/library/psa_crypto_driver_wrappers_no_static.c", "native/vendor/mbedtls/library/psa_crypto_ecp.c", "native/vendor/mbedtls/library/psa_crypto_ffdh.c", "native/vendor/mbedtls/library/psa_crypto_hash.c", "native/vendor/mbedtls/library/psa_crypto_mac.c", "native/vendor/mbedtls/library/psa_crypto_rsa.c", "native/vendor/mbedtls/library/psa_crypto_slot_management.c", "native/vendor/mbedtls/library/psa_crypto_storage.c", "native/vendor/mbedtls/library/psa_its_file.c", "native/vendor/mbedtls/library/psa_util.c", "native/vendor/mbedtls/library/rsa.c", "native/vendor/mbedtls/library/rsa_alt_helpers.c", "native/vendor/mbedtls/library/sha1.c", "native/vendor/mbedtls/library/sha256.c", "native/vendor/mbedtls/library/sha512.c", "native/vendor/mbedtls/library/ssl_cache.c", "native/vendor/mbedtls/library/ssl_ciphersuites.c", "native/vendor/mbedtls/library/ssl_client.c", "native/vendor/mbedtls/library/ssl_debug_helpers_generated.c", "native/vendor/mbedtls/library/ssl_msg.c", "native/vendor/mbedtls/library/ssl_ticket.c", "native/vendor/mbedtls/library/ssl_tls.c", "native/vendor/mbedtls/library/ssl_tls12_client.c", "native/vendor/mbedtls/library/ssl_tls12_server.c", "native/vendor/mbedtls/library/ssl_tls13_client.c", "native/vendor/mbedtls/library/ssl_tls13_generic.c", "native/vendor/mbedtls/library/ssl_tls13_keys.c", "native/vendor/mbedtls/library/ssl_tls13_server.c", "native/vendor/mbedtls/library/version_features.c", "native/vendor/mbedtls/library/x509.c", "native/vendor/mbedtls/library/x509_crt.c"]
+native_cxx_sources = ["native/bridge.cpp"]
+native_include_dirs = ["native/include", "native/vendor/mbedtls/include", "native/vendor/mbedtls/library"]
+native_defines = ["MBEDTLS_SSL_ALPN"]
+dependencies = []
+
+[[package]]
+name = "nebula-tls-server"
+version = "0.1.0"
+root = "../../official/nebula-tls-server"
+manifest = "../../official/nebula-tls-server/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "../../official/nebula-tls-server"
+resolved_rev = ""
+manifest_hash = "b07b661615ab0ddc"
+source_fingerprint = "9bfc1309c07db163"
+integrity_fingerprint = "276577cc976e299c"
+is_root = 0
+dependencies = ["tls=nebula-tls"]
+
+[[package]]
+name = "universe-control-core"
+version = "0.1.0"
+root = "packages/core"
+manifest = "packages/core/nebula.toml"
+entry = "src/lib.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = "packages/core"
+resolved_rev = ""
+manifest_hash = "fdfa8bb469dddd0a"
+source_fingerprint = "f1dffee565b587a2"
+integrity_fingerprint = "2a0e2f7cb422ab76"
+is_root = 0
+dependencies = []
+
+[[package]]
+name = "universe-control-ctl"
+version = "0.1.0"
+root = "apps/ctl"
+manifest = "apps/ctl/nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "3624f786156ecc31"
+source_fingerprint = "41f820bedeb28ba7"
+integrity_fingerprint = "c8773fc59847552f"
+is_root = 0
+dependencies = ["core=universe-control-core"]
+
+[[package]]
+name = "universe-control-service"
+version = "0.1.0"
+root = "apps/service"
+manifest = "apps/service/nebula.toml"
+entry = "src/main.nb"
+src_dir = "src"
+source_kind = "path"
+source_hint = ""
+resolved_rev = ""
+manifest_hash = "298066f31f33b90f"
+source_fingerprint = "b692ff1a5e7f7def"
+integrity_fingerprint = "a08cf5c5ed2e7ddb"
+is_root = 0
+dependencies = ["core=universe-control-core", "observe=nebula-observe", "service=nebula-service"]

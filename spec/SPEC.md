@@ -13,7 +13,8 @@ This index keeps the language identity front-and-center: core semantics first, t
 
 - Language Core:
   `spec/language_core.md`, `spec/grammar.ebnf`, `spec/generics_policy.md`,
-  `spec/region_semantics.md`, `spec/rep_owner_model.md`
+  `spec/region_semantics.md`, `spec/rep_owner_model.md`, `spec/library_layers.md`,
+  `spec/abi_layout.md`
 - Static Analysis:
   `spec/static_analysis.md`, `spec/escape_analysis.md`, `spec/safety_contract.md`,
   `spec/diagnostics.md`
@@ -21,9 +22,9 @@ This index keeps the language identity front-and-center: core semantics first, t
   `spec/tooling_cli.md`, `spec/interop_c_abi.md` (compat entry: `spec/cli_contract.md`)
 - Product/system profiles:
   `docs/service_profile.md`, `docs/app_platform_convergence.md`, `docs/universeos_convergence.md`,
-  `docs/system_profile.md`
+  `docs/system_profile.md`, `docs/universeos/no_std_runtime.md`
 - Experimental/Infra:
-  `spec/experimental_infra.md`
+  `spec/experimental_infra.md`, `spec/compiler_pipeline.md`
 
 ## 3. Language center
 
@@ -36,7 +37,9 @@ Borrow/exclusivity (`NBL-T09x`) is a conservative safety assist layer, not the c
 
 ## 4. Pipeline
 
-`Source -> AST -> Typed AST -> NIR/CFG -> EscapeAnalysis -> RepOwner inference -> C++23 -> clang++`
+`Source -> AST -> Typed AST -> NIR/CFG -> analysis -> backend -> host toolchain`
+
+The current production backend is still C++23 only; see `spec/compiler_pipeline.md`.
 
 ## 5. Ownership of changes
 

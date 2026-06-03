@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=f"Nebula v{repo_version()} contract test harness")
     p.add_argument(
         "--suite",
-        choices=["all", "check", "build", "run", "test", "bench", "safety"],
+        choices=["all", "check", "build", "run", "test", "bench", "safety", "abi"],
         default="all",
         help="case suite to run",
     )

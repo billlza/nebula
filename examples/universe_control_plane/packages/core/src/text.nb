@@ -1,0 +1,10 @@
+module text
+import std::bytes
+
+fn text_concat(lhs: String, rhs: String) -> String {
+  return to_string(concat(from_string(lhs), from_string(rhs)))
+}
+
+fn text_concat3(first: String, second: String, third: String) -> String {
+  return text_concat(text_concat(first, second), third)
+}

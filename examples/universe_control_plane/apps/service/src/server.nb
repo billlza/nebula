@@ -1,0 +1,99 @@
+module server
+import core::app
+import core::registry
+import service::context
+import service::errors
+import service::health
+import service::middleware
+import std::env
+import std::fs
+import std::http
+import std::http_json
+import std::json
+import std::result
+import std::time
+
+fn app_profile() -> String {
+  return "hosted-universe-control-plane"
+}
+
+fn route_status_path() -> String {
+  return "/v1/status"
+}
+
+fn selected_state_path() -> String {
+  return get_or_default("UNIVERSE_STATE_PATH", default_state_file())
+}
+
+fn read_registry_snapshot() -> Result<String, String> {
+  let path = selected_state_path()
+  match exists(path) {
+    Ok(found) => {
+      if found {
+        return read_string(path)
+      }
+      return Ok(empty_registry_text())
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn method_not_allowed() -> Result<Response, String> {
+  return Ok(method_not_allowed_text("method not allowed"))
+}
+
+async fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if path_matches("/healthz", request) {
+    if method_matches(Get, request.method) {
+      return await handle_health_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches("/readyz", request) {
+    if method_matches(Get, request.method) {
+      return await handle_ready_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  if path_matches(route_status_path(), request) {
+    if method_matches(Get, request.method) {
+      return await handle_status_route(ctx, request)
+    }
+    return method_not_allowed()
+  }
+  return Ok(not_found_text("not found"))
+}
+
+async fn handle_health_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(live_response_with_context(ctx))
+}
+
+async fn handle_ready_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  if ctx.is_draining() {
+    return Ok(draining_response_with_context(ctx))
+  }
+  return Ok(ready_response_with_context(ctx))
+}
+
+async fn handle_status_route(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  let snapshot = read_registry_snapshot()?
+  let payload = object7(
+    "service",
+    string_value(service_name()),
+    "version",
+    string_value(service_version()),
+    "profile",
+    string_value(app_profile()),
+    "request_id",
+    string_value(ctx.request_id_text),
+    "unix_ms",
+    int_value(unix_millis()),
+    "storage",
+    string_value("file"),
+    "registry",
+    string_value(status_text(snapshot))
+  )
+  return Ok(ok_json(payload))
+}

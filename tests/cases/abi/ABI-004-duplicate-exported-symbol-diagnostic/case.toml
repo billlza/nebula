@@ -1,0 +1,54 @@
+id = "ABI-004-duplicate-exported-symbol-diagnostic"
+suite = "abi"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/abi_conflict"
+mkdir -p "$root/src/foo" "$root/src/foo_bar"
+cat > "$root/nebula.toml" <<'EOF'
+schema_version = 1
+
+[package]
+name = "abi-demo"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+EOF
+cat > "$root/src/main.nb" <<'EOF'
+module main
+import foo.bar
+import foo_bar
+
+fn main() -> Int {
+  return 0
+}
+EOF
+cat > "$root/src/foo/bar.nb" <<'EOF'
+module foo.bar
+
+@export
+@abi_c
+fn add() -> Int {
+  return 1
+}
+EOF
+cat > "$root/src/foo_bar.nb" <<'EOF'
+module foo_bar
+
+@export
+@abi_c
+fn add() -> Int {
+  return 2
+}
+EOF
+"$NEBULA_BINARY" build "$root" --emit staticlib --diag-format json
+'''
+expect_rc = 1
+
+[[steps.expect_diag]]
+code = "NBL-CLI-CABI-CONFLICT"
+severity = "error"
+stage = "build"
+category = "cli"

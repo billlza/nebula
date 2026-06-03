@@ -1,0 +1,41 @@
+id = "CHK-218-system-native-sources-rejected"
+suite = "check"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/system_native_reject"
+mkdir -p "$root/src" "$root/native"
+cat > "$root/nebula.toml" <<'EOF'
+schema_version = 1
+
+[package]
+name = "system-native-reject"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[native]
+c_sources = ["native/helper.c"]
+EOF
+cat > "$root/src/main.nb" <<'EOF'
+module main
+
+fn main() -> Int {
+  return 0
+}
+EOF
+cat > "$root/native/helper.c" <<'EOF'
+#include <stdint.h>
+int64_t native_helper(void) { return 7; }
+EOF
+"$NEBULA_BINARY" check "$root" --target system --diag-format json
+'''
+expect_rc = 1
+
+[[steps.expect_diag]]
+code = "NBL-CLI-SYSTEM-NATIVE"
+severity = "error"
+stage = "build"
+category = "cli"

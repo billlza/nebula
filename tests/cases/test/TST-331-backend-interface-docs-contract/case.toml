@@ -1,0 +1,29 @@
+id = "TST-331-backend-interface-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+test -f "$NEBULA_REPO_ROOT/codegen/backend.hpp"
+test -f "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'class Backend' "$NEBULA_REPO_ROOT/codegen/backend.hpp"
+grep -F 'const Backend& default_backend();' "$NEBULA_REPO_ROOT/codegen/backend.hpp"
+grep -F 'C++23 remains the default and only' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'production backend. There is no LLVM backend' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'Cranelift backend, direct object backend' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'Parser:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'Typechecker:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'NIR/CFG:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+grep -F 'Codegen:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
+deps="CMakeLists.txt"
+if [ -d "$NEBULA_REPO_ROOT/cmake" ]; then
+  deps="$deps cmake"
+fi
+cd "$NEBULA_REPO_ROOT"
+if rg -n 'find_package\((LLVM|Cranelift)|llvm-config|cranelift' $deps; then
+  exit 1
+fi
+'''
+expect_rc = 0
+expect_stdout_contains = ["class Backend", "C++23 remains the default and only"]

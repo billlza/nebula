@@ -25,7 +25,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "codegen/cpp_backend.hpp"
+#include "codegen/backend.hpp"
 #include "frontend/errors.hpp"
 #include "frontend/diagnostic.hpp"
 #include "frontend/lexer.hpp"
@@ -513,7 +513,8 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
   eopt.runtime_profile = opt.runtime_profile;
   eopt.target = opt.target;
   eopt.panic_policy = opt.panic_policy;
-  const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
+  const std::string cpp = nebula::codegen::default_backend().emit_translation_unit(
+      *analysis.nir_prog, *analysis.rep_owner, eopt);
 
   if (!write_text_file(out_cpp, cpp)) {
     auto d = make_cli_diag(
@@ -555,7 +556,8 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
   eopt.runtime_profile = opt.runtime_profile;
   eopt.target = opt.target;
   eopt.panic_policy = opt.panic_policy;
-  const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
+  const std::string cpp = nebula::codegen::default_backend().emit_translation_unit(
+      *analysis.nir_prog, *analysis.rep_owner, eopt);
 
   if (!write_text_file(out_cpp, cpp)) {
     auto d = make_cli_diag(
@@ -3540,7 +3542,8 @@ CompilePipelineResult run_compile_pipeline(const std::vector<nebula::frontend::S
       eopt.runtime_profile = opt.runtime_profile;
       eopt.target = opt.target;
       eopt.panic_policy = opt.panic_policy;
-      out.cached_cpp = nebula::codegen::emit_cpp23(*out.nir_prog, *out.rep_owner, eopt);
+      out.cached_cpp = nebula::codegen::default_backend().emit_translation_unit(
+          *out.nir_prog, *out.rep_owner, eopt);
       out.has_cached_cpp = true;
     }
 
@@ -4497,7 +4500,8 @@ int cmd_test(const CliOptions& opt) {
     eopt.runtime_profile = opt.runtime_profile;
     eopt.target = opt.target;
     eopt.panic_policy = opt.panic_policy;
-    const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
+    const std::string cpp = nebula::codegen::default_backend().emit_translation_unit(
+        *analysis.nir_prog, *analysis.rep_owner, eopt);
 
     if (!write_text_file(out_cpp, cpp)) {
       auto d = make_cli_diag(
@@ -4594,7 +4598,8 @@ int cmd_bench(const CliOptions& opt) {
     eopt.runtime_profile = opt.runtime_profile;
     eopt.target = opt.target;
     eopt.panic_policy = opt.panic_policy;
-    const std::string cpp = nebula::codegen::emit_cpp23(*analysis.nir_prog, *analysis.rep_owner, eopt);
+    const std::string cpp = nebula::codegen::default_backend().emit_translation_unit(
+        *analysis.nir_prog, *analysis.rep_owner, eopt);
 
     if (!write_text_file(out_cpp, cpp)) {
       auto d = make_cli_diag(

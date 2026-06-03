@@ -1,0 +1,125 @@
+module args
+import core::text
+import std::result
+
+struct ParsedArgs {
+  command: String
+  name: String
+  desired: String
+}
+
+struct ParseProgress {
+  parsed: ParsedArgs
+  next_index: Int
+}
+
+fn usage() -> Void {
+  print("usage: ctl <status|list-services|register|desired> [name] [running|stopped]")
+}
+
+fn empty_text() -> String {
+  return text_concat("", "")
+}
+
+fn default_args() -> ParsedArgs {
+  return ParsedArgs(empty_text(), empty_text(), empty_text())
+}
+
+fn rebuild_args(command: String, name: String, desired: String) -> ParsedArgs {
+  return ParsedArgs(command, name, desired)
+}
+
+fn with_command(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(value, parsed.name, parsed.desired)
+}
+
+fn with_name(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.command, value, parsed.desired)
+}
+
+fn with_desired(parsed: ParsedArgs, value: String) -> ParsedArgs {
+  return rebuild_args(parsed.command, parsed.name, value)
+}
+
+fn parsed_progress(parsed: ParsedArgs, index: Int) -> ParseProgress {
+  return ParseProgress(parsed, index)
+}
+
+fn advance_parse(parsed: ParsedArgs, index: Int, arg: String) -> Result<ParseProgress, String> {
+  if parsed.command == "" {
+    return Ok(parsed_progress(with_command(parsed, arg), index + 1))
+  }
+  if parsed.name == "" {
+    return Ok(parsed_progress(with_name(parsed, arg), index + 1))
+  }
+  if parsed.desired == "" {
+    return Ok(parsed_progress(with_desired(parsed, arg), index + 1))
+  }
+  return Err("unexpected argument")
+}
+
+fn reject_value(value: String, label: String) -> Result<Bool, String> {
+  if value != "" {
+    return Err(text_concat(label, " is not allowed"))
+  }
+  return Ok(true)
+}
+
+fn require_value(value: String, label: String) -> Result<Bool, String> {
+  if value == "" {
+    return Err(text_concat(label, " is required"))
+  }
+  return Ok(true)
+}
+
+fn finalize_no_arg_command(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  reject_value(parsed.name, "name")?
+  reject_value(parsed.desired, "desired state")?
+  return Ok(parsed)
+}
+
+fn finalize_register_command(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_value(parsed.name, "name")?
+  reject_value(parsed.desired, "desired state")?
+  return Ok(parsed)
+}
+
+fn finalize_desired_command(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  require_value(parsed.name, "name")?
+  require_value(parsed.desired, "desired state")?
+  return Ok(parsed)
+}
+
+fn finalize_args(parsed: ParsedArgs) -> Result<ParsedArgs, String> {
+  if parsed.command == "" {
+    return Err("missing command")
+  }
+  if parsed.command == "status" || parsed.command == "list-services" {
+    return finalize_no_arg_command(parsed)
+  }
+  if parsed.command == "register" {
+    return finalize_register_command(parsed)
+  }
+  if parsed.command == "desired" {
+    return finalize_desired_command(parsed)
+  }
+  return Err("unknown command")
+}
+
+fn parse_args() -> Result<ParsedArgs, String> {
+  let parsed = default_args()
+  let index = 1
+  while index < argc() {
+    let arg = argv(index)
+    match advance_parse(parsed, index, arg) {
+      Ok(progress) => {
+        parsed = progress.parsed
+        index = progress.next_index
+      }
+      Err(msg) => {
+        return Err(msg)
+      }
+    }
+  }
+  return finalize_args(parsed)
+}

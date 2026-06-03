@@ -1,0 +1,38 @@
+module store
+import core::app
+import core::registry
+import std::env
+import std::fs
+import std::result
+
+fn selected_state_path() -> String {
+  return get_or_default("UNIVERSE_STATE_PATH", default_state_file())
+}
+
+fn read_registry_snapshot() -> Result<String, String> {
+  let path = selected_state_path()
+  match exists(path) {
+    Ok(found) => {
+      if found {
+        return read_string(path)
+      }
+      return Ok(empty_registry_text())
+    }
+    Err(msg) => {
+      return Err(msg)
+    }
+  }
+}
+
+fn persist_registry_snapshot(text: String) -> Result<Bool, String> {
+  write_string_atomic(selected_state_path(), text)?
+  return Ok(true)
+}
+
+fn append_registry_record(name: String, state: String) -> Result<String, String> {
+  let record = service_record(name, state)?
+  let current = read_registry_snapshot()?
+  let next = append_record_line(current, record)
+  persist_registry_snapshot(next)?
+  return Ok(next)
+}

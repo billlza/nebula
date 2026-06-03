@@ -1,0 +1,35 @@
+id = "CHK-215-system-project-std-import-rejected"
+suite = "check"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/system_std_reject"
+mkdir -p "$root/src"
+cat > "$root/nebula.toml" <<'EOF'
+schema_version = 1
+
+[package]
+name = "system-std-reject"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+EOF
+cat > "$root/src/main.nb" <<'EOF'
+module main
+import std::result
+
+fn main() -> Int {
+  return 0
+}
+EOF
+"$NEBULA_BINARY" check "$root" --target system --no-std --diag-format json
+'''
+expect_rc = 1
+
+[[steps.expect_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+severity = "error"
+stage = "build"
+category = "cli"
