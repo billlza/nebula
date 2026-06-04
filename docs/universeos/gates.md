@@ -18,11 +18,14 @@ until a later gate names the contract, implementation, tests, and release postur
 - `candidate`: the gate has repeatable tests and documentation, but still needs release review
 - `accepted`: the gate has passing tests, support-matrix wording, and rollback guidance
 
-Default status is `planned` unless a goal updates the status with direct evidence.
+New gates default to `planned`; the machine registry is authoritative for the current status of
+each gate.
 
 ## UOS-DOC-001: Language And Specification Gate
 
 Purpose: make the system-profile language contract explicit before expanding UniverseOS claims.
+
+Status: experimental.
 
 Required evidence:
 
@@ -47,6 +50,8 @@ freestanding runtime, kernel target, or backend implementation.
 Purpose: prove that system-profile compilation rejects hosted bundled `std` imports instead of
 silently falling back to the hosted runtime.
 
+Status: experimental.
+
 Required evidence:
 
 - contract tests that compile/check a system-profile target importing hosted `std`
@@ -67,6 +72,8 @@ or hardware-facing API.
 
 Purpose: prove that system-profile code uses strict region behavior and does not silently promote
 escaping values across system boundaries.
+
+Status: experimental.
 
 Required evidence:
 
@@ -89,6 +96,8 @@ contract, or interrupt-safety story.
 Purpose: create repeatable evidence for ABI-relevant layout decisions before any low-level ABI
 claim.
 
+Status: planned.
+
 Required evidence:
 
 - golden tests for scalar, struct, enum, alignment, and exported C ABI layout where applicable
@@ -108,6 +117,8 @@ support, object backend, or freestanding runtime.
 
 Purpose: prove the smallest no-std/system-profile program path without importing hosted bundled
 `std`.
+
+Status: experimental.
 
 Required evidence:
 
@@ -153,6 +164,8 @@ cross-compilation, boot artifacts, or backend independence.
 Purpose: define the evidence required for a future boot-level hello-world experiment without
 claiming current boot support.
 
+Status: planned.
+
 Required evidence before implementation:
 
 - target triple, linker script, entry symbol, panic policy, and artifact format plan
@@ -175,6 +188,8 @@ kernel support.
 
 Purpose: prove that Nebula can produce a freestanding object for the chosen target without hosted
 runtime or C++ standard library dependencies.
+
+Status: planned.
 
 Required evidence before promotion:
 
@@ -200,6 +215,8 @@ runtime support.
 Purpose: prove the future object can be linked into a boot artifact with explicit section and entry
 contracts.
 
+Status: planned.
+
 Required evidence before promotion:
 
 - checked linker script with explicit entry symbol, section placement, alignment, and discard rules
@@ -220,6 +237,8 @@ process isolation, production kernel support, or complete freestanding runtime s
 
 Purpose: prove the future boot artifact can run under QEMU and emit a single exact serial hello
 line.
+
+Status: planned.
 
 Required evidence before promotion:
 

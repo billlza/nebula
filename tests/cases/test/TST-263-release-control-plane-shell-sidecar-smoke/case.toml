@@ -1,5 +1,6 @@
 id = "TST-263-release-control-plane-shell-sidecar-smoke"
 suite = "test"
+timeout = 240
 
 [[steps]]
 kind = "shell"

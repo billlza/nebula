@@ -40,6 +40,8 @@ SUPPORTED_TARGETS = {
     "linux-x86_64": ReleaseTarget(platform="linux", arch="x86_64", archive_kind="tar.gz"),
     "windows-x86_64": ReleaseTarget(platform="windows", arch="x86_64", archive_kind="zip"),
 }
+RELEASE_DOC_TREE_ROOTS = ("docs/universeos", "spec", "rfcs")
+RELEASE_DOC_FILE_SUFFIXES = {".md", ".ebnf"}
 
 
 def repo_root_from(path: Path) -> Path:
@@ -65,18 +67,25 @@ def release_notes_path(repo_root: Path, version: str) -> Path:
     return repo_root / release_notes_name(version)
 
 
-def install_doc_sources(repo_root: Path, version: str) -> list[Path]:
-    docs = [
-        repo_root / "LICENSE",
-        repo_root / "VERSION",
-        repo_root / "README.md",
-        repo_root / "CHANGELOG.md",
-        repo_root / "RELEASE_PROCESS.md",
+def release_doc_tree_sources(repo_root: Path) -> list[Path]:
+    sources: list[Path] = []
+    for rel_root in RELEASE_DOC_TREE_ROOTS:
+        root = repo_root / rel_root
+        if not root.is_dir():
+            raise FileNotFoundError(f"release documentation root missing: {rel_root}")
+        sources.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix in RELEASE_DOC_FILE_SUFFIXES
+        )
+    return sorted(sources)
+
+
+def release_doc_install_relpaths(repo_root: Path) -> list[str]:
+    return [
+        (Path("share/doc/nebula") / path.relative_to(repo_root)).as_posix()
+        for path in release_doc_tree_sources(repo_root)
     ]
-    notes = release_notes_path(repo_root, version)
-    if notes.exists():
-        docs.append(notes)
-    return docs
 
 
 def github_release_base_url(repository: str, version: str) -> str:

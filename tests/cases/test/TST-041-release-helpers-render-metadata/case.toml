@@ -8,5 +8,52 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
+run = """
+python3 - <<'PY'
+import platform
+import sys
+import tarfile
+import zipfile
+from pathlib import Path
+
+repo_root = Path(__import__("os").environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "scripts"))
+from release_lib import release_doc_install_relpaths
+
+root = Path("work/release_helpers")
+version = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
+system = platform.system()
+machine = platform.machine().lower()
+if system == "Darwin" and machine in ("arm64", "aarch64"):
+    host_target = "darwin-arm64"
+elif system == "Darwin" and machine == "x86_64":
+    host_target = "darwin-x86_64"
+elif system == "Linux" and machine == "x86_64":
+    host_target = "linux-x86_64"
+elif system.startswith("MSYS") or system.startswith("MINGW") or system == "Windows":
+    host_target = "windows-x86_64"
+else:
+    raise SystemExit("unsupported host")
+
+prefix = f"nebula-v{version}-{host_target}"
+asset = root / (f"{prefix}.zip" if host_target == "windows-x86_64" else f"{prefix}.tar.gz")
+if asset.suffix == ".zip":
+    with zipfile.ZipFile(asset) as zf:
+        names = set(zf.namelist())
+else:
+    with tarfile.open(asset, "r:*") as tf:
+        names = set(tf.getnames())
+required = {f"{prefix}/{rel}" for rel in release_doc_install_relpaths(repo_root)}
+missing = sorted(required - names)
+if missing:
+    raise SystemExit(f"release archive missing nested release docs: {missing}")
+print("release-helper-nested-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-helper-nested-docs-ok"]
+
+[[steps]]
+kind = "shell"
 run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\") && host=$(python3 - <<'PY'\nimport platform\nsystem = platform.system()\nmachine = platform.machine().lower()\nif system == 'Darwin' and machine in ('arm64', 'aarch64'):\n    print('darwin-arm64')\nelif system == 'Darwin' and machine == 'x86_64':\n    print('darwin-x86_64')\nelif system == 'Linux' and machine == 'x86_64':\n    print('linux-x86_64')\nelif system.startswith('MSYS') or system.startswith('MINGW') or system == 'Windows':\n    print('windows-x86_64')\nelse:\n    raise SystemExit('unsupported host')\nPY\n) && grep -F 'class Nebula < Formula' work/release_helpers/nebula.rb && grep -F 'depends_on \"llvm\"' work/release_helpers/nebula.rb && grep -F 'CXX:=' work/release_helpers/nebula.rb && grep -F \"version \\\"$version\\\"\" work/release_helpers/nebula.rb && grep -F \"nebula-v${version}-darwin-x86_64.tar.gz\" work/release_helpers/SHA256SUMS.txt && grep -F \"nebula-v${version}-${host}.spdx.json\" work/release_helpers/SHA256SUMS.txt && grep -F \"nebula-backend-sdk-v${version}-linux-x86_64.tar.gz\" work/release_helpers/SHA256SUMS.txt && grep -F '\"spdxVersion\": \"SPDX-2.3\"' \"work/release_helpers/nebula-v${version}-${host}.spdx.json\" && grep -F '\"fileName\": \"./bin/nebula' \"work/release_helpers/nebula-v${version}-${host}.spdx.json\" && grep -F '\"target\": \"windows-x86_64\"' work/release_helpers/release-manifest.json && grep -F '\"target\": \"linux-x86_64\"' work/release_helpers/release-manifest.json && grep -F '\"backend_sdks\": [' work/release_helpers/release-manifest.json && grep -F '\"sboms\": [' work/release_helpers/release-manifest.json && grep -F '\"attestations\": [' work/release_helpers/release-manifest.json && grep -F '.provenance.intoto.jsonl' work/release_helpers/release-manifest.json && grep -F '\"checksums\": {' work/release_helpers/release-manifest.json && grep -F '\"manifest\": {' work/release_helpers/release-manifest.json && grep -F '\"size\":' work/release_helpers/release-manifest.json && grep -F '\"sha256\":' work/release_helpers/release-manifest.json"
 expect_rc = 0

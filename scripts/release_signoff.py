@@ -18,6 +18,7 @@ from release_lib import (
     backend_sdk_stage_name,
     read_release_repository,
     read_repo_version,
+    release_doc_install_relpaths,
     release_notes_name,
     repo_root_from,
     sha256_file,
@@ -117,8 +118,9 @@ def _verify_required_files(artifact_dir: Path, version: str) -> list[CheckResult
     return results
 
 
-def _verify_archive_layout(artifact_dir: Path, version: str) -> list[CheckResult]:
+def _verify_archive_layout(artifact_dir: Path, version: str, repo_root: Path) -> list[CheckResult]:
     results: list[CheckResult] = []
+    release_doc_members = release_doc_install_relpaths(repo_root)
     for target_name, target in SUPPORTED_TARGETS.items():
         archive_path = artifact_dir / archive_name(version, target)
         root = staging_dir_name(version, target)
@@ -153,6 +155,7 @@ def _verify_archive_layout(artifact_dir: Path, version: str) -> list[CheckResult
             f"{root}/share/doc/nebula/README.md",
             f"{root}/share/doc/nebula/{release_notes_name(version)}",
         ]
+        required.extend(f"{root}/{rel}" for rel in release_doc_members)
         missing = [item for item in required if item not in members]
         if missing:
             results.append(
@@ -440,7 +443,7 @@ def main() -> int:
 
     checks: list[CheckResult] = []
     checks.extend(_verify_required_files(artifact_dir, version))
-    checks.extend(_verify_archive_layout(artifact_dir, version))
+    checks.extend(_verify_archive_layout(artifact_dir, version, repo_root))
     checks.extend(_verify_formula(artifact_dir, version))
     checks.extend(_verify_manifest(artifact_dir, version, repository))
     if args.verify_attestations:

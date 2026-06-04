@@ -8,6 +8,63 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
+run = """
+python3 - <<'PY'
+import subprocess
+import tarfile
+import zipfile
+from pathlib import Path
+import sys
+
+repo_root = Path(__import__("os").environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "scripts"))
+from release_lib import release_doc_tree_sources
+
+version = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
+root = Path("work/release_signoff")
+targets = {
+    "darwin-x86_64": "tar.gz",
+    "darwin-arm64": "tar.gz",
+    "linux-x86_64": "tar.gz",
+    "windows-x86_64": "zip",
+}
+required_docs = release_doc_tree_sources(repo_root)
+
+for target, archive_kind in targets.items():
+    stage = root / f"nebula-v{version}-{target}"
+    doc_root = stage / "share" / "doc" / "nebula"
+    for src in required_docs:
+        rel = src.relative_to(repo_root)
+        dest = doc_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+    archive_base = root / f"nebula-v{version}-{target}"
+    if archive_kind == "zip":
+        archive = Path(str(archive_base) + ".zip")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(stage.rglob("*")):
+                if path.is_dir():
+                    continue
+                zf.write(path, arcname=str(path.relative_to(root)))
+    else:
+        archive = Path(str(archive_base) + ".tar.gz")
+        with tarfile.open(archive, "w:gz") as tf:
+            tf.add(stage, arcname=stage.name)
+subprocess.run([
+    "python3", str(repo_root / "scripts" / "render_homebrew_formula.py"),
+    "--artifact-dir", str(root),
+    "--output", str(root / "nebula.rb"),
+    "--url-base", "file://" + str(root.resolve()),
+], check=True)
+print("release-signoff-nested-doc-fixtures-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-signoff-nested-doc-fixtures-ok"]
+
+[[steps]]
+kind = "shell"
 run = "version=$(cat \"$NEBULA_REPO_ROOT/VERSION\")\nbackend_stage=\"work/release_signoff/nebula-backend-sdk-v${version}-linux-x86_64\"\nfor package in nebula-auth nebula-config nebula-jobs; do\n  mkdir -p \"$backend_stage/share/nebula/sdk/backend/$package\"\n  printf 'schema_version = 1\\n' > \"$backend_stage/share/nebula/sdk/backend/$package/nebula.toml\"\ndone\ntar -C work/release_signoff -czf \"work/release_signoff/nebula-backend-sdk-v${version}-linux-x86_64.tar.gz\" \"nebula-backend-sdk-v${version}-linux-x86_64\"\npython3 \"$NEBULA_REPO_ROOT/scripts/generate_release_manifest.py\" --artifact-dir work/release_signoff --checksums-out work/release_signoff/SHA256SUMS.txt --manifest-out work/release_signoff/release-manifest.json --base-url \"file://$PWD/work/release_signoff\" --require-all on"
 expect_rc = 0
 

@@ -52,3 +52,104 @@ python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$
 '''
 expect_rc = 1
 expect_stdout_contains = ["required_evidence"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_duplicate.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-DOC-001", "UOS-DOC-404"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-DOC-001",
+      "status": "experimental",
+      "owner_area": "docs/spec",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    },
+    {
+      "id": "UOS-DOC-001",
+      "status": "unsupported",
+      "owner_area": "docs/spec",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_duplicate.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["duplicate id", "status must be one of", "references unknown gate UOS-DOC-404", "source_doc_mapping missing docs/system_profile.md"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_path.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 2,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "../README.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-DOC-001",
+      "status": "planned",
+      "owner_area": "docs/spec",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_path.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["gate_registry_version must be integer 1", "title is required", "path must be a safe repo-relative docs/spec/rfcs path"]

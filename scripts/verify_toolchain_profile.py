@@ -11,6 +11,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+from release_lib import release_doc_install_relpaths
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -52,6 +54,9 @@ def assert_doc_contract(root: Path) -> None:
         "include/runtime",
         "share/nebula/registry",
         "share/doc/nebula",
+        "docs/universeos",
+        "spec",
+        "rfcs",
         "External Prerequisites",
         "clang++",
         "Python 3.11+",
@@ -124,6 +129,7 @@ def assert_archive_contract(archive: Path) -> None:
         "share/doc/nebula/support_matrix.md",
         "share/doc/nebula/install_lifecycle.md",
     ]
+    required_suffixes.extend(release_doc_install_relpaths(repo_root()))
     missing = [suffix for suffix in required_suffixes if not find_member(members, suffix)]
     if missing:
         fail(f"release archive missing toolchain profile members: {missing!r}")

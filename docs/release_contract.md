@@ -31,13 +31,15 @@ GA surface:
 - bundled `std`
 - runtime headers
 - documented release assets
-- release documentation
+- release documentation, including nested `docs/universeos`, `spec`, and `rfcs` documentation-only
+  payloads
 
 Required evidence:
 
 - strict build on supported matrix
 - full contract suite on supported matrix
 - installed/archive binary smoke
+- release-doc archive/install assertions for top-level docs plus nested UniverseOS/spec/RFC docs
 - at least one shipped-binary `git` dependency flow
 - release notes for the target version
 
@@ -152,6 +154,20 @@ Treat any of the following as a release-contract problem:
 - docs describe support on a platform that CI/signoff does not exercise
 
 Drift fixes should be explicit documentation or implementation changes, not silent test relaxation.
+
+## Release Documentation Payload
+
+The core compiler/tooling release installs top-level project docs directly under
+`share/doc/nebula` for compatibility with existing installer messages. It also installs:
+
+- `share/doc/nebula/docs/universeos/*` for UniverseOS gate, roadmap, architecture, and future
+  boundary documents
+- `share/doc/nebula/spec/*` for language, ABI, CLI, and compiler pipeline specifications
+- `share/doc/nebula/rfcs/*` for accepted or draft RFCs
+
+These nested docs are part of the release documentation payload because they constrain public
+claims. They remain documentation-only and do not implement or promote kernel, boot, driver,
+object-backend, or freestanding runtime support.
 
 ## Minimum Local Preflight
 

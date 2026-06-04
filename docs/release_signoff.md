@@ -90,8 +90,8 @@ This verifies:
 
 - all required release files are present
 - archives do not contain `official/*`
-- archives contain the expected runtime headers, bundled `std`, docs, and hosted-registry helper
-  payload under `share/nebula/registry`
+- archives contain the expected runtime headers, bundled `std`, top-level docs, nested
+  UniverseOS/spec/RFC release docs, and hosted-registry helper payload under `share/nebula/registry`
 - the Linux backend SDK archive contains the expected backend GA packages plus installed-preview
   payloads, docs, and examples
 - `release-manifest.json` digests and sizes are self-consistent

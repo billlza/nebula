@@ -155,3 +155,25 @@ endif()
 install(FILES ${NEBULA_INSTALL_DOCS}
   DESTINATION share/doc/nebula
 )
+
+# Keep established top-level docs flattened under share/doc/nebula while preserving
+# nested claim-boundary docs by repository-relative directory.
+install(DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/docs/universeos
+  DESTINATION share/doc/nebula/docs
+  FILES_MATCHING PATTERN "*.md"
+)
+
+install(DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/spec
+  DESTINATION share/doc/nebula
+  FILES_MATCHING
+    PATTERN "*.md"
+    PATTERN "*.ebnf"
+)
+
+install(DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/rfcs
+  DESTINATION share/doc/nebula
+  FILES_MATCHING PATTERN "*.md"
+)

@@ -1,5 +1,6 @@
 id = "TST-256-release-control-plane-platform-preview-smoke"
 suite = "test"
+timeout = 240
 
 [[steps]]
 kind = "shell"

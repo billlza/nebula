@@ -123,3 +123,15 @@ python3 scripts/release_signoff.py \
   --json-out work/release-signoff.json \
   --markdown-out work/release-signoff.md
 ```
+
+## Release Documentation Payload
+
+The platform archive's documentation payload is intentional:
+
+- established top-level docs remain flattened under `share/doc/nebula`
+- UniverseOS claim gates ship under `share/doc/nebula/docs/universeos`
+- language/compiler specifications ship under `share/doc/nebula/spec`
+- RFCs ship under `share/doc/nebula/rfcs`
+
+These files are verification and claim-boundary documents only. Their inclusion does not provide
+kernel, boot, driver, object-backend, or freestanding runtime support.

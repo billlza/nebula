@@ -23,6 +23,32 @@ expect_rc = 0
 
 [[steps]]
 kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "scripts"))
+from release_lib import release_doc_install_relpaths
+
+install_root = Path("work/install-root")
+missing = [
+    rel
+    for rel in release_doc_install_relpaths(repo_root)
+    if not (install_root / rel).is_file()
+]
+if missing:
+    raise SystemExit(f"installed release missing nested docs: {missing}")
+print("installed-nested-release-docs-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["installed-nested-release-docs-ok"]
+
+[[steps]]
+kind = "shell"
 run = "version=$(cat work/release_asset/VERSION.txt) && bin=$(cat work/release_asset/BINARY_NAME) && test \"$(work/install-root/bin/$bin --version | tr -d '\\r\\n')\" = \"nebula v$version\""
 expect_rc = 0
 

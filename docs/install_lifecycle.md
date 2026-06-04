@@ -109,9 +109,16 @@ Typical uninstall targets are:
 - `share/nebula/registry/*`
 - `share/nebula/std/*`
 - `share/doc/nebula/toolchain_profile.md`
+- `share/doc/nebula/docs/universeos/*`
+- `share/doc/nebula/spec/*`
+- `share/doc/nebula/rfcs/*`
 - `share/nebula/sdk/backend/*` when the backend SDK was installed
 - `share/doc/nebula/*`
 - `share/nebula/install-manifest.txt`
+
+The core release docs intentionally include nested UniverseOS gate docs, specifications, and RFCs as
+documentation-only artifacts. Their presence in an installed release is not a claim that kernel,
+boot, driver, object-backend, or freestanding runtime support exists.
 
 Installed backend SDK docs currently include:
 

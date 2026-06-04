@@ -11,10 +11,17 @@ The default binary release and installers provide the core profile:
 - `share/nebula/std`: bundled Nebula `std` source files used by installed builds
 - `include/runtime`: C++ runtime headers required by generated hosted artifacts
 - `share/nebula/registry`: hosted-registry helper scripts used by package fetch/update workflows
-- `share/doc/nebula`: release documentation, support matrix, install lifecycle, and this profile
+- `share/doc/nebula`: release documentation, support matrix, install lifecycle, this profile, and
+  nested claim-boundary docs under `docs/universeos`, `spec`, and `rfcs`
 
 This is Nebula's equivalent of having the compiler, package workflow, standard library sources,
 runtime support, and documentation present after install.
+
+Release archives intentionally include the repository's UniverseOS gate docs, language/compiler
+specifications, and RFCs as documentation-only payload under `share/doc/nebula/docs/universeos`,
+`share/doc/nebula/spec`, and `share/doc/nebula/rfcs`. Installing those files does not promote any
+planned or experimental UniverseOS gate to supported kernel, boot, driver, object-backend, or
+freestanding runtime behavior.
 
 ## External Prerequisites
 

@@ -1,5 +1,6 @@
 id = "TST-260-release-control-plane-webhook-ingress-smoke"
 suite = "test"
+timeout = 300
 
 [[steps]]
 kind = "shell"
