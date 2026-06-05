@@ -123,6 +123,9 @@ Current hosted C++23 golden tests:
 - `ABI-003-enum-payload-lowering-codegen`
 - `ABI-004-duplicate-exported-symbol-diagnostic`
 - `ABI-005-library-without-export-diagnostic`
+- C ABI unsafe type rejections: `CHK-194`, `CHK-222`, `CHK-223`, and `CHK-224`
+- C ABI non-shape rule rejections: `CHK-193` for `ref` parameters and `CHK-195` for generic
+  exports
 
 Future freestanding ABI tests:
 

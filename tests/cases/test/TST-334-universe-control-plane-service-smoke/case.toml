@@ -1,0 +1,115 @@
+id = "TST-334-universe-control-plane-service-smoke"
+suite = "test"
+description = "hosted Universe control-plane service exposes health, readiness, and status endpoints with bounded cleanup"
+
+[[steps]]
+kind = "shell"
+timeout = 120
+run = '''
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from cli_service_workspace import http_request, nebula, require_success
+from service_probe import fail_with_output, wait_for_listener_bound
+
+binary = os.environ["NEBULA_BINARY"]
+root = Path("work/example_universe_control_plane_service")
+shutil.rmtree(root, ignore_errors=True)
+shutil.copytree(repo_root / "examples" / "universe_control_plane", root)
+lock_path = root / "nebula.lock"
+if lock_path.exists():
+    lock_path.unlink()
+
+readme = (root / "README.md").read_text(encoding="utf-8")
+for command in (
+    "nebula build examples/universe_control_plane/apps/service",
+    "curl http://127.0.0.1:40520/healthz",
+    "curl http://127.0.0.1:40520/readyz",
+    "curl http://127.0.0.1:40520/v1/status",
+):
+    if command not in readme:
+        raise SystemExit(f"README missing service smoke command: {command}")
+
+require_success(nebula(binary, "fetch", root), "universe workspace fetch")
+out_dir = root / ".service-out"
+require_success(nebula(binary, "build", root / "apps" / "service", "--out-dir", out_dir), "universe service build")
+service_binary = out_dir / "main.out"
+if not service_binary.exists():
+    raise SystemExit("universe service build did not produce main.out")
+
+state_file = (root / "state" / "services.log").resolve()
+state_file.parent.mkdir(parents=True, exist_ok=True)
+state_file.write_text(
+    '{"name":"scheduler","state":"registered"}\n'
+    '{"name":"scheduler","state":"desired_running"}\n',
+    encoding="utf-8",
+)
+
+env = {
+    **os.environ,
+    "NEBULA_BIND_HOST": "127.0.0.1",
+    "NEBULA_PORT": "0",
+    "UNIVERSE_STATE_PATH": str(state_file),
+}
+proc = subprocess.Popen(
+    [str(service_binary)],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    env=env,
+)
+stderr_lines = []
+try:
+    bound, observed_port = wait_for_listener_bound(proc, stderr_lines, timeout=20)
+    if bound.get("bind_host") != "127.0.0.1":
+        fail_with_output(proc, stderr_lines, f"unexpected listener_bound payload: {bound!r}")
+
+    for path, expected_status in (("/healthz", "ok"), ("/readyz", "ready")):
+        status_code, body, _ = http_request("127.0.0.1", observed_port, "GET", path)
+        if status_code != 200:
+            raise SystemExit(f"{path} returned {status_code}: {body}")
+        payload = json.loads(body)
+        if payload.get("service") != "universe-control-plane" or payload.get("status") != expected_status:
+            raise SystemExit(f"{path} payload drifted: {payload!r}")
+
+    status_code, body, _ = http_request("127.0.0.1", observed_port, "GET", "/v1/status")
+    if status_code != 200:
+        raise SystemExit(f"/v1/status returned {status_code}: {body}")
+    payload = json.loads(body)
+    if payload.get("service") != "universe-control-plane":
+        raise SystemExit(f"status endpoint service drifted: {payload!r}")
+    if payload.get("profile") != "hosted-universe-control-plane":
+        raise SystemExit(f"status endpoint profile drifted: {payload!r}")
+    if payload.get("storage") != "file":
+        raise SystemExit(f"status endpoint storage drifted: {payload!r}")
+    if "state_path" in payload:
+        raise SystemExit(f"status endpoint leaked local state path: {payload!r}")
+    registry = payload.get("registry", "")
+    for fragment in ('"name":"scheduler"', '"state":"registered"', '"state":"desired_running"'):
+        if fragment not in registry:
+            raise SystemExit(f"status endpoint registry missing {fragment!r}: {payload!r}")
+finally:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate(timeout=5)
+    else:
+        stdout, stderr = proc.communicate(timeout=5)
+    print(stdout, end="")
+    print(stderr, end="")
+
+print("universe-control-plane-service-smoke-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["universe-control-plane-service-smoke-ok"]

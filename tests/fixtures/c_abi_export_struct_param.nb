@@ -1,0 +1,10 @@
+struct Point {
+  x: Int
+  y: Int
+}
+
+@export
+@abi_c
+fn bad(point: Point) -> Int {
+  return point.x
+}

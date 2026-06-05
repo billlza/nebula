@@ -2900,7 +2900,8 @@ bool load_project_input(const fs::path& input,
               if (no_std || (system_profile && is_hosted_std_module(dep_import->second))) {
                 diags.push_back(make_cli_diag(
                     Severity::Error, "NBL-CLI-SYSTEM-STD",
-                    "std module is not available for this profile: std::" + dep_import->second,
+                    "hosted bundled std is unavailable in the system/no-std profile: std::" +
+                        dep_import->second,
                     stage, DiagnosticRisk::High,
                     "runtime profile `" + runtime_profile_name(options.runtime_profile) +
                         "` with target `" + options.target +

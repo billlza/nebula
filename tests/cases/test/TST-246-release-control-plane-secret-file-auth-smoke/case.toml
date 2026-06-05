@@ -1,5 +1,6 @@
 id = "TST-246-release-control-plane-secret-file-auth-smoke"
 suite = "test"
+timeout = 240
 
 [[steps]]
 kind = "shell"

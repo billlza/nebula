@@ -1,0 +1,58 @@
+id = "TST-335-rfc-0003-traits-protocols-contract"
+suite = "test"
+description = "RFC 0003 remains draft design-only coverage for traits, protocols, and constrained generics"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+from pathlib import Path
+
+repo_root = Path(__import__("os").environ["NEBULA_REPO_ROOT"])
+rfc = repo_root / "rfcs" / "0003-traits-protocols.md"
+if not rfc.exists():
+    raise SystemExit("missing rfcs/0003-traits-protocols.md")
+text = rfc.read_text(encoding="utf-8")
+
+required = [
+    "# RFC 0003:",
+    "Status: Draft, design-only",
+    "No compiler support described here is implemented.",
+    "Rust-like traits",
+    "Swift-like protocols",
+    "minimal constrained generic interfaces",
+    "current monomorphized generics",
+    "region and ownership model",
+    "no-std/system profile",
+    "C++23 backend",
+    "future backend boundary",
+    "C ABI export restrictions",
+    "Recommended MVP Syntax",
+    "Recommended Lowering Path",
+    "Parser impact",
+    "Typechecker impact",
+    "NIR impact",
+    "Codegen impact",
+    "Diagnostics impact",
+    "LSP impact",
+    "Formatter impact",
+    "Testing impact",
+    "Ownership open questions",
+    "Region escape open questions",
+    "Dynamic dispatch open questions",
+]
+for needle in required:
+    if needle not in text:
+        raise SystemExit(f"RFC 0003 missing required text: {needle}")
+
+future_tests = [line for line in text.splitlines() if line.strip().startswith("- `TRT-")]
+if len(future_tests) < 12:
+    raise SystemExit(f"RFC 0003 lists only {len(future_tests)} future tests")
+if "implemented in Nebula today" in text or "is accepted by the compiler" in text:
+    raise SystemExit("RFC 0003 appears to document the feature as implemented")
+
+print("rfc-0003-traits-protocols-contract-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["rfc-0003-traits-protocols-contract-ok"]

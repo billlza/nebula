@@ -1,0 +1,10 @@
+id = "CHK-224-c-abi-result-return-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_result_return.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T131"
+severity = "error"

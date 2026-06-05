@@ -1,8 +1,8 @@
-id = "CHK-005-strict-region-escalation"
+id = "CHK-219-target-freestanding-forces-strict-region"
 suite = "check"
 command = "check"
 source = "fixtures/region_escape.nb"
-args = ["--diag-format", "json", "--strict-region"]
+args = ["--target", "freestanding", "--diag-format", "json"]
 expect_rc = 1
 expect_stdout_contains = ["region escape rejected in strict mode"]
 forbid_stdout_contains = ["auto-promoted"]

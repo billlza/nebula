@@ -44,6 +44,17 @@ else:
     with tarfile.open(asset, "r:*") as tf:
         names = set(tf.getnames())
 required = {f"{prefix}/{rel}" for rel in release_doc_install_relpaths(repo_root)}
+required.update(
+    {
+        f"{prefix}/share/doc/nebula/docs/universeos/gates.md",
+        f"{prefix}/share/doc/nebula/docs/universeos/gate_registry.md",
+        f"{prefix}/share/doc/nebula/spec/language_reference.md",
+        f"{prefix}/share/doc/nebula/spec/type_system.md",
+        f"{prefix}/share/doc/nebula/spec/ownership_model.md",
+        f"{prefix}/share/doc/nebula/spec/region_model.md",
+        f"{prefix}/share/doc/nebula/rfcs/0002-freestanding-target.md",
+    }
+)
 missing = sorted(required - names)
 if missing:
     raise SystemExit(f"release archive missing nested release docs: {missing}")

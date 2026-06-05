@@ -143,6 +143,42 @@ static std::string unknown_owner_reason_detail(const std::uint8_t mask) {
   return out;
 }
 
+static std::string region_escape_message(const bool strict,
+                                         const OwnerKind promoted_owner,
+                                         const std::string& owner_reason) {
+  const bool shared = promoted_owner == OwnerKind::Shared;
+  const char* owner = shared ? "heap shared" : "heap unique";
+  std::string detail;
+  if (shared && owner_reason == "alias-fanout") {
+    detail = "alias fanout";
+  } else if (shared && owner_reason == "cross-function-return-path-alias-fanout-mixed") {
+    detail = "mixed cross-function return path alias fanout";
+  } else if (shared && owner_reason == "cross-function-return-path-alias-fanout") {
+    detail = "cross-function return path alias fanout";
+  } else if (shared && owner_reason == "cross-function-return-path-fanin") {
+    detail = "cross-function return path";
+  } else if (shared && owner_reason == "cross-function-return-path-unknown-no-summary") {
+    detail = "cross-function return path unknown: no summary";
+  } else if (shared && owner_reason == "cross-function-return-path-unknown-external-opaque") {
+    detail = "cross-function return path unknown: external opaque";
+  } else if (shared && owner_reason == "cross-function-return-path-unknown-indirect-unresolved") {
+    detail = "cross-function return path unknown: indirect unresolved";
+  }
+
+  if (strict) {
+    std::string message =
+        std::string("region escape rejected in strict mode; heap promotion disabled (would require ") +
+        owner;
+    if (!detail.empty()) message += ": " + detail;
+    message += ")";
+    return message;
+  }
+
+  std::string message = std::string("region escape; auto-promoted to ") + owner;
+  if (!detail.empty()) message += " (" + detail + ")";
+  return message;
+}
+
 static std::string unknown_call_subreason(const std::uint8_t mask) {
   if ((mask & unknown_source_bit(UnknownReturnPathSource::IndirectUnresolved)) != 0) {
     return "callee-param-escape-unknown-indirect-unresolved";
@@ -583,7 +619,9 @@ static void gather_escape_seeds_in_stmt(FuncCtx& ctx, const Stmt& s,
               Diagnostic d;
               d.severity = sev;
               d.code = "NBL-R001";
-              d.message = "region escape; auto-promoted (direct return of region allocation)";
+              d.message = strict
+                              ? "region escape rejected in strict mode (direct return of region allocation)"
+                              : "region escape; auto-promoted (direct return of region allocation)";
               d.span = s.span;
               d.machine_reason = "return";
               d.machine_subreason = "direct-construct";
@@ -970,34 +1008,7 @@ RepOwnerResult run_rep_owner_infer(const nebula::nir::Program& p, const EscapeAn
         } else if (owner_reason == "single-owner-flow") {
           d.suggestions.push_back("keep single-owner flow; share only at explicit boundaries");
         }
-        if (promoted_owner == OwnerKind::Shared && owner_reason == "alias-fanout") {
-          d.message = "region escape; auto-promoted to heap shared (alias fanout)";
-        } else if (promoted_owner == OwnerKind::Shared &&
-                   owner_reason == "cross-function-return-path-alias-fanout-mixed") {
-          d.message =
-              "region escape; auto-promoted to heap shared (mixed cross-function return path alias fanout)";
-        } else if (promoted_owner == OwnerKind::Shared &&
-                   owner_reason == "cross-function-return-path-alias-fanout") {
-          d.message =
-              "region escape; auto-promoted to heap shared (cross-function return path alias fanout)";
-        } else if (promoted_owner == OwnerKind::Shared &&
-                   owner_reason == "cross-function-return-path-fanin") {
-          d.message = "region escape; auto-promoted to heap shared (cross-function return path)";
-        } else if (promoted_owner == OwnerKind::Shared &&
-                   owner_reason == "cross-function-return-path-unknown-no-summary") {
-          d.message =
-              "region escape; auto-promoted to heap shared (cross-function return path unknown: no summary)";
-        } else if (promoted_owner == OwnerKind::Shared &&
-                   owner_reason == "cross-function-return-path-unknown-external-opaque") {
-          d.message =
-              "region escape; auto-promoted to heap shared (cross-function return path unknown: external opaque)";
-        } else if (promoted_owner == OwnerKind::Shared &&
-                   owner_reason == "cross-function-return-path-unknown-indirect-unresolved") {
-          d.message =
-              "region escape; auto-promoted to heap shared (cross-function return path unknown: indirect unresolved)";
-        } else {
-          d.message = "region escape; auto-promoted to heap unique";
-        }
+        d.message = region_escape_message(strict, promoted_owner, owner_reason);
         ctx.diags.push_back(std::move(d));
       }
 

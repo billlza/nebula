@@ -478,7 +478,7 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
   popt.mode = opt.mode;
   popt.profile = resolve_profile(opt.mode, requested);
   popt.analysis_tier = resolve_analysis_tier(opt.mode, opt.analysis_tier);
-  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   popt.warnings_as_errors = opt.warnings_as_errors;
   popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
   popt.runtime_profile = opt.runtime_profile;
@@ -509,7 +509,7 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
 
   nebula::codegen::EmitOptions eopt;
   eopt.main_mode = nebula::codegen::MainMode::RunTests;
-  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   eopt.runtime_profile = opt.runtime_profile;
   eopt.target = opt.target;
   eopt.panic_policy = opt.panic_policy;
@@ -552,7 +552,7 @@ static bool analyze_loaded_project(const LoadedCompileInput& loaded,
 
   nebula::codegen::EmitOptions eopt;
   eopt.main_mode = nebula::codegen::MainMode::RunBench;
-  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   eopt.runtime_profile = opt.runtime_profile;
   eopt.target = opt.target;
   eopt.panic_policy = opt.panic_policy;
@@ -4129,7 +4129,7 @@ ArtifactMeta expected_meta_for(const CliOptions& opt,
   m.artifact_kind = artifact_kind_name(opt.artifact_kind);
   m.compiler_schema_version = kCompilePipelineCompilerSchemaVersion;
   m.cache_schema_version = kCompilePipelineCacheSchemaVersion;
-  m.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  m.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   m.warnings_as_errors = opt.warnings_as_errors;
   m.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
   m.runtime_profile = runtime_profile_name(opt.runtime_profile);
@@ -4325,7 +4325,7 @@ int run_preflight_if_enabled(const fs::path& file,
   popt.mode = BuildMode::Debug;
   popt.profile = AnalysisProfile::Fast;
   popt.analysis_tier = AnalysisTier::Basic;
-  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   popt.warnings_as_errors = opt.warnings_as_errors;
   popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
   popt.runtime_profile = opt.runtime_profile;
@@ -4384,7 +4384,7 @@ int cmd_check(const fs::path& file, const CliOptions& opt) {
   popt.mode = opt.mode;
   popt.profile = resolved;
   popt.analysis_tier = tier;
-  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   popt.warnings_as_errors = opt.warnings_as_errors;
   popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
   popt.runtime_profile = opt.runtime_profile;
@@ -4469,7 +4469,7 @@ int cmd_test(const CliOptions& opt) {
     popt.mode = opt.mode;
     popt.profile = resolved_profile;
     popt.analysis_tier = tier;
-    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
     popt.warnings_as_errors = opt.warnings_as_errors;
     popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
     popt.runtime_profile = opt.runtime_profile;
@@ -4496,7 +4496,7 @@ int cmd_test(const CliOptions& opt) {
 
     nebula::codegen::EmitOptions eopt;
     eopt.main_mode = nebula::codegen::MainMode::RunTests;
-    eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
     eopt.runtime_profile = opt.runtime_profile;
     eopt.target = opt.target;
     eopt.panic_policy = opt.panic_policy;
@@ -4568,7 +4568,7 @@ int cmd_bench(const CliOptions& opt) {
     popt.mode = opt.mode;
     popt.profile = resolved_profile;
     popt.analysis_tier = tier;
-    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
     popt.warnings_as_errors = opt.warnings_as_errors;
     popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
     popt.runtime_profile = opt.runtime_profile;
@@ -4594,7 +4594,7 @@ int cmd_bench(const CliOptions& opt) {
 
     nebula::codegen::EmitOptions eopt;
     eopt.main_mode = nebula::codegen::MainMode::RunBench;
-    eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
     eopt.runtime_profile = opt.runtime_profile;
     eopt.target = opt.target;
     eopt.panic_policy = opt.panic_policy;

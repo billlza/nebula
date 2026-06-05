@@ -18,7 +18,7 @@ src_dir = "src"
 EOF
 cat > "$root/src/main.nb" <<'EOF'
 module main
-import std::result
+import std::net
 
 fn main() -> Int {
   return 0
@@ -27,6 +27,7 @@ EOF
 "$NEBULA_BINARY" check "$root" --target system --no-std --diag-format json
 '''
 expect_rc = 1
+expect_stdout_contains = ["hosted bundled std is unavailable in the system/no-std profile"]
 
 [[steps.expect_diag]]
 code = "NBL-CLI-SYSTEM-STD"

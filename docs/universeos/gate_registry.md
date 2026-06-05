@@ -100,7 +100,7 @@ The JSON block below is intentionally parsed by `scripts/check_universeos_gate_d
       "owner_area": "cli/region-analysis",
       "required_evidence": [
         "Contract tests for region escapes under system-profile settings.",
-        "Diagnostics proving strict-region behavior without requiring an explicit --strict-region flag.",
+        "Diagnostics proving strict-region behavior without requiring an explicit --strict-region flag, including --target system, --target freestanding, *-none target strings, --profile system, and --no-std.",
         "Negative coverage showing the system profile does not silently auto-promote escaping region values.",
         "Documentation separating hosted region convenience from system-profile fail-closed behavior."
       ],
@@ -126,7 +126,7 @@ The JSON block below is intentionally parsed by `scripts/check_universeos_gate_d
       "owner_area": "core/std-profile",
       "required_evidence": [
         "A minimal system-profile smoke target that does not import bundled hosted std modules.",
-        "Generated artifact inspection or assertions for runtime profile, target, and panic policy markers.",
+        "Generated artifact inspection or assertions for runtime profile, target, and panic policy markers under --target system, --target freestanding, *-none target strings, --panic abort, and --panic trap.",
         "Explicit rejection tests for hosted APIs not allowed by the smoke.",
         "Documentation stating that the smoke is a compiler/profile contract, not a runtime support claim."
       ],

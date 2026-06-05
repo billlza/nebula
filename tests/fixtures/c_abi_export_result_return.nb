@@ -1,0 +1,10 @@
+import std::result
+
+@export
+@abi_c
+fn bad(flag: Bool) -> Result<Int, String> {
+  if flag {
+    return Ok(1)
+  }
+  return Err("bad")
+}

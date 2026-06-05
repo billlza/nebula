@@ -11,6 +11,53 @@ expect_stdout_contains = ["universeos-gate-docs-ok: 10 gates"]
 kind = "shell"
 run = '''
 mkdir -p work
+cat > work/bad_gate_registry_missing_non_claim.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-DOC-999"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-DOC-999"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-DOC-999",
+      "title": "Negative Test Gate",
+      "status": "planned",
+      "owner_area": "docs/spec",
+      "required_evidence": ["evidence"]
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_non_claim.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["UOS-DOC-999: non_claim is required"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
 cat > work/bad_gate_registry.md <<'MD'
 # Bad Gate Registry
 

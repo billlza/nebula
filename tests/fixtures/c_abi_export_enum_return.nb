@@ -1,0 +1,10 @@
+enum Status {
+  Ready(Int)
+  Stopped(Void)
+}
+
+@export
+@abi_c
+fn bad() -> Status {
+  return Ready(1)
+}

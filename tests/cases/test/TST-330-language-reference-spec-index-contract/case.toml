@@ -83,6 +83,15 @@ for rel in required_files[:-1]:
     if rel not in spec_index:
         raise SystemExit(f"docs/spec_index.md missing {rel}")
 
+no_std_runtime = (repo / "docs/universeos/no_std_runtime.md").read_text(encoding="utf-8")
+for needle in [
+    "--target freestanding --no-std --panic abort",
+    "--target x86_64-unknown-none --no-std --panic trap",
+    "prove only that the CLI/profile boundary records",
+]:
+    if needle not in no_std_runtime:
+        raise SystemExit(f"no_std_runtime missing smoke boundary text: {needle}")
+
 print("language-reference-spec-index-ok")
 PY
 '''

@@ -39,6 +39,20 @@ missing = [
     for rel in release_doc_install_relpaths(repo_root)
     if not (install_root / rel).is_file()
 ]
+required_nested_docs = [
+    "share/doc/nebula/docs/universeos/gates.md",
+    "share/doc/nebula/docs/universeos/gate_registry.md",
+    "share/doc/nebula/spec/language_reference.md",
+    "share/doc/nebula/spec/type_system.md",
+    "share/doc/nebula/spec/ownership_model.md",
+    "share/doc/nebula/spec/region_model.md",
+    "share/doc/nebula/rfcs/0002-freestanding-target.md",
+]
+missing.extend(
+    rel
+    for rel in required_nested_docs
+    if not (install_root / rel).is_file()
+)
 if missing:
     raise SystemExit(f"installed release missing nested docs: {missing}")
 print("installed-nested-release-docs-ok")

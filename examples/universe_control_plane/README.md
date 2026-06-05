@@ -44,6 +44,8 @@ nebula run examples/universe_control_plane/apps/service --run-gate none
 Then query:
 
 ```sh
+curl http://127.0.0.1:40520/healthz
+curl http://127.0.0.1:40520/readyz
 curl http://127.0.0.1:40520/v1/status
 ```
 

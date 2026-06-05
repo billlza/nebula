@@ -87,7 +87,7 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
   popt.mode = opt.mode;
   popt.profile = resolved;
   popt.analysis_tier = tier;
-  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   popt.warnings_as_errors = opt.warnings_as_errors;
   popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
   popt.runtime_profile = opt.runtime_profile;
@@ -134,7 +134,7 @@ int cmd_build(const fs::path& file, const CliOptions& opt) {
   nebula::codegen::EmitOptions eopt;
   eopt.main_mode = library_mode ? nebula::codegen::MainMode::None
                                 : nebula::codegen::MainMode::CallMainIfPresent;
-  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+  eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
   eopt.runtime_profile = opt.runtime_profile;
   eopt.target = opt.target;
   eopt.panic_policy = opt.panic_policy;
@@ -269,7 +269,7 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     popt.mode = opt.mode;
     popt.profile = resolved_profile;
     popt.analysis_tier = tier;
-    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+    popt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
     popt.warnings_as_errors = opt.warnings_as_errors;
     popt.no_std = effective_no_std(opt.runtime_profile, opt.no_std);
     popt.runtime_profile = opt.runtime_profile;
@@ -298,7 +298,7 @@ int cmd_run(const fs::path& file, const CliOptions& opt) {
     } else if (analysis.nir_prog && analysis.rep_owner) {
       nebula::codegen::EmitOptions eopt;
       eopt.main_mode = nebula::codegen::MainMode::CallMainIfPresent;
-      eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region);
+      eopt.strict_region = effective_strict_region(opt.runtime_profile, opt.strict_region, opt.no_std);
       eopt.runtime_profile = opt.runtime_profile;
       eopt.target = opt.target;
       eopt.panic_policy = opt.panic_policy;

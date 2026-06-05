@@ -6,6 +6,10 @@ kind = "shell"
 run = '''
 "$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
   --target system --no-std --panic abort --diag-format json
+"$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+  --target freestanding --no-std --panic abort --diag-format json
+"$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+  --target x86_64-unknown-none --no-std --panic trap --diag-format json
 '''
 expect_rc = 0
 forbid_stdout_contains = ["NBL-CLI-SYSTEM-STD", "NBL-CLI-SYSTEM-NATIVE", "NBL-R001"]

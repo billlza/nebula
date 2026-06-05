@@ -21,6 +21,29 @@ grep -F 'target=system' work/system-no-std-smoke/main.out.nebmeta
 grep -F 'panic_policy=abort' work/system-no-std-smoke/main.out.nebmeta
 grep -F 'strict_region=1' work/system-no-std-smoke/main.out.nebmeta
 grep -F 'no_std=1' work/system-no-std-smoke/main.out.nebmeta
+
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+  --target freestanding --no-std --panic abort --out-dir work/system-no-std-smoke-freestanding
+grep -F 'nebula-codegen-profile runtime_profile=system target=freestanding panic_policy=abort' \
+  work/system-no-std-smoke-freestanding/main.cpp
+grep -F 'target=freestanding' work/system-no-std-smoke-freestanding/main.out.nebmeta
+grep -F 'panic_policy=abort' work/system-no-std-smoke-freestanding/main.out.nebmeta
+grep -F 'strict_region=1' work/system-no-std-smoke-freestanding/main.out.nebmeta
+grep -F 'no_std=1' work/system-no-std-smoke-freestanding/main.out.nebmeta
+
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+  --target x86_64-unknown-none --no-std --panic trap --out-dir work/system-no-std-smoke-none
+grep -F 'nebula-codegen-profile runtime_profile=system target=x86_64-unknown-none panic_policy=trap' \
+  work/system-no-std-smoke-none/main.cpp
+grep -F 'target=x86_64-unknown-none' work/system-no-std-smoke-none/main.out.nebmeta
+grep -F 'panic_policy=trap' work/system-no-std-smoke-none/main.out.nebmeta
+grep -F 'strict_region=1' work/system-no-std-smoke-none/main.out.nebmeta
+grep -F 'no_std=1' work/system-no-std-smoke-none/main.out.nebmeta
 '''
 expect_rc = 0
-expect_stdout_contains = ["runtime_profile=system target=system panic_policy=abort", "NEBULA_PANIC_POLICY = \"abort\""]
+expect_stdout_contains = [
+  "runtime_profile=system target=system panic_policy=abort",
+  "runtime_profile=system target=freestanding panic_policy=abort",
+  "runtime_profile=system target=x86_64-unknown-none panic_policy=trap",
+  "NEBULA_PANIC_POLICY = \"abort\"",
+]

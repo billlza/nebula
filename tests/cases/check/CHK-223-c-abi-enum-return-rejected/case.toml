@@ -1,0 +1,10 @@
+id = "CHK-223-c-abi-enum-return-rejected"
+suite = "check"
+command = "check"
+source = "fixtures/c_abi_export_enum_return.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+
+[[expect_diagnostics]]
+code = "NBL-T131"
+severity = "error"
