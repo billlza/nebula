@@ -7,9 +7,14 @@ on:
 
 jobs:
   contract-tests:
+    # Backstop so a hung case can never run the job to the platform's 24h ceiling
+    # (the suite has historically timed out). Each shard runs ~1/4 of the cases.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-13, macos-14, windows-2022]
+        shard: [1, 2, 3, 4]
         include:
           - os: ubuntu-latest
             target: linux-x86_64
@@ -73,6 +78,7 @@ jobs:
         if: matrix.shell_kind == 'unix'
         run: |
           python3 tests/run.py --suite all --report text --binary ${{ matrix.binary }} \
+            --shard ${{ matrix.shard }}/4 \
             --text-out contract-tests.txt \
             --junit-out contract-tests.junit.xml \
             --json-out contract-tests.json
@@ -92,6 +98,7 @@ jobs:
         shell: msys2 {0}
         run: |
           python3 tests/run.py --suite all --report text --binary ${{ matrix.binary }} \
+            --shard ${{ matrix.shard }}/4 \
             --text-out contract-tests.txt \
             --junit-out contract-tests.junit.xml \
             --json-out contract-tests.json
@@ -100,7 +107,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: contract-test-reports-${{ matrix.target }}
+          name: contract-test-reports-${{ matrix.target }}-shard${{ matrix.shard }}
           path: |
             contract-tests.txt
             contract-tests.junit.xml
@@ -108,6 +115,7 @@ jobs:
 
   asan-ubsan-test-harness:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -131,6 +139,7 @@ jobs:
 
   linux-backend-ga-hardening:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

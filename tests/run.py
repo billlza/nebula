@@ -33,6 +33,16 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--filter", default="*", help="glob pattern for case id")
     p.add_argument(
+        "--exclude-tags",
+        default="",
+        help="comma-separated case tags to skip (e.g. 'network'); useful in sandboxed CI",
+    )
+    p.add_argument(
+        "--shard",
+        default="",
+        help="run a deterministic subset: 'INDEX/TOTAL' (1-based), e.g. '2/4'",
+    )
+    p.add_argument(
         "--report",
         choices=["text", "json", "junit"],
         default="text",
@@ -64,6 +74,21 @@ def main() -> int:
         sys.stderr.write("error: --perf-top must be >= 0\n")
         return 2
 
+    shard: tuple[int, int] | None = None
+    if args.shard:
+        try:
+            index_str, total_str = args.shard.split("/", 1)
+            index, total = int(index_str), int(total_str)
+        except ValueError:
+            sys.stderr.write("error: --shard must be 'INDEX/TOTAL', e.g. '2/4'\n")
+            return 2
+        if total < 1 or index < 1 or index > total:
+            sys.stderr.write(f"error: --shard out of range: {args.shard}\n")
+            return 2
+        shard = (index, total)
+
+    exclude_tags = {t.strip() for t in args.exclude_tags.split(",") if t.strip()}
+
     tests_root = Path(__file__).resolve().parent
     repo_root = tests_root.parent
     binary = Path(args.binary).resolve() if args.binary else (repo_root / "build" / "nebula")
@@ -76,7 +101,13 @@ def main() -> int:
         return 2
 
     try:
-        cases = load_cases(tests_root / "cases", suite=args.suite, filter_glob=args.filter)
+        cases = load_cases(
+            tests_root / "cases",
+            suite=args.suite,
+            filter_glob=args.filter,
+            exclude_tags=exclude_tags,
+            shard=shard,
+        )
     except CaseLoadError as exc:
         sys.stderr.write(f"error: failed to load cases: {exc}\n")
         return 2

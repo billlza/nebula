@@ -153,13 +153,22 @@ def _normalize_case(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
         "id": case_id,
         "suite": suite,
         "path": str(path),
+        "tags": [str(x) for x in _as_list(raw.get("tags", []))],
         "steps": steps,
     }
 
 
-def load_cases(cases_root: Path, suite: str = "all", filter_glob: str = "*") -> list[dict[str, Any]]:
+def load_cases(
+    cases_root: Path,
+    suite: str = "all",
+    filter_glob: str = "*",
+    exclude_tags: frozenset[str] | set[str] | None = None,
+    shard: tuple[int, int] | None = None,
+) -> list[dict[str, Any]]:
     if not cases_root.exists():
         raise CaseLoadError(f"cases root does not exist: {cases_root}")
+
+    exclude = set(exclude_tags or ())
 
     out: list[dict[str, Any]] = []
     for case_file in sorted(cases_root.glob("**/case.toml")):
@@ -170,8 +179,17 @@ def load_cases(cases_root: Path, suite: str = "all", filter_glob: str = "*") -> 
             continue
         if not fnmatch.fnmatch(case["id"], filter_glob):
             continue
+        if exclude and (exclude & set(case["tags"])):
+            continue
 
         out.append(case)
 
     out.sort(key=lambda x: x["id"])
+
+    # Deterministic round-robin sharding over the sorted, stable case order so
+    # cost is spread across shards (adjacent cases tend to be similar weight).
+    if shard is not None:
+        index, total = shard
+        out = [case for i, case in enumerate(out) if i % total == (index - 1)]
+
     return out
