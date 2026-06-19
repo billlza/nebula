@@ -10,15 +10,14 @@ jobs:
     # Backstop so a hung case can never run the job to the platform's 24h ceiling
     # (the suite has historically timed out). Each shard runs ~1/4 of the cases.
     timeout-minutes: 40
-    # Windows (msys2/CLANG64) is not a supported target yet — the CLI's POSIX
-    # process layer (<sys/wait.h>) does not compile there, and the README scopes
-    # support to Linux + macOS. Keep the shards running for visibility but do not
-    # let them block, until the subprocess layer is ported.
-    continue-on-error: ${{ matrix.shell_kind == 'msys2' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14, windows-2022]
+        # Windows is intentionally not in the matrix yet: the CLI's POSIX process
+        # layer (<sys/wait.h>) does not compile on msys2/CLANG64, and the README
+        # scopes supported hosts to Linux + macOS. The msys2 steps below are kept
+        # dormant for when the subprocess layer is ported and Windows is re-added.
+        os: [ubuntu-latest, macos-13, macos-14]
         shard: [1, 2, 3, 4]
         include:
           - os: ubuntu-latest
@@ -33,10 +32,6 @@ jobs:
             target: darwin-arm64
             binary: build/nebula
             shell_kind: unix
-          - os: windows-2022
-            target: windows-x86_64
-            binary: build/nebula.exe
-            shell_kind: msys2
 
     runs-on: ${{ matrix.os }}
 
