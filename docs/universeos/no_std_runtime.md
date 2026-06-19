@@ -17,8 +17,14 @@ The current smoke fixture at `examples/system_no_std_smoke` is allowed to exerci
 
 - `nebula check ... --target system --no-std --panic abort`
 - `nebula build ... --target system --no-std --panic abort`
+- `nebula check ... --target system --no-std --panic trap`
+- `nebula build ... --target system --no-std --panic trap`
 - `nebula check ... --target freestanding --no-std --panic abort`
 - `nebula build ... --target freestanding --no-std --panic abort`
+- `nebula check ... --target freestanding --no-std --panic trap`
+- `nebula build ... --target freestanding --no-std --panic trap`
+- `nebula check ... --target x86_64-unknown-none --no-std --panic abort`
+- `nebula build ... --target x86_64-unknown-none --no-std --panic abort`
 - `nebula check ... --target x86_64-unknown-none --no-std --panic trap`
 - `nebula build ... --target x86_64-unknown-none --no-std --panic trap`
 

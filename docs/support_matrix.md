@@ -112,6 +112,24 @@ Repo-local preview example matrix:
 - `examples/thin_host_bridge_contract`: development/smoke on compiler/tooling hosts from a repo
   checkout; focused v1 envelope and negative-path smoke for `official/nebula-thin-host-bridge`
 
+UniverseOS gate support posture:
+
+No UniverseOS gate is accepted in this support matrix. Planned and experimental gates are release
+documentation and contract-test evidence only; they do not create a supported OS/runtime surface.
+
+| Gate | Registry status | Support posture |
+| --- | --- | --- |
+| `UOS-DOC-001` | `experimental` | contract evidence only; documents staged claim boundaries |
+| `UOS-CLI-001` | `experimental` | contract evidence only; rejects hosted `std` imports under system/no-std gates |
+| `UOS-CLI-002` | `experimental` | contract evidence only; enforces strict-region diagnostics under system/no-std gates |
+| `UOS-ABI-001` | `experimental` | contract evidence only; hosted C++23 ABI/layout goldens, not system ABI support |
+| `UOS-CORE-001` | `experimental` | contract evidence only; no-std smoke and library-layer docs, not a no-std runtime |
+| `UOS-BE-001` | `experimental` | contract evidence only; C++23 backend boundary, not backend independence |
+| `UOS-BOOT-001` | `planned` | future-only, not supported; QEMU hello plan only |
+| `UOS-BOOT-002` | `planned` | future-only, not supported; no freestanding object emission claim |
+| `UOS-BOOT-003` | `planned` | future-only, not supported; no linker-script or boot artifact claim |
+| `UOS-BOOT-004` | `planned` | future-only, not supported; no QEMU serial hello claim |
+
 Important caveat:
 
 - Windows remains part of the compiler/tooling release contract, not the full service-package maturity contract.

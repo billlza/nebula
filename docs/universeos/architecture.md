@@ -68,7 +68,7 @@ hosted service registry and desired-state transitions. It does not supervise rea
 | Hosted CLI/service control plane | `UOS-DOC-001`, service profile tests, example smoke | viable hosted lane |
 | System/no-std import rejection | `UOS-CLI-001` | experimental CLI gate |
 | Strict-region system behavior | `UOS-CLI-002` | experimental CLI gate |
-| Stable hosted ABI/layout statements | `UOS-ABI-001` | planned/early golden tests |
+| Stable hosted ABI/layout statements | `UOS-ABI-001` | experimental hosted golden tests |
 | No-std smoke boundary | `UOS-CORE-001` | experimental smoke only |
 | Backend boundary | `UOS-BE-001` | experimental backend interface boundary |
 | Object backend or LLVM/Cranelift support | future backend gate beyond `UOS-BE-001` | unsupported |

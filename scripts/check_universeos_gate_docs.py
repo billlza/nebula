@@ -20,7 +20,13 @@ REQUIRED_FAMILIES = {
     "UOS-BOOT": r"^UOS-BOOT-\d{3}$",
 }
 ALLOWED_STATUSES = {"planned", "experimental", "candidate", "accepted"}
-REQUIRED_SOURCE_DOCS = {"docs/system_profile.md", "docs/universeos_convergence.md"}
+REQUIRED_SOURCE_DOCS = {
+    "docs/system_profile.md",
+    "docs/support_matrix.md",
+    "docs/universeos_convergence.md",
+    "spec/abi_layout.md",
+    "spec/library_layers.md",
+}
 ALLOWED_SOURCE_DOC_ROOTS = ("docs", "spec", "rfcs")
 ALLOWED_SOURCE_DOC_SUFFIXES = {".md", ".ebnf"}
 NON_CLAIM_TERMS = (

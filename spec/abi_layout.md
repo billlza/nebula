@@ -114,7 +114,7 @@ Before ABI/layout can support a real system profile, Nebula needs:
 - linker and object-file expectations
 - C ABI export behavior that does not depend on hosted C++ runtime facilities
 
-## Golden Tests To Implement Next
+## Current Hosted Golden Evidence
 
 Current hosted C++23 golden tests:
 
@@ -126,6 +126,8 @@ Current hosted C++23 golden tests:
 - C ABI unsafe type rejections: `CHK-194`, `CHK-222`, `CHK-223`, and `CHK-224`
 - C ABI non-shape rule rejections: `CHK-193` for `ref` parameters and `CHK-195` for generic
   exports
+- C ABI annotation/export-shape rejections: `CHK-191`, `CHK-192`, and `CHK-196`
+- Source-level evidence guard: `TST-339-abi-layout-evidence-contract`
 
 Future freestanding ABI tests:
 

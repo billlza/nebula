@@ -31,6 +31,11 @@ The JSON block below is intentionally parsed by `scripts/check_universeos_gate_d
       "relationship": "Current system-profile documentation defines the experimental std-import rejection, strict-region behavior, no-std smoke boundary, and explicit non-goals."
     },
     {
+      "path": "docs/support_matrix.md",
+      "maps_to": ["UOS-DOC-001", "UOS-CLI-001", "UOS-CLI-002", "UOS-ABI-001", "UOS-CORE-001", "UOS-BE-001", "UOS-BOOT-001", "UOS-BOOT-002", "UOS-BOOT-003", "UOS-BOOT-004"],
+      "relationship": "Support matrix documentation records every UniverseOS gate as experimental evidence-only or planned future-only work and prevents release/support posture from silently promoting OS/runtime support."
+    },
+    {
       "path": "docs/universeos_convergence.md",
       "maps_to": ["UOS-DOC-001", "UOS-CLI-001", "UOS-CLI-002", "UOS-ABI-001", "UOS-CORE-001", "UOS-BE-001", "UOS-BOOT-001"],
       "relationship": "UniverseOS convergence documentation keeps the staged direction behind evidence gates and prevents broad OS-substrate positioning without named proof."
@@ -39,6 +44,16 @@ The JSON block below is intentionally parsed by `scripts/check_universeos_gate_d
       "path": "spec/compiler_pipeline.md",
       "maps_to": ["UOS-BE-001"],
       "relationship": "Compiler pipeline documentation names the backend boundary while keeping C++23 as the only production backend."
+    },
+    {
+      "path": "spec/abi_layout.md",
+      "maps_to": ["UOS-ABI-001"],
+      "relationship": "ABI layout documentation records the current hosted C++23 representation, C ABI export restrictions, golden test coverage, and future-only system ABI requirements."
+    },
+    {
+      "path": "spec/library_layers.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "Library layering documentation separates future core, hosted std, and future system APIs while keeping current core/system import support explicitly unclaimed."
     },
     {
       "path": "docs/universeos/architecture.md",
@@ -109,13 +124,13 @@ The JSON block below is intentionally parsed by `scripts/check_universeos_gate_d
     {
       "id": "UOS-ABI-001",
       "title": "Layout golden tests",
-      "status": "planned",
+      "status": "experimental",
       "owner_area": "abi/codegen",
       "required_evidence": [
-        "Golden tests or structured assertions for scalar, struct, enum, alignment, and exported C ABI layout where applicable.",
-        "Checked-in expected artifacts that fail on accidental layout drift.",
-        "Documentation distinguishing stable narrow C ABI behavior from future system ABI work.",
-        "Strict build and platform-specific evidence for every platform that receives a layout claim."
+        "Hosted C++23 golden tests and structured assertions for scalar C ABI exports, struct field order, enum payload lowering, duplicate symbol rejection, and no-export library rejection.",
+        "Stable diagnostics rejecting public C ABI exports for unsupported hosted types such as String, Result, struct, enum, ref parameters, extern exports, and generic functions.",
+        "Documentation distinguishing current hosted C ABI behavior from future system ABI, object backend, syscall ABI, and freestanding layout work.",
+        "Strict build and contract-suite evidence before any release note promotes a stronger ABI or platform-specific layout claim."
       ],
       "non_claim": "Layout goldens do not prove a syscall ABI, calling-convention coverage, linker-script support, object backend, cross compilation, kernel target, or freestanding runtime."
     },
@@ -128,6 +143,7 @@ The JSON block below is intentionally parsed by `scripts/check_universeos_gate_d
         "A minimal system-profile smoke target that does not import bundled hosted std modules.",
         "Generated artifact inspection or assertions for runtime profile, target, and panic policy markers under --target system, --target freestanding, *-none target strings, --panic abort, and --panic trap.",
         "Explicit rejection tests for hosted APIs not allowed by the smoke.",
+        "Library-layer documentation distinguishes future core, hosted std, and future system APIs without claiming core:: or system:: imports work today.",
         "Documentation stating that the smoke is a compiler/profile contract, not a runtime support claim."
       ],
       "non_claim": "A no-std smoke does not prove a bootable binary, allocator, panic runtime, syscall layer, kernel mode, driver support, interrupt handling, MMU integration, scheduler, or freestanding standard library."

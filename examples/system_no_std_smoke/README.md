@@ -11,7 +11,15 @@ Expected current commands:
 ```bash
 nebula check examples/system_no_std_smoke --target system --no-std --panic abort
 nebula build examples/system_no_std_smoke --target system --no-std --panic abort
+nebula check examples/system_no_std_smoke --target system --no-std --panic trap
+nebula build examples/system_no_std_smoke --target system --no-std --panic trap
+nebula check examples/system_no_std_smoke --target freestanding --no-std --panic abort
 nebula build examples/system_no_std_smoke --target freestanding --no-std --panic abort
+nebula check examples/system_no_std_smoke --target freestanding --no-std --panic trap
+nebula build examples/system_no_std_smoke --target freestanding --no-std --panic trap
+nebula check examples/system_no_std_smoke --target x86_64-unknown-none --no-std --panic abort
+nebula build examples/system_no_std_smoke --target x86_64-unknown-none --no-std --panic abort
+nebula check examples/system_no_std_smoke --target x86_64-unknown-none --no-std --panic trap
 nebula build examples/system_no_std_smoke --target x86_64-unknown-none --no-std --panic trap
 ```
 

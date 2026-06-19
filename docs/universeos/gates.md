@@ -96,14 +96,18 @@ contract, or interrupt-safety story.
 Purpose: create repeatable evidence for ABI-relevant layout decisions before any low-level ABI
 claim.
 
-Status: planned.
+Status: experimental.
 
 Required evidence:
 
-- golden tests for scalar, struct, enum, alignment, and exported C ABI layout where applicable
-- checked-in expected artifacts or structured assertions that fail on accidental layout drift
-- documentation for which layouts are stable, experimental, or intentionally unspecified
-- strict build/test evidence on every platform where a layout claim is made
+- hosted C++23 golden tests and structured assertions for scalar C ABI exports, struct field order,
+  enum payload lowering, duplicate symbol rejection, and no-export library rejection
+- stable diagnostics rejecting public C ABI exports for unsupported hosted types such as `String`,
+  `Result`, struct, enum, `ref` parameters, extern exports, and generic functions
+- documentation for which hosted C ABI/layout behavior exists today and which system ABI,
+  object-backend, syscall ABI, and freestanding layout work remains future-only
+- strict build/test evidence before any release note promotes a stronger ABI or platform-specific
+  layout claim
 
 Exit criteria:
 
@@ -126,6 +130,8 @@ Required evidence:
 - generated artifact inspection or test assertions showing runtime profile, target, and panic
   policy markers
 - explicit rejection tests for hosted APIs that the smoke does not use
+- library-layer documentation distinguishing future `core`, hosted `std`, and future `system` APIs
+  without claiming `core::` or `system::` imports work today
 - documentation of what the smoke excludes
 
 Exit criteria:
