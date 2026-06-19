@@ -282,6 +282,9 @@ static std::string cpp_type(const Ty& t) {
     if (matches_std_type(t, "task", "Task") && t.type_args.size() == 1) {
       return task_cpp_type(t.type_args.front());
     }
+    if (matches_std_type(t, "vec", "Vec") && t.type_args.size() == 1) {
+      return "nebula::rt::Vec<" + cpp_type(t.type_args.front()) + ">";
+    }
     if (matches_std_type(t, "time", "Duration")) {
       return "nebula::rt::Duration";
     }
@@ -1947,7 +1950,8 @@ static void emit_struct_def(Cpp& out, const StructDef& s) {
   }
   if (s.qualified_name.package_name == "std" &&
       (s.qualified_name.module_name == "task" || s.qualified_name.module_name == "time" ||
-       s.qualified_name.module_name == "bytes" || s.qualified_name.module_name == "net")) {
+       s.qualified_name.module_name == "bytes" || s.qualified_name.module_name == "net" ||
+       s.qualified_name.module_name == "vec")) {
     return;
   }
   if (s.qualified_name.package_name == "std" && s.qualified_name.module_name == "http" &&

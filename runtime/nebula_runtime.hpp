@@ -2602,6 +2602,44 @@ inline bool bytes_equal(const Bytes& lhs, const Bytes& rhs) {
   return lhs.data == rhs.data;
 }
 
+// Contiguous, growable vector backing std::vec::Vec<T>. The Nebula-level type
+// `Vec<T>` is mapped to this template; its operations lower to the free
+// functions below.
+template <class T>
+struct Vec {
+  // `data` is mutable so a growable vector can be modelled under Nebula's
+  // immutable-by-default `let` bindings (there is no `let mut`); each Vec value
+  // still owns an independent backing store, so value semantics are preserved.
+  mutable std::vector<T> data;
+};
+
+// `value`/`fallback` are in a non-deduced context (std::type_identity_t) so the
+// element type T is fixed by the vector alone; a literal argument (e.g. a string
+// literal) is then implicitly converted to T instead of forcing a conflicting
+// deduction.
+template <class T>
+inline void vec_push(const Vec<T>& v, std::type_identity_t<T> value) {
+  v.data.push_back(std::move(value));
+}
+
+template <class T>
+inline std::int64_t vec_len(const Vec<T>& v) {
+  return static_cast<std::int64_t>(v.data.size());
+}
+
+template <class T>
+inline bool vec_is_empty(const Vec<T>& v) {
+  return v.data.empty();
+}
+
+template <class T>
+inline T vec_get_or(const Vec<T>& v, std::int64_t index, std::type_identity_t<T> fallback) {
+  if (index < 0 || static_cast<std::size_t>(index) >= v.data.size()) {
+    return fallback;
+  }
+  return v.data[static_cast<std::size_t>(index)];
+}
+
 inline std::string json_escape_string(std::string_view text) {
   const auto first_escape = std::find_if(text.begin(), text.end(), [](char ch) {
     return ch == '\\' || ch == '"' || static_cast<unsigned char>(ch) < 0x20 || ch == '\b' ||

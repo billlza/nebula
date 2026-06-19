@@ -1,0 +1,13 @@
+id = "RUN-087-std-vec-contiguous-collection"
+suite = "run"
+
+# std::vec::Vec<T>: a contiguous, growable vector backed by the runtime. Covers
+# empty construction (return-type-driven), push growth, len, bounds-checked
+# get_or, is_empty, value-semantics copy independence, and a non-Int element
+# type. The collection the README promises beyond the linked std::list.
+
+command = "run"
+source = "fixtures/std_vec_collection.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["std-vec-ok"]
