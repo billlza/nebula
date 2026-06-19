@@ -1192,6 +1192,24 @@ private:
                 return out;
               }
             }
+            // Empty generic construction: take the type arguments from the
+            // expected type (e.g. `Vec()` whose element type is fixed by
+            // `-> Vec<Int>`). Without this the constructor cannot infer its type
+            // arguments and errors. Restricted to the no-argument case so no
+            // argument diagnostics are suppressed; the probe only hides the
+            // would-be "cannot infer type arguments" error.
+            if (n.args.empty() && !expected->type_args.empty() &&
+                (expected->kind == Ty::Kind::Struct || expected->kind == Ty::Kind::Enum)) {
+              const bool prev_suppress = suppress_diags_;
+              suppress_diags_ = true;
+              auto probe = typecheck_expr(e);
+              suppress_diags_ = prev_suppress;
+              if (std::holds_alternative<TExpr::Construct>(probe->node) &&
+                  probe->ty.kind == expected->kind && probe->ty.name == expected->name) {
+                probe->ty = *expected;
+                return probe;
+              }
+            }
             return typecheck_expr(e);
           } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
             auto inner = typecheck_expr_with_expected(*n.inner, expected);
