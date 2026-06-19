@@ -4,7 +4,7 @@ description = "control-plane workspace runs with staged backend SDK installed-pr
 
 [[steps]]
 kind = "shell"
-timeout = 300
+timeout = 600
 run = '''
 python3 - <<'PY'
 import json

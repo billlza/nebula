@@ -4,7 +4,7 @@ description = "release apply uses the jobs-kernel max-attempt retry semantics fo
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import json

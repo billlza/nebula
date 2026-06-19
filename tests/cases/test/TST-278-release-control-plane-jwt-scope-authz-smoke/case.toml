@@ -4,7 +4,7 @@ description = "release control plane enforces app/channel scoped authz for JWT p
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import json

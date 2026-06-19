@@ -4,7 +4,7 @@ description = "release control plane supports default-off RS256 JWT resource-ser
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import json

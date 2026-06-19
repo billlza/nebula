@@ -4,7 +4,7 @@ description = "worker and broker lanes respect app/channel scoped authz"
 
 [[steps]]
 kind = "shell"
-timeout = 300
+timeout = 600
 run = """
 python3 - <<'PY'
 import json

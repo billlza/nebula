@@ -4,7 +4,7 @@ description = "release control plane lease claim and complete paths are compare-
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import concurrent.futures

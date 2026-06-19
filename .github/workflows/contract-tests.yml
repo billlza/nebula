@@ -80,8 +80,14 @@ jobs:
       - name: Run Contract Tests
         if: matrix.shell_kind == 'unix'
         run: |
+          # 600s per-step (vs the 120s default): the CI runner is markedly slower
+          # than dev machines at rebuilding the vendored crypto native C that the
+          # release-control-plane / app-platform smokes pull in, so the default
+          # tripped rc=124 timeouts. The 50min job ceiling is the real hang
+          # backstop; cases that genuinely need a tighter bound set their own.
           python3 tests/run.py --suite all --report text --binary ${{ matrix.binary }} \
             --shard ${{ matrix.shard }}/4 \
+            --timeout 600 \
             --text-out contract-tests.txt \
             --junit-out contract-tests.junit.xml \
             --json-out contract-tests.json

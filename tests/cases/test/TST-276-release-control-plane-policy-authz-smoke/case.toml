@@ -4,7 +4,7 @@ description = "release control plane returns stable permission-scoped authz deni
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import os

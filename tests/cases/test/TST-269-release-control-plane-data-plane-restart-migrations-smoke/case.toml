@@ -4,7 +4,7 @@ description = "release control plane split migration slices remain restart-safe 
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import os

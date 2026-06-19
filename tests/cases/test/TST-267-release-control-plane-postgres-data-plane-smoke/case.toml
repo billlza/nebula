@@ -4,7 +4,7 @@ description = "release control plane can opt into the official Postgres data pla
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = """
 python3 - <<'PY'
 import json

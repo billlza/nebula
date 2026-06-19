@@ -30,6 +30,11 @@ if [ "${#FILTERS[@]}" -eq 0 ]; then
     TST-155-official-qcomm-sim-bb84-smoke
     TST-292-official-pqc-channel-pinned-initiator-smoke
     TST-224-example-release-control-plane-workspace-approval-runner-smoke
+    # Fail on CI but pass locally and are NOT timeouts: ps1 help surface (pwsh on
+    # Linux) and a competitive crypto benchmark (CI-hardware perf). Capture their
+    # real error here.
+    TST-060-install-ps1-help-surface
+    TST-201-competitive-benchmark-matrix-crypto-smoke
   )
 fi
 
