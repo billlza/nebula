@@ -252,11 +252,23 @@ static Severity apply_warnings_as_errors(const FuncCtx& ctx, Severity sev) {
   return sev;
 }
 
-// Scalars are value-copied; reading a scalar field yields an independent copy,
-// so the base object it was read from does not escape through that read.
-static bool is_scalar_value_ty(const Ty& ty) {
-  return ty.kind == Ty::Kind::Int || ty.kind == Ty::Kind::Float ||
-         ty.kind == Ty::Kind::Bool;
+// All struct/enum fields in Nebula hold owned values (scalars, strings, nested
+// value structs/enums; recursive fields are heap-boxed via make_shared, never
+// region-bound). Reading `base.f` therefore yields an independent copy — a
+// value, string buffer, or refcounted heap box — so the base object does NOT
+// escape through the read. Unknown stays conservative (treated as escaping).
+static bool is_value_copy_field_ty(const Ty& ty) {
+  switch (ty.kind) {
+    case Ty::Kind::Int:
+    case Ty::Kind::Float:
+    case Ty::Kind::Bool:
+    case Ty::Kind::String:
+    case Ty::Kind::Struct:
+    case Ty::Kind::Enum:
+      return true;
+    default:
+      return false;
+  }
 }
 
 // `escape_ctx` makes the walk field-sensitive: in an escape position (e.g. a
@@ -271,7 +283,7 @@ static void collect_var_refs_impl(const Expr& e, std::unordered_set<VarId>& out,
         if constexpr (std::is_same_v<N, Expr::VarRef>) {
           if (n.var != 0) out.insert(n.var);
         } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
-          if (n.base_var != 0 && !(escape_ctx && is_scalar_value_ty(e.ty))) {
+          if (n.base_var != 0 && !(escape_ctx && is_value_copy_field_ty(e.ty))) {
             out.insert(n.base_var);
           }
         } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
