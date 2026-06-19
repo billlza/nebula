@@ -1,0 +1,32 @@
+id = "BLD-015-dce-dead-region-alloc-eliminated"
+suite = "build"
+
+# NIR dead-code elimination: a pure, never-read region allocation is removed
+# before codegen, while a read allocation is retained. The source has two
+# region-allocation sites; after DCE the generated C++ must contain exactly one
+# NEBULA_ALLOC (the surviving `keep`), and the program must still print "dce-ok".
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+rm -rf work/dce-dead-region-alloc
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/dce_dead_region_alloc.nb" \
+  --out-dir work/dce-dead-region-alloc
+cpp=work/dce-dead-region-alloc/dce_dead_region_alloc.cpp
+test -f "$cpp"
+count=$(grep -c 'NEBULA_ALLOC' "$cpp" || true)
+echo "NEBULA_ALLOC-count=$count"
+test "$count" -eq 1
+grep -F 'for (std::int64_t i' "$cpp"
+'''
+expect_rc = 0
+expect_stdout_contains = ["NEBULA_ALLOC-count=1"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/dce_dead_region_alloc.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["dce-ok"]

@@ -1,0 +1,20 @@
+struct Box {
+  v: Int
+}
+
+// Regression fixture for NIR dead-code elimination.
+// `dead` is a pure, never-read region allocation and must be eliminated.
+// `keep` is read afterwards and must survive (its NEBULA_ALLOC must remain).
+fn main() -> Void {
+  region R {
+    for i in 0..1000 {
+      let dead = Box(i)
+    }
+    let keep = Box(42)
+    if keep.v == 42 {
+      print("dce-ok")
+    } else {
+      print("dce-bad")
+    }
+  }
+}

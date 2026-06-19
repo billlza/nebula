@@ -40,6 +40,7 @@
 #include "passes/call_target_resolver.hpp"
 #include "passes/epistemic_lint.hpp"
 #include "passes/rep_owner_infer.hpp"
+#include "passes/dead_code_elim.hpp"
 #include "cli_shared.hpp"
 #include "project.hpp"
 
@@ -3697,6 +3698,13 @@ CompilePipelineResult run_compile_pipeline(const std::vector<nebula::frontend::S
         append_diags(result.diags, lint_diags, opt.stage);
         summarize_diag_levels(result);
       }
+    }
+
+    // Machine-independent optimization: drop dead, side-effect-free bindings
+    // from the NIR before codegen. Runs after all diagnostics/lint so warnings
+    // still reflect the program as written. Output-equivalent by construction.
+    if (!result.has_error) {
+      result.dead_bindings_removed = nebula::passes::run_dead_code_elim(nir_prog).removed_bindings;
     }
 
     result.nir_prog = std::make_shared<nebula::nir::Program>(std::move(nir_prog));

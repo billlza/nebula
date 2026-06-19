@@ -36,6 +36,7 @@ add_executable(nebula
   passes/borrow_xstmt.cpp
   passes/rep_owner_infer.cpp
   passes/epistemic_lint.cpp
+  passes/dead_code_elim.cpp
 )
 
 set(NEBULA_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")

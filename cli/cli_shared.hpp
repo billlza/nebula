@@ -215,6 +215,7 @@ struct CompilePipelineResult {
   std::size_t analysis_elapsed_ms = 0;
   std::size_t fn_count = 0;
   std::size_t cfg_nodes = 0;
+  std::size_t dead_bindings_removed = 0;
   std::string cached_cpp;
   std::vector<nebula::frontend::Diagnostic> diags;
   std::shared_ptr<std::vector<nebula::frontend::TProgram>> typed_programs;
