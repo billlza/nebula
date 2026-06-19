@@ -17,6 +17,7 @@ using nebula::nir::Block;
 using nebula::nir::Expr;
 using nebula::nir::PrefixKind;
 using nebula::nir::Stmt;
+using nebula::nir::Ty;
 using nebula::nir::VarId;
 
 struct VarMeta {
@@ -251,36 +252,60 @@ static Severity apply_warnings_as_errors(const FuncCtx& ctx, Severity sev) {
   return sev;
 }
 
-static void collect_var_refs(const Expr& e, std::unordered_set<VarId>& out) {
+// Scalars are value-copied; reading a scalar field yields an independent copy,
+// so the base object it was read from does not escape through that read.
+static bool is_scalar_value_ty(const Ty& ty) {
+  return ty.kind == Ty::Kind::Int || ty.kind == Ty::Kind::Float ||
+         ty.kind == Ty::Kind::Bool;
+}
+
+// `escape_ctx` makes the walk field-sensitive: in an escape position (e.g. a
+// return), reading a scalar field `base.f` leaks only a copy of the scalar, not
+// the base object, so `base` is NOT collected. Aggregate/unknown field types
+// stay conservative and still collect the base. With escape_ctx=false this is
+// the plain "every referenced variable" walk used for dependency closure.
+static void collect_var_refs_impl(const Expr& e, std::unordered_set<VarId>& out, bool escape_ctx) {
   std::visit(
       [&](auto&& n) {
         using N = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<N, Expr::VarRef>) {
           if (n.var != 0) out.insert(n.var);
         } else if constexpr (std::is_same_v<N, Expr::FieldRef>) {
-          if (n.base_var != 0) out.insert(n.base_var);
+          if (n.base_var != 0 && !(escape_ctx && is_scalar_value_ty(e.ty))) {
+            out.insert(n.base_var);
+          }
         } else if constexpr (std::is_same_v<N, Expr::TempFieldRef>) {
-          collect_var_refs(*n.base, out);
+          collect_var_refs_impl(*n.base, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::EnumIsVariant>) {
-          collect_var_refs(*n.subject, out);
+          collect_var_refs_impl(*n.subject, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::EnumPayload>) {
-          collect_var_refs(*n.subject, out);
+          collect_var_refs_impl(*n.subject, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::Call>) {
-          for (const auto& a : n.args) collect_var_refs(*a, out);
+          for (const auto& a : n.args) collect_var_refs_impl(*a, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::Construct>) {
-          for (const auto& a : n.args) collect_var_refs(*a, out);
+          for (const auto& a : n.args) collect_var_refs_impl(*a, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::Binary>) {
-          collect_var_refs(*n.lhs, out);
-          collect_var_refs(*n.rhs, out);
+          collect_var_refs_impl(*n.lhs, out, escape_ctx);
+          collect_var_refs_impl(*n.rhs, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::Unary>) {
-          collect_var_refs(*n.inner, out);
+          collect_var_refs_impl(*n.inner, out, escape_ctx);
         } else if constexpr (std::is_same_v<N, Expr::Prefix>) {
-          collect_var_refs(*n.inner, out);
+          collect_var_refs_impl(*n.inner, out, escape_ctx);
         } else {
           // literals: nothing
         }
       },
       e.node);
+}
+
+static void collect_var_refs(const Expr& e, std::unordered_set<VarId>& out) {
+  collect_var_refs_impl(e, out, /*escape_ctx=*/false);
+}
+
+// Field-sensitive variant for escape positions: a scalar field read does not
+// escape the base object it was loaded from.
+static void collect_escaping_var_refs(const Expr& e, std::unordered_set<VarId>& out) {
+  collect_var_refs_impl(e, out, /*escape_ctx=*/true);
 }
 
 static const Expr* strip_prefix_chain(const Expr& e, std::vector<PrefixKind>& chain) {
@@ -550,9 +575,11 @@ static void gather_escape_seeds_in_stmt(FuncCtx& ctx, const Stmt& s,
           scan_expr_for_calls_in_region(ctx, *st.expr, seeds);
         } else if constexpr (std::is_same_v<S, Stmt::Return>) {
           if (!ctx.region_stack.empty()) {
-            // Any vars referenced by return inside region are escaping that region.
+            // Any vars referenced by return inside region are escaping that region —
+            // except a scalar field read, which leaks only a copied value, not the
+            // base object (field-sensitive escape).
             std::unordered_set<VarId> refs;
-            collect_var_refs(*st.value, refs);
+            collect_escaping_var_refs(*st.value, refs);
             for (VarId v : refs) mark_seed(seeds, v, EscapeReason::Return);
 
             // Cross-function return path: if the return value is a call, use escape summary

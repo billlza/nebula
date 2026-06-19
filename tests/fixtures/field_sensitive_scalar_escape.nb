@@ -1,0 +1,32 @@
+struct Box {
+  v: Int
+}
+
+// Field-sensitive escape: reading scalar fields through aliases must NOT make
+// the region allocation escape — x/a/b stay rep=Region (no heap, no shared).
+fn read_scalar_fields() -> Int {
+  region R {
+    let x = Box(42)
+    let a = x
+    let b = x
+    return a.v + b.v
+  }
+}
+
+// Soundness guard: a scalar field read does not suppress a genuine whole-object
+// escape — returning `y` itself must still be promoted to heap (NBL-R001).
+fn escapes_whole() -> Box {
+  region R {
+    let y = Box(7)
+    let probe = y.v
+    return y
+  }
+}
+
+fn main() -> Void {
+  if read_scalar_fields() == 84 {
+    print("field-sensitive-ok")
+  } else {
+    print("field-sensitive-bad")
+  }
+}

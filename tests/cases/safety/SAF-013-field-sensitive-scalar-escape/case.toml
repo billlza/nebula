@@ -1,0 +1,35 @@
+id = "SAF-013-field-sensitive-scalar-escape"
+suite = "safety"
+
+# Field-sensitive ownership inference: reading a scalar field (a value copy)
+# through aliases must NOT make the base region allocation escape — it stays
+# rep=Region, never heap-shared. The soundness guard: returning the whole object
+# must still escape to heap (NBL-R001). Both checked from --dump-ownership.
+
+[[steps]]
+kind = "shell"
+run = '''
+set -u
+out="$("$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/tests/fixtures/field_sensitive_scalar_escape.nb" --dump-ownership 2>&1)"
+printf '%s\n' "$out"
+# Precision: scalar field reads keep the allocation region-local.
+printf '%s\n' "$out" | grep -F 'rep=Region' >/dev/null
+# Soundness: a returned whole object still escapes to heap.
+printf '%s\n' "$out" | grep -F 'NBL-R001' >/dev/null
+# No spurious shared ownership introduced by alias fanout over scalar reads.
+if printf '%s\n' "$out" | grep -F 'owner=Shared' >/dev/null; then
+  echo "unexpected owner=Shared" >&2
+  exit 1
+fi
+'''
+expect_rc = 0
+expect_stdout_contains = ["rep=Region", "NBL-R001"]
+forbid_stdout_contains = ["owner=Shared"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/field_sensitive_scalar_escape.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["field-sensitive-ok"]
