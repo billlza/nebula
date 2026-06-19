@@ -142,14 +142,14 @@ jobs:
           cp tests/fixtures/smoke.nb "$smoke_root/smoke.nb"
           ./build/nebula test --dir "$smoke_root"
 
-  asan-generated-program-diagnostic:
-    # Diagnostic for the generated-program crashes seen only on CI runners
-    # (rc=-11/245) that do not reproduce locally even under sanitizers. Emits the
-    # C++ for representative crashing programs, recompiles it with ASan+UBSan, and
-    # runs it on the CI runner so any memory/UB error prints a backtrace. Non-
-    # blocking: this surfaces a diagnosis, it is not a gate.
+  compiler-crash-diagnostic:
+    # The CI crashes (rc=-11/245) are the `nebula` COMPILER segfaulting while
+    # building certain inputs (result `?`, nested JSON) — not the generated
+    # programs. It reproduces only with the CI toolchain (GCC on ubuntu), not
+    # locally (clang, incl. ASan). Build the compiler with ASan+UBSan and also
+    # run it under gdb on the crashing inputs to locate the fault. Non-blocking.
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     continue-on-error: true
     steps:
       - name: Checkout
@@ -160,53 +160,37 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Configure
-        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+      - name: Install gdb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
 
-      - name: Build
-        run: cmake --build build -j
+      - name: Build compiler with ASan+UBSan
+        run: |
+          cmake -S . -B build-asan -DNEBULA_STRICT=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          cmake --build build-asan -j
 
-      - name: Sanitize generated programs
+      - name: Run sanitized compiler on crashing inputs
         run: |
           set +e
-          inc="build/generated/include"
-          mkdir -p asan-out
-          fixtures="result_try_run std_json_arrays_nested recursive_types generic_recursive_list smoke"
-          overall=0
-          for fx in $fixtures; do
-            echo "::group::$fx"
-            ./build/nebula build "tests/fixtures/$fx.nb" --emit-cpp --out-dir asan-out >/dev/null 2>&1
-            cpp="asan-out/$fx.cpp"
-            if [ ! -f "$cpp" ]; then echo "[$fx] no generated cpp, skipping"; echo "::endgroup::"; continue; fi
-            clang++ -std=c++23 -fsanitize=address,undefined -fno-omit-frame-pointer -g3 \
-              -I "$inc" "$cpp" -o "asan-out/$fx.asan" 2>&1 | tee "asan-out/$fx.compile.log"
+          mkdir -p diag
+          for fx in result_try_run std_json_arrays_nested smoke; do
+            echo "::group::asan $fx"
             ASAN_OPTIONS=detect_leaks=0:abort_on_error=0 UBSAN_OPTIONS=print_stacktrace=1 \
-              "asan-out/$fx.asan" 2>&1 | tee "asan-out/$fx.run.log"
-            rc=${PIPESTATUS[0]}
-            echo "[$fx] exit=$rc"
-            [ "$rc" -ne 0 ] && overall=1
+              ./build-asan/nebula build "tests/fixtures/$fx.nb" --emit-cpp --out-dir diag \
+              2>&1 | tee "diag/$fx.asan.log"
+            echo "[$fx] exit=${PIPESTATUS[0]}"
             echo "::endgroup::"
           done
-          echo "asan-diagnostic-overall-rc=$overall"
 
-      - name: Capture crash backtrace (plain build under gdb)
+      - name: Build plain compiler and capture gdb backtrace of the crash
         run: |
           set +e
-          sudo apt-get update -qq && sudo apt-get install -y -qq gdb
-          mkdir -p gdb-out
-          # Plain -O0 builds are what `nebula run` executes (and what crashes on
-          # CI). ASan masks the fault, so run the plain binary under gdb to get
-          # the actual SIGSEGV backtrace.
+          cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON && cmake --build build -j
           for fx in result_try_run std_json_arrays_nested; do
             echo "::group::gdb $fx"
-            ./build/nebula build "tests/fixtures/$fx.nb" --emit-cpp --out-dir gdb-out >/dev/null 2>&1
-            out="gdb-out/$fx.out"
-            if [ -f "$out" ]; then
-              gdb -batch -ex 'run' -ex 'bt full' -ex 'info registers' --args "$out" \
-                2>&1 | tee "gdb-out/$fx.gdb.log"
-            else
-              echo "no .out produced for $fx"
-            fi
+            gdb -batch -ex 'run' -ex 'bt full' -ex 'info registers' \
+              --args ./build/nebula build "tests/fixtures/$fx.nb" --emit-cpp --out-dir diag \
+              2>&1 | tee "diag/$fx.gdb.log"
             echo "::endgroup::"
           done
 
@@ -214,10 +198,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: asan-generated-program-diagnostic
-          path: |
-            asan-out/*.log
-            gdb-out/*.gdb.log
+          name: compiler-crash-diagnostic
+          path: diag/*.log
 
   linux-backend-ga-hardening:
     runs-on: ubuntu-latest
