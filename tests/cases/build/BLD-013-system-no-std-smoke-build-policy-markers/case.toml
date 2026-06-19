@@ -5,45 +5,45 @@ suite = "build"
 kind = "shell"
 run = '''
 set -eu
-rm -rf work/system-no-std-smoke
-"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
-  --target system --no-std --panic abort --out-dir work/system-no-std-smoke
-test -f work/system-no-std-smoke/main.cpp
-test -f work/system-no-std-smoke/main.out
-test -f work/system-no-std-smoke/main.out.nebmeta
-grep -F '#include "runtime/nebula_runtime.hpp"' work/system-no-std-smoke/main.cpp
-grep -F 'nebula-codegen-profile runtime_profile=system target=system panic_policy=abort' work/system-no-std-smoke/main.cpp
-grep -F 'NEBULA_RUNTIME_PROFILE = "system"' work/system-no-std-smoke/main.cpp
-grep -F 'NEBULA_TARGET = "system"' work/system-no-std-smoke/main.cpp
-grep -F 'NEBULA_PANIC_POLICY = "abort"' work/system-no-std-smoke/main.cpp
-grep -F 'runtime_profile=system' work/system-no-std-smoke/main.out.nebmeta
-grep -F 'target=system' work/system-no-std-smoke/main.out.nebmeta
-grep -F 'panic_policy=abort' work/system-no-std-smoke/main.out.nebmeta
-grep -F 'strict_region=1' work/system-no-std-smoke/main.out.nebmeta
-grep -F 'no_std=1' work/system-no-std-smoke/main.out.nebmeta
+root="work/system-no-std-smoke-matrix"
+rm -rf "$root"
 
-"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
-  --target freestanding --no-std --panic abort --out-dir work/system-no-std-smoke-freestanding
-grep -F 'nebula-codegen-profile runtime_profile=system target=freestanding panic_policy=abort' \
-  work/system-no-std-smoke-freestanding/main.cpp
-grep -F 'target=freestanding' work/system-no-std-smoke-freestanding/main.out.nebmeta
-grep -F 'panic_policy=abort' work/system-no-std-smoke-freestanding/main.out.nebmeta
-grep -F 'strict_region=1' work/system-no-std-smoke-freestanding/main.out.nebmeta
-grep -F 'no_std=1' work/system-no-std-smoke-freestanding/main.out.nebmeta
+build_smoke() {
+  target="$1"
+  panic="$2"
+  out="$root/$target-$panic"
+  "$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+    --target "$target" --no-std --panic "$panic" --out-dir "$out"
+  test -f "$out/main.cpp"
+  test -f "$out/main.out"
+  test -f "$out/main.out.nebmeta"
+  grep -F '#include "runtime/nebula_runtime.hpp"' "$out/main.cpp"
+  grep -F "nebula-codegen-profile runtime_profile=system target=$target panic_policy=$panic" "$out/main.cpp"
+  grep -F 'NEBULA_RUNTIME_PROFILE = "system"' "$out/main.cpp"
+  grep -F "NEBULA_TARGET = \"$target\"" "$out/main.cpp"
+  grep -F "NEBULA_PANIC_POLICY = \"$panic\"" "$out/main.cpp"
+  grep -F 'runtime_profile=system' "$out/main.out.nebmeta"
+  grep -F "target=$target" "$out/main.out.nebmeta"
+  grep -F "panic_policy=$panic" "$out/main.out.nebmeta"
+  grep -F 'strict_region=1' "$out/main.out.nebmeta"
+  grep -F 'no_std=1' "$out/main.out.nebmeta"
+}
 
-"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
-  --target x86_64-unknown-none --no-std --panic trap --out-dir work/system-no-std-smoke-none
-grep -F 'nebula-codegen-profile runtime_profile=system target=x86_64-unknown-none panic_policy=trap' \
-  work/system-no-std-smoke-none/main.cpp
-grep -F 'target=x86_64-unknown-none' work/system-no-std-smoke-none/main.out.nebmeta
-grep -F 'panic_policy=trap' work/system-no-std-smoke-none/main.out.nebmeta
-grep -F 'strict_region=1' work/system-no-std-smoke-none/main.out.nebmeta
-grep -F 'no_std=1' work/system-no-std-smoke-none/main.out.nebmeta
+build_smoke system abort
+build_smoke system trap
+build_smoke freestanding abort
+build_smoke freestanding trap
+build_smoke x86_64-unknown-none abort
+build_smoke x86_64-unknown-none trap
 '''
 expect_rc = 0
 expect_stdout_contains = [
   "runtime_profile=system target=system panic_policy=abort",
+  "runtime_profile=system target=system panic_policy=trap",
   "runtime_profile=system target=freestanding panic_policy=abort",
+  "runtime_profile=system target=freestanding panic_policy=trap",
+  "runtime_profile=system target=x86_64-unknown-none panic_policy=abort",
   "runtime_profile=system target=x86_64-unknown-none panic_policy=trap",
   "NEBULA_PANIC_POLICY = \"abort\"",
+  "NEBULA_PANIC_POLICY = \"trap\"",
 ]

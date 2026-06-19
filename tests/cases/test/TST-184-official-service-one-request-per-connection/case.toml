@@ -3,6 +3,170 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "python3 - <<'PY'\nimport os\nimport shutil\nimport socket\nimport subprocess\nimport sys\nimport time\nfrom pathlib import Path\n\nrepo_root = Path(os.environ['NEBULA_REPO_ROOT'])\nsys.path.insert(0, str(repo_root / 'tests' / 'lib'))\nfrom service_probe import fail_with_output, finish_process_output, wait_for_listener_bound\nroot = Path('work/official_service_connection_lifecycle')\nshutil.rmtree(root, ignore_errors=True)\n(root / 'src').mkdir(parents=True, exist_ok=True)\n(root / 'nebula.toml').write_text('''schema_version = 1\\n\\n[package]\\nname = \"official-service-connection-lifecycle\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n\\n[dependencies]\\nservice = { path = \"''' + str(repo_root / 'official' / 'nebula-service') + '''\" }\\n''', encoding='utf-8')\n(root / 'src' / 'server.nb').write_text('''module server\\nimport service::context\\nimport std::http\\nimport std::result\\n\\nasync fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {\\n  return Ok(ok_text(\"one-shot\"))\\n}\\n''', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text('''module main\\nimport service::config\\nimport service::server\\nimport server\\n\\nasync fn main() -> Void {\\n  match config_from_env(\"svc-connection-lifecycle\", 0) {\\n    Ok(cfg) => {\\n      match await bind_listener(cfg) {\\n        Ok(listener) => {\\n          match await serve_requests_n_result_with_context(listener, cfg, 1, handle_request) {\\n            Ok(_) => {}\\n            Err(msg) => { print(msg) }\\n          }\\n        }\\n        Err(msg) => { print(msg) }\\n      }\\n    }\\n    Err(msg) => { print(msg) }\\n  }\\n}\\n''', encoding='utf-8')\nsubprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nproc = subprocess.Popen([\n    os.environ['NEBULA_BINARY'],\n    'run',\n    str(root),\n    '--run-gate',\n    'none',\n], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env={**os.environ, 'NEBULA_BIND_HOST': '127.0.0.1', 'NEBULA_PORT': '0'})\nstderr_lines = []\n_, port = wait_for_listener_bound(proc, stderr_lines)\nclient = None\ntry:\n    deadline = time.time() + 10\n    while time.time() < deadline:\n        try:\n            client = socket.create_connection(('127.0.0.1', port), timeout=0.2)\n            break\n        except OSError:\n            if proc.poll() is not None:\n                fail_with_output(proc, stderr_lines, f'connection-lifecycle service exited before listening: rc={proc.returncode}')\n            time.sleep(0.05)\n    if client is None:\n        fail_with_output(proc, stderr_lines, 'connection-lifecycle service did not start listening in time')\n    client.settimeout(2)\n    first = b'GET /hello HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 0\\r\\n\\r\\n'\n    client.sendall(first)\n    response = b''\n    while True:\n        chunk = client.recv(4096)\n        if not chunk:\n            break\n        response += chunk\n    if b'200 OK' not in response or not response.endswith(b'one-shot'):\n        raise SystemExit(f'unexpected first response bytes: {response!r}')\n    closed_after_first = False\n    try:\n        client.sendall(first)\n        followup = client.recv(1)\n        if followup == b'':\n            closed_after_first = True\n    except OSError:\n        closed_after_first = True\n    if not closed_after_first:\n        raise SystemExit('connection remained reusable after first response')\n    try:\n        proc.wait(timeout=10)\n    except subprocess.TimeoutExpired:\n        raise SystemExit('connection-lifecycle service did not exit after first request')\n    stdout, stderr = finish_process_output(proc, stderr_lines)\n    print(stdout, end='')\n    print(stderr, end='')\n    if proc.returncode != 0:\n        raise SystemExit(proc.returncode)\n    print('service-connection-lifecycle-ok')\nfinally:\n    if client is not None:\n        client.close()\n    if proc.poll() is None:\n        proc.terminate()\n        try:\n            proc.wait(timeout=5)\n        except subprocess.TimeoutExpired:\n            proc.kill()\n            proc.wait(timeout=5)\nPY"
+run = '''python3 - <<'PY'
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from service_probe import fail_with_output, finish_process_output, wait_for_listener_bound
+
+root = Path('work/official_service_connection_lifecycle')
+shutil.rmtree(root, ignore_errors=True)
+(root / 'src').mkdir(parents=True, exist_ok=True)
+(root / 'nebula.toml').write_text(f"""schema_version = 1
+
+[package]
+name = "official-service-connection-lifecycle"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+
+[dependencies]
+service = {{ path = "{repo_root / 'official' / 'nebula-service'}" }}
+""", encoding='utf-8')
+(root / 'src' / 'server.nb').write_text("""module server
+import service::context
+import std::http
+import std::result
+
+async fn handle_request(ctx: RequestContext, request: Request) -> Result<Response, String> {
+  return Ok(ok_text("one-shot"))
+}
+""", encoding='utf-8')
+(root / 'src' / 'main.nb').write_text("""module main
+import service::config
+import service::server
+import server
+
+async fn main() -> Void {
+  match config_from_env("svc-connection-lifecycle", 0) {
+    Ok(cfg) => {
+      match await bind_listener(cfg) {
+        Ok(listener) => {
+          match await serve_requests_n_result_with_context(listener, cfg, 1, handle_request) {
+            Ok(_) => {}
+            Err(msg) => { print(msg) }
+          }
+        }
+        Err(msg) => { print(msg) }
+      }
+    }
+    Err(msg) => { print(msg) }
+  }
+}
+""", encoding='utf-8')
+
+subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)],
+               check=True,
+               stdout=subprocess.DEVNULL,
+               stderr=subprocess.DEVNULL)
+proc = subprocess.Popen([
+    os.environ['NEBULA_BINARY'],
+    'run',
+    str(root),
+    '--run-gate',
+    'none',
+], stdout=subprocess.PIPE,
+   stderr=subprocess.PIPE,
+   text=True,
+   env={**os.environ, 'NEBULA_BIND_HOST': '127.0.0.1', 'NEBULA_PORT': '0'})
+stderr_lines = []
+_, port = wait_for_listener_bound(proc, stderr_lines, timeout=45.0)
+client = None
+
+def read_more(sock: socket.socket, deadline: float, label: str) -> bytes:
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            fail_with_output(proc, stderr_lines, f'connection-lifecycle service exited while reading {label}: rc={proc.returncode}')
+        sock.settimeout(max(0.05, min(1.0, deadline - time.time())))
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            continue
+        if not chunk:
+            fail_with_output(proc, stderr_lines, f'connection closed before reading {label}')
+        return chunk
+    fail_with_output(proc, stderr_lines, f'timed out reading {label}')
+    raise AssertionError('unreachable')
+
+def read_http_response(sock: socket.socket) -> bytes:
+    deadline = time.time() + 15
+    data = b''
+    while b'\r\n\r\n' not in data:
+        data += read_more(sock, deadline, 'response headers')
+    header, body = data.split(b'\r\n\r\n', 1)
+    content_length = None
+    for raw_line in header.split(b'\r\n')[1:]:
+        if raw_line.lower().startswith(b'content-length:'):
+            content_length = int(raw_line.split(b':', 1)[1].strip())
+            break
+    if content_length is None:
+        fail_with_output(proc, stderr_lines, f'first response missing Content-Length: {data!r}')
+    while len(body) < content_length:
+        body += read_more(sock, deadline, 'response body')
+    return header + b'\r\n\r\n' + body[:content_length]
+
+def wait_for_peer_close(sock: socket.socket) -> bool:
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        sock.settimeout(max(0.05, min(1.0, deadline - time.time())))
+        try:
+            chunk = sock.recv(1)
+        except socket.timeout:
+            continue
+        except OSError:
+            return True
+        return chunk == b''
+    return False
+
+try:
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            client = socket.create_connection(('127.0.0.1', port), timeout=1)
+            break
+        except OSError:
+            if proc.poll() is not None:
+                fail_with_output(proc, stderr_lines, f'connection-lifecycle service exited before accepting: rc={proc.returncode}')
+            time.sleep(0.05)
+    if client is None:
+        fail_with_output(proc, stderr_lines, 'connection-lifecycle service did not accept a socket in time')
+
+    first = b'GET /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n'
+    client.sendall(first)
+    response = read_http_response(client)
+    if b'200 OK' not in response or not response.endswith(b'one-shot'):
+        fail_with_output(proc, stderr_lines, f'unexpected first response bytes: {response!r}')
+    if not wait_for_peer_close(client):
+        fail_with_output(proc, stderr_lines, 'connection remained reusable after first response')
+
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        fail_with_output(proc, stderr_lines, 'connection-lifecycle service did not exit after first request')
+    stdout, stderr = finish_process_output(proc, stderr_lines)
+    print(stdout, end='')
+    print(stderr, end='')
+    if proc.returncode != 0:
+        raise SystemExit(proc.returncode)
+    print('service-connection-lifecycle-ok')
+finally:
+    if client is not None:
+        client.close()
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+PY
+'''
 expect_rc = 0
 expect_stdout_contains = ["service-connection-lifecycle-ok"]

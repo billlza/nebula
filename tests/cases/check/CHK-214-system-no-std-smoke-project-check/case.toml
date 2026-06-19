@@ -4,12 +4,21 @@ suite = "check"
 [[steps]]
 kind = "shell"
 run = '''
-"$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
-  --target system --no-std --panic abort --diag-format json
-"$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
-  --target freestanding --no-std --panic abort --diag-format json
-"$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
-  --target x86_64-unknown-none --no-std --panic trap --diag-format json
+set -eu
+
+check_smoke() {
+  target="$1"
+  panic="$2"
+  "$NEBULA_BINARY" check "$NEBULA_REPO_ROOT/examples/system_no_std_smoke" \
+    --target "$target" --no-std --panic "$panic" --diag-format json
+}
+
+check_smoke system abort
+check_smoke system trap
+check_smoke freestanding abort
+check_smoke freestanding trap
+check_smoke x86_64-unknown-none abort
+check_smoke x86_64-unknown-none trap
 '''
 expect_rc = 0
 forbid_stdout_contains = ["NBL-CLI-SYSTEM-STD", "NBL-CLI-SYSTEM-NATIVE", "NBL-R001"]

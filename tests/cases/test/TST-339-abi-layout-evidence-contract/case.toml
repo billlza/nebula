@@ -1,0 +1,122 @@
+id = "TST-339-abi-layout-evidence-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+abi_spec = repo / "spec" / "abi_layout.md"
+interop_spec = repo / "spec" / "interop_c_abi.md"
+gate_registry = repo / "docs" / "universeos" / "gate_registry.md"
+support_matrix = repo / "docs" / "support_matrix.md"
+
+for path in [abi_spec, interop_spec, gate_registry, support_matrix]:
+    if not path.exists():
+        raise SystemExit(f"missing ABI contract source: {path.relative_to(repo)}")
+
+abi_text = abi_spec.read_text(encoding="utf-8")
+for needle in [
+    "Status: specification of current hosted C++23 behavior plus future requirements.",
+    "## Current Hosted Golden Evidence",
+    "`Int` | `std::int64_t` | exported as `int64_t`",
+    "`Float` | `double` | exported as `double`",
+    "`Bool` | `bool` | exported as `bool`",
+    "`Void` | `void` | exported as `void`",
+    "This is a hosted C++ representation, not a public ABI.",
+    "Before ABI/layout can support a real system profile",
+    "Future freestanding ABI tests:",
+    "`TST-339-abi-layout-evidence-contract`",
+]:
+    if needle not in abi_text:
+        raise SystemExit(f"abi_layout.md missing contract text: {needle}")
+
+abi_cases = {
+    "ABI-001-exported-scalar-function": [
+        "NEBULA_CABI_API int64_t",
+        "NEBULA_CABI_API double",
+        "NEBULA_CABI_API bool",
+        "NEBULA_CABI_API void",
+    ],
+    "ABI-002-struct-field-order-codegen": [
+        "struct fields are not emitted in source order",
+        "struct constructor does not preserve source field order",
+    ],
+    "ABI-003-enum-payload-lowering-codegen": [
+        "enum wrapper",
+        "payload variant",
+        "variant storage",
+    ],
+    "ABI-004-duplicate-exported-symbol-diagnostic": [
+        "NBL-CLI-CABI-CONFLICT",
+        "severity = \"error\"",
+    ],
+    "ABI-005-library-without-export-diagnostic": [
+        "NBL-CLI-CABI-NOEXPORT",
+        "severity = \"error\"",
+    ],
+}
+for case_id, needles in abi_cases.items():
+    case_path = repo / "tests" / "cases" / "abi" / case_id / "case.toml"
+    if not case_path.exists():
+        raise SystemExit(f"missing ABI evidence case: {case_id}")
+    body = case_path.read_text(encoding="utf-8")
+    if f'id = "{case_id}"' not in body or 'suite = "abi"' not in body:
+        raise SystemExit(f"{case_id} is not registered as an ABI suite case")
+    for needle in needles:
+        if needle not in body:
+            raise SystemExit(f"{case_id} missing evidence assertion: {needle}")
+    if case_id not in abi_text:
+        raise SystemExit(f"abi_layout.md does not cite {case_id}")
+
+check_cases = {
+    "CHK-191-c-abi-missing-pair-rejected": "NBL-T129",
+    "CHK-192-c-abi-non-function-rejected": "NBL-T128",
+    "CHK-193-c-abi-ref-param-rejected": "NBL-T130",
+    "CHK-194-c-abi-unsafe-type-rejected": "NBL-T131",
+    "CHK-195-c-abi-generic-export-rejected": "NBL-T130",
+    "CHK-196-c-abi-extern-export-rejected": "NBL-T129",
+    "CHK-222-c-abi-struct-param-rejected": "NBL-T131",
+    "CHK-223-c-abi-enum-return-rejected": "NBL-T131",
+    "CHK-224-c-abi-result-return-rejected": "NBL-T131",
+}
+for case_id, diag_code in check_cases.items():
+    case_path = repo / "tests" / "cases" / "check" / case_id / "case.toml"
+    if not case_path.exists():
+        raise SystemExit(f"missing C ABI rejection case: {case_id}")
+    body = case_path.read_text(encoding="utf-8")
+    if diag_code not in body or 'severity = "error"' not in body:
+        raise SystemExit(f"{case_id} missing stable diagnostic assertion: {diag_code}")
+
+gate_text = gate_registry.read_text(encoding="utf-8")
+for needle in [
+    '"id": "UOS-ABI-001"',
+    "Hosted C++23 golden tests and structured assertions",
+    "String, Result, struct, enum, ref parameters, extern exports, and generic functions",
+    "Layout goldens do not prove a syscall ABI",
+]:
+    if needle not in gate_text:
+        raise SystemExit(f"gate_registry missing UOS-ABI evidence text: {needle}")
+
+support_text = support_matrix.read_text(encoding="utf-8")
+if "`UOS-ABI-001` | `experimental` | contract evidence only; hosted C++23 ABI/layout goldens" not in support_text:
+    raise SystemExit("support matrix does not keep UOS-ABI-001 experimental evidence-only")
+
+unsupported_claims = [
+    "system ABI support is accepted",
+    "syscall ABI is supported",
+    "freestanding ABI is supported",
+    "direct object ABI is supported",
+]
+joined = "\n".join(path.read_text(encoding="utf-8") for path in [abi_spec, interop_spec, gate_registry, support_matrix])
+for claim in unsupported_claims:
+    if claim in joined:
+        raise SystemExit(f"unsupported ABI claim found: {claim}")
+
+print("abi-layout-evidence-contract-ok")
+PY
+'''
+expect_stdout_contains = ["abi-layout-evidence-contract-ok"]

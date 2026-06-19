@@ -1,0 +1,106 @@
+id = "TST-337-library-layers-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+library_layers = repo / "spec" / "library_layers.md"
+spec_index = repo / "docs" / "spec_index.md"
+no_std_runtime = repo / "docs" / "universeos" / "no_std_runtime.md"
+gate_registry = repo / "docs" / "universeos" / "gate_registry.md"
+gates = repo / "docs" / "universeos" / "gates.md"
+
+text = library_layers.read_text(encoding="utf-8")
+required = [
+    "# Library Layers",
+    "Status: design specification for a future split",
+    "| `core` | no-std-safe language-adjacent primitives |",
+    "| `std` | hosted application and service APIs |",
+    "| `system` | future boot/syscall/interrupt/driver-facing APIs |",
+    "no filesystem, network, process, clock, HTTP, JSON parser, or task runtime",
+    "No `system` module should be documented as available until the relevant gate",
+    "Keep every current `std::...` import valid through 1.0.x.",
+    "Introduce `core::...` modules only after their no-std representation and diagnostics are",
+    "No `core::...` or `system::...` import path is claimed to work today.",
+]
+for needle in required:
+    if needle not in text:
+        raise SystemExit(f"library_layers missing contract text: {needle}")
+
+module_rows = [
+    "`std::result`",
+    "`std::bytes`",
+    "`std::json`",
+    "`std::fs`",
+    "`std::net`",
+    "`std::http`",
+    "`std::process`",
+    "`std::env`",
+    "`std::time`",
+    "`std::task`",
+    "`std::log`",
+]
+for needle in module_rows:
+    if needle not in text:
+        raise SystemExit(f"library_layers missing bundled module map entry: {needle}")
+
+cross_refs = {
+    spec_index: "spec/library_layers.md",
+    no_std_runtime: "spec/library_layers.md",
+    gate_registry: '"path": "spec/library_layers.md"',
+    gates: "library-layer documentation distinguishing future `core`, hosted `std`, and future `system` APIs",
+}
+for path, needle in cross_refs.items():
+    body = path.read_text(encoding="utf-8")
+    if needle not in body:
+        raise SystemExit(f"{path.relative_to(repo)} missing library-layer reference: {needle}")
+
+negative_case = repo / "tests" / "cases" / "check" / "CHK-228-uos-library-layer-imports-unavailable" / "case.toml"
+core_fixture = repo / "tests" / "fixtures" / "uos_core_import_unavailable.nb"
+system_fixture = repo / "tests" / "fixtures" / "uos_system_import_unavailable.nb"
+for path in [negative_case, core_fixture, system_fixture]:
+    if not path.exists():
+        raise SystemExit(f"missing library-layer import rejection evidence: {path.relative_to(repo)}")
+
+case_text = negative_case.read_text(encoding="utf-8")
+case_needles = [
+    "NBL-CLI-PKG-IMPORT",
+    "package import alias not found: core",
+    "package import alias not found: system",
+    "--target",
+    "system",
+    "--no-std",
+]
+for needle in case_needles:
+    if needle not in case_text:
+        raise SystemExit(f"library-layer import rejection case missing: {needle}")
+
+fixture_expectations = {
+    core_fixture: "import core::result",
+    system_fixture: "import system::boot",
+}
+for path, needle in fixture_expectations.items():
+    if needle not in path.read_text(encoding="utf-8"):
+        raise SystemExit(f"{path.relative_to(repo)} missing fixture import: {needle}")
+
+unsupported_claims = [
+    "core:: imports work today",
+    "system:: imports work today",
+    "A freestanding runtime is implemented",
+    "freestanding runtime support exists",
+    "kernel support is implemented",
+    "driver support is implemented",
+]
+for claim in unsupported_claims:
+    if claim in text:
+        raise SystemExit(f"unsupported library-layer claim found: {claim}")
+
+print("library-layers-docs-ok")
+PY
+'''
+expect_stdout_contains = ["library-layers-docs-ok"]

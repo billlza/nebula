@@ -29,6 +29,32 @@ targets = {
     "windows-x86_64": "zip",
 }
 required_docs = release_doc_tree_sources(repo_root)
+required_representative_docs = [
+    "docs/universeos/architecture.md",
+    "docs/universeos/gates.md",
+    "docs/universeos/gate_registry.md",
+    "docs/universeos/kernel_boundary.md",
+    "docs/universeos/no_std_runtime.md",
+    "docs/universeos/qemu_boot_hello.md",
+    "docs/universeos/roadmap.md",
+    "spec/abi_layout.md",
+    "spec/compiler_pipeline.md",
+    "spec/interop_c_abi.md",
+    "spec/language_reference.md",
+    "spec/library_layers.md",
+    "spec/ownership_model.md",
+    "spec/region_model.md",
+    "spec/type_system.md",
+    "rfcs/0002-freestanding-target.md",
+    "rfcs/0003-traits-protocols.md",
+]
+missing_representative_docs = [
+    rel
+    for rel in required_representative_docs
+    if repo_root / rel not in required_docs
+]
+if missing_representative_docs:
+    raise SystemExit(f"release doc tree helper omitted nested docs: {missing_representative_docs}")
 
 for target, archive_kind in targets.items():
     stage = root / f"nebula-v{version}-{target}"

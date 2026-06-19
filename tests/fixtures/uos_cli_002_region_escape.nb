@@ -1,0 +1,11 @@
+struct UosCli002Box {
+  value: Int
+}
+
+fn escapes_region() -> UosCli002Box {
+  region R {
+    let x = UosCli002Box(42)
+    return x
+  }
+}
+

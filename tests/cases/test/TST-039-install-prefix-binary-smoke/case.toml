@@ -40,13 +40,23 @@ missing = [
     if not (install_root / rel).is_file()
 ]
 required_nested_docs = [
+    "share/doc/nebula/docs/universeos/architecture.md",
     "share/doc/nebula/docs/universeos/gates.md",
     "share/doc/nebula/docs/universeos/gate_registry.md",
+    "share/doc/nebula/docs/universeos/kernel_boundary.md",
+    "share/doc/nebula/docs/universeos/no_std_runtime.md",
+    "share/doc/nebula/docs/universeos/qemu_boot_hello.md",
+    "share/doc/nebula/docs/universeos/roadmap.md",
+    "share/doc/nebula/spec/abi_layout.md",
+    "share/doc/nebula/spec/compiler_pipeline.md",
+    "share/doc/nebula/spec/interop_c_abi.md",
     "share/doc/nebula/spec/language_reference.md",
+    "share/doc/nebula/spec/library_layers.md",
     "share/doc/nebula/spec/type_system.md",
     "share/doc/nebula/spec/ownership_model.md",
     "share/doc/nebula/spec/region_model.md",
     "share/doc/nebula/rfcs/0002-freestanding-target.md",
+    "share/doc/nebula/rfcs/0003-traits-protocols.md",
 ]
 missing.extend(
     rel

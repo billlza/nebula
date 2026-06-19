@@ -1,0 +1,89 @@
+id = "TST-336-system-no-std-smoke-docs-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+readme = repo / "examples" / "system_no_std_smoke" / "README.md"
+no_std_runtime = repo / "docs" / "universeos" / "no_std_runtime.md"
+check_case = repo / "tests" / "cases" / "check" / "CHK-214-system-no-std-smoke-project-check" / "case.toml"
+build_case = repo / "tests" / "cases" / "build" / "BLD-013-system-no-std-smoke-build-policy-markers" / "case.toml"
+
+readme_text = readme.read_text(encoding="utf-8")
+runtime_text = no_std_runtime.read_text(encoding="utf-8")
+check_text = check_case.read_text(encoding="utf-8")
+build_text = build_case.read_text(encoding="utf-8")
+
+targets = ["system", "freestanding", "x86_64-unknown-none"]
+panic_policies = ["abort", "trap"]
+
+readme_commands = [
+    f"nebula {command} examples/system_no_std_smoke --target {target} --no-std --panic {panic}"
+    for target in targets
+    for panic in panic_policies
+    for command in ["check", "build"]
+]
+for command in readme_commands:
+    if command not in readme_text:
+        raise SystemExit(f"system_no_std_smoke README missing command: {command}")
+
+runtime_needles = [
+    f"nebula {command} ... --target {target} --no-std --panic {panic}"
+    for target in targets
+    for panic in panic_policies
+    for command in ["check", "build"]
+] + [
+    "not proof of freestanding execution",
+    "prove only that the CLI/profile boundary records",
+]
+for needle in runtime_needles:
+    if needle not in runtime_text:
+        raise SystemExit(f"no_std_runtime missing smoke boundary text: {needle}")
+
+check_needles = [
+    f"check_smoke {target} {panic}"
+    for target in targets
+    for panic in panic_policies
+] + [
+    "set -eu",
+]
+for needle in check_needles:
+    if needle not in check_text:
+        raise SystemExit(f"CHK-214 missing check matrix entry: {needle}")
+
+build_needles = [
+    f"build_smoke {target} {panic}"
+    for target in targets
+    for panic in panic_policies
+] + [
+    f"runtime_profile=system target={target} panic_policy={panic}"
+    for target in targets
+    for panic in panic_policies
+] + [
+    "strict_region=1",
+    "no_std=1",
+]
+for needle in build_needles:
+    if needle not in build_text:
+        raise SystemExit(f"BLD-013 missing build matrix evidence: {needle}")
+
+unsupported_claims = [
+    "supports freestanding execution",
+    "supports kernel suitability",
+    "supports driver APIs",
+    "supports C++ standard library independence",
+]
+joined = readme_text + "\n" + runtime_text
+for claim in unsupported_claims:
+    if claim in joined:
+        raise SystemExit(f"unsupported no-std smoke claim found: {claim}")
+
+print("system-no-std-smoke-docs-ok")
+PY
+'''
+expect_stdout_contains = ["system-no-std-smoke-docs-ok"]

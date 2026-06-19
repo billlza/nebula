@@ -11,6 +11,165 @@ expect_stdout_contains = ["universeos-gate-docs-ok: 10 gates"]
 kind = "shell"
 run = '''
 mkdir -p work
+cat > work/bad_gate_registry_missing_support_matrix_mapping.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "spec/abi_layout.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "spec/library_layers.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-DOC-001",
+      "title": "Language and specification gate",
+      "status": "experimental",
+      "owner_area": "docs/spec",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_support_matrix_mapping.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["source_doc_mapping missing docs/support_matrix.md"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_missing_library_layers_mapping.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "spec/abi_layout.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-CORE-001",
+      "title": "No-std Smoke",
+      "status": "experimental",
+      "owner_area": "core/std-profile",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_library_layers_mapping.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["source_doc_mapping missing spec/library_layers.md"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_missing_abi_layout_mapping.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-ABI-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-ABI-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-ABI-001",
+      "title": "Layout Golden Tests",
+      "status": "experimental",
+      "owner_area": "abi/codegen",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_abi_layout_mapping.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["source_doc_mapping missing spec/abi_layout.md"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
 cat > work/bad_gate_registry_missing_non_claim.md <<'MD'
 # Bad Gate Registry
 
