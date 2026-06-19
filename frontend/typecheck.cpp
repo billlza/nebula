@@ -3496,8 +3496,14 @@ private:
 
             const std::string temp_name = fresh_synthetic_name("__nebula_try_");
             const BindingId temp_binding_id = fresh_binding_id();
+            // Read inner.value->ty into a local BEFORE moving inner.value: the
+            // argument evaluation order is unsequenced, so passing both
+            // `inner.value->ty` and `std::move(inner.value)` to one call lets a
+            // right-to-left compiler (GCC) null out the unique_ptr before the
+            // type read, dereferencing null. Sequencing the read fixes it.
+            Ty inner_value_ty = inner.value->ty;
             result.prefix.push_back(
-                make_let_stmt(temp_name, inner.value->ty, std::move(inner.value), span, temp_binding_id));
+                make_let_stmt(temp_name, inner_value_ty, std::move(inner.value), span, temp_binding_id));
 
             TBlock then_body;
             then_body.span = span;
