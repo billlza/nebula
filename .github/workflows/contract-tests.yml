@@ -9,7 +9,10 @@ jobs:
   contract-tests:
     # Backstop so a hung case can never run the job to the platform's 24h ceiling
     # (the suite has historically timed out). Each shard runs ~1/4 of the cases.
-    timeout-minutes: 40
+    # 50 (not 40) leaves headroom for the shard carrying the heavy
+    # release-control-plane workspace smokes (each rebuilds the vendored crypto
+    # native C and can take several minutes on a loaded runner).
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:

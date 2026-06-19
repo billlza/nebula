@@ -3,7 +3,10 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-timeout = 240
+# Heaviest release-control-plane workspace smoke: rebuilds the whole workspace
+# including the vendored crypto native C (mbedtls/oqs/blake3). 240s sufficed
+# locally but timed out (rc=124) on the slower CI runner; give ample headroom.
+timeout = 600
 run = """
 python3 - <<'PY'
 import json

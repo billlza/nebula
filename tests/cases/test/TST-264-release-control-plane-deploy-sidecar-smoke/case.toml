@@ -4,6 +4,9 @@ description = "release control plane deploy alias validates targets and drives s
 
 [[steps]]
 kind = "shell"
+# Builds a release-control-plane workspace incl. vendored crypto native C; the
+# 120s default per-step timeout was exceeded (rc=124) on the slower CI runner.
+timeout = 400
 run = """
 python3 - <<'PY'
 import json
