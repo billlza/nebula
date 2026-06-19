@@ -1,0 +1,32 @@
+id = "BLD-016-black-box-defeats-dce"
+suite = "build"
+
+# std::bench::black_box defeats dead-code elimination: a region allocation that
+# would otherwise be removed (it is dead and pure) survives because black_box
+# references it. The call lowers to the runtime optimization barrier
+# (nebula::rt::black_box), which also blocks the C++ optimizer.
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+rm -rf work/black-box-defeats-dce
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/black_box_defeats_dce.nb" \
+  --out-dir work/black-box-defeats-dce
+cpp=work/black-box-defeats-dce/black_box_defeats_dce.cpp
+test -f "$cpp"
+alloc=$(grep -c 'NEBULA_ALLOC' "$cpp" || true)
+echo "NEBULA_ALLOC-count=$alloc"
+test "$alloc" -ge 1
+grep -F 'nebula::rt::black_box' "$cpp"
+'''
+expect_rc = 0
+expect_stdout_contains = ["NEBULA_ALLOC-count=1", "nebula::rt::black_box"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/black_box_defeats_dce.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["black-box-ok"]

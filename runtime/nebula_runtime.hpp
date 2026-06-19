@@ -163,6 +163,15 @@ inline void assert(bool cond, std::string msg) {
   }
 }
 
+// Optimization barrier for benchmarks (std::bench::black_box). Forces the
+// compiler to materialize `value` and treat it as used, defeating dead-code
+// elimination of the work that produced it. The empty asm with a "memory"
+// clobber and an r/m input is the portable clang/GCC idiom.
+template <class T>
+inline void black_box(const T& value) {
+  asm volatile("" : : "r,m"(value) : "memory");
+}
+
 struct Duration {
   std::int64_t millis = 0;
 };

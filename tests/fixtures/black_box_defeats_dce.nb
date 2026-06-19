@@ -1,0 +1,19 @@
+import std::bench
+
+struct Box {
+  v: Int
+}
+
+// Without black_box, `kept` is a dead, side-effect-free binding and the
+// dead-code-elimination pass would remove the allocation (see BLD-015).
+// black_box(kept) references it through an optimization barrier, so the
+// allocation must survive into the generated C++.
+fn main() -> Void {
+  region R {
+    for i in 0..1000 {
+      let kept = Box(i)
+      black_box(kept)
+    }
+  }
+  print("black-box-ok")
+}
