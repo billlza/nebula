@@ -10,6 +10,11 @@ jobs:
     # Backstop so a hung case can never run the job to the platform's 24h ceiling
     # (the suite has historically timed out). Each shard runs ~1/4 of the cases.
     timeout-minutes: 40
+    # Windows (msys2/CLANG64) is not a supported target yet — the CLI's POSIX
+    # process layer (<sys/wait.h>) does not compile there, and the README scopes
+    # support to Linux + macOS. Keep the shards running for visibility but do not
+    # let them block, until the subprocess layer is ported.
+    continue-on-error: ${{ matrix.shell_kind == 'msys2' }}
     strategy:
       fail-fast: false
       matrix:
