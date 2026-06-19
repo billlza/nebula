@@ -142,6 +142,60 @@ jobs:
           cp tests/fixtures/smoke.nb "$smoke_root/smoke.nb"
           ./build/nebula test --dir "$smoke_root"
 
+  asan-generated-program-diagnostic:
+    # Diagnostic for the generated-program crashes seen only on CI runners
+    # (rc=-11/245) that do not reproduce locally even under sanitizers. Emits the
+    # C++ for representative crashing programs, recompiles it with ASan+UBSan, and
+    # runs it on the CI runner so any memory/UB error prints a backtrace. Non-
+    # blocking: this surfaces a diagnosis, it is not a gate.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure
+        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Sanitize generated programs
+        run: |
+          set +e
+          inc="build/generated/include"
+          mkdir -p asan-out
+          fixtures="result_try_run std_json_arrays_nested recursive_types generic_recursive_list smoke"
+          overall=0
+          for fx in $fixtures; do
+            echo "::group::$fx"
+            ./build/nebula build "tests/fixtures/$fx.nb" --emit-cpp --out-dir asan-out >/dev/null 2>&1
+            cpp="asan-out/$fx.cpp"
+            if [ ! -f "$cpp" ]; then echo "[$fx] no generated cpp, skipping"; echo "::endgroup::"; continue; fi
+            clang++ -std=c++23 -fsanitize=address,undefined -fno-omit-frame-pointer -g3 \
+              -I "$inc" "$cpp" -o "asan-out/$fx.asan" 2>&1 | tee "asan-out/$fx.compile.log"
+            ASAN_OPTIONS=detect_leaks=0:abort_on_error=0 UBSAN_OPTIONS=print_stacktrace=1 \
+              "asan-out/$fx.asan" 2>&1 | tee "asan-out/$fx.run.log"
+            rc=${PIPESTATUS[0]}
+            echo "[$fx] exit=$rc"
+            [ "$rc" -ne 0 ] && overall=1
+            echo "::endgroup::"
+          done
+          echo "asan-diagnostic-overall-rc=$overall"
+
+      - name: Upload ASan diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: asan-generated-program-diagnostic
+          path: asan-out/*.log
+
   linux-backend-ga-hardening:
     runs-on: ubuntu-latest
     timeout-minutes: 30
