@@ -1,0 +1,61 @@
+// Recursive algebraic data types: a singly-linked list and a binary tree.
+// Both require the codegen to box recursive enum variant payloads so the types
+// are finite and complete in the generated C++.
+
+struct IntCell {
+  head: Int
+  tail: IntList
+}
+enum IntList {
+  Nil(Void)
+  Cons(IntCell)
+}
+fn empty_list() -> IntList {
+  return Nil
+}
+fn cons(h: Int, t: IntList) -> IntList {
+  return Cons(IntCell(h, t))
+}
+fn len(l: IntList) -> Int {
+  match l {
+    Nil => { return 0 }
+    Cons(c) => { return 1 + len(c.tail) }
+  }
+}
+fn sum(l: IntList) -> Int {
+  match l {
+    Nil => { return 0 }
+    Cons(c) => { return c.head + sum(c.tail) }
+  }
+}
+
+struct Branch {
+  left: Tree
+  right: Tree
+  v: Int
+}
+enum Tree {
+  Leaf(Void)
+  Node(Branch)
+}
+fn leaf() -> Tree {
+  return Leaf
+}
+fn node(l: Tree, v: Int, r: Tree) -> Tree {
+  return Node(Branch(l, r, v))
+}
+fn total(t: Tree) -> Int {
+  match t {
+    Leaf => { return 0 }
+    Node(b) => { return b.v + total(b.left) + total(b.right) }
+  }
+}
+
+fn main() -> Void {
+  let l = cons(1, cons(2, cons(3, empty_list())))
+  expect_eq(len(l), 3)
+  expect_eq(sum(l), 6)
+  let t = node(node(leaf(), 1, leaf()), 2, node(leaf(), 3, leaf()))
+  expect_eq(total(t), 6)
+  print("recursive-types-ok")
+}

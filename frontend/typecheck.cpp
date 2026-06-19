@@ -188,6 +188,10 @@ private:
   bool in_mapped_method_fn_ = false;
   bool mapped_method_self_is_ref_ = false;
   bool suppress_borrow_read_checks_ = false;
+  // When set, diagnostics are dropped — used for speculative "probe" typechecks
+  // (e.g. inferring generic type arguments) whose results are re-checked, with
+  // real diagnostics, in a subsequent pass.
+  bool suppress_diags_ = false;
   bool in_async_context_ = false;
   bool current_async_fn_ = false;
   bool current_fn_has_ref_param_ = false;
@@ -215,6 +219,7 @@ private:
   enum class BorrowAccessKind : std::uint8_t { Read, Write, RefBorrow };
 
   void add_diag(Severity sev, std::string code, std::string msg, Span span) {
+    if (suppress_diags_) return;
     Diagnostic d;
     d.severity = sev;
     d.code = std::move(code);
@@ -4267,11 +4272,19 @@ private:
             std::unordered_map<std::string, Ty> inferred;
             if (!sig.type_params.empty()) {
               const std::unordered_set<std::string> type_param_set(sig.type_params.begin(), sig.type_params.end());
+              // Speculative probe to infer type arguments; an argument that
+              // cannot stand alone (e.g. a bare zero-payload variant like `Nil`)
+              // contributes nothing here and is resolved in the real pass below
+              // against its instantiated parameter type — so probe diagnostics
+              // are suppressed.
               const std::size_t infer_count = std::min(n.args.size(), sig.params.size());
+              const bool prev_suppress = suppress_diags_;
+              suppress_diags_ = true;
               for (std::size_t i = 0; i < infer_count; ++i) {
                 auto probe = typecheck_expr(*n.args[i]);
                 (void)infer_type_args(sig.params[i], probe->ty, type_param_set, inferred);
               }
+              suppress_diags_ = prev_suppress;
               if (!all_type_params_inferred(sig.type_params, inferred)) {
                 error("NBL-T123", "cannot infer type arguments for function: " + n.callee, e.span);
               }

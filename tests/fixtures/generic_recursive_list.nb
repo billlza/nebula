@@ -1,0 +1,37 @@
+// A generic recursive type: List<T>. Exercises (1) recursive enum payload
+// boxing in a template, (2) generic type-argument inference for a bare
+// zero-payload variant (`Nil`) from the instantiated parameter type, and
+// (3) matching on a type-parameter enum inside a generic function.
+
+struct Cell<T> {
+  head: T
+  tail: List<T>
+}
+enum List<T> {
+  Nil(Void)
+  Cons(Cell<T>)
+}
+fn cons<T>(h: T, t: List<T>) -> List<T> {
+  return Cons(Cell(h, t))
+}
+fn len<T>(l: List<T>) -> Int {
+  match l {
+    Nil => { return 0 }
+    Cons(c) => { return 1 + len(c.tail) }
+  }
+}
+fn sum(l: List<Int>) -> Int {
+  match l {
+    Nil => { return 0 }
+    Cons(c) => { return c.head + sum(c.tail) }
+  }
+}
+fn make() -> List<Int> {
+  return cons(1, cons(2, cons(3, Nil)))
+}
+fn main() -> Void {
+  let l = make()
+  expect_eq(len(l), 3)
+  expect_eq(sum(l), 6)
+  print("generic-list-ok")
+}
