@@ -650,6 +650,7 @@ Stmt Parser::parse_stmt() {
 }
 
 Stmt Parser::parse_stmt_with_annotations(std::vector<std::string> annotations) {
+  RecursionGuard guard(*this, peek().span);
   const Token& start = peek();
 
   Stmt s;
@@ -938,7 +939,19 @@ Expr::BinOp Parser::binop(TokenKind op) {
   }
 }
 
+Parser::RecursionGuard::RecursionGuard(Parser& parser, Span span) : parser_(parser) {
+  if (parser_.depth_ >= Parser::kMaxRecursionDepth) {
+    throw ParseError("nesting too deep; exceeds " +
+                         std::to_string(Parser::kMaxRecursionDepth) + " levels",
+                     span);
+  }
+  ++parser_.depth_;
+}
+
+Parser::RecursionGuard::~RecursionGuard() { --parser_.depth_; }
+
 ExprPtr Parser::parse_expr(int min_prec) {
+  RecursionGuard guard(*this, peek().span);
   ExprPtr lhs = parse_prefix();
 
   while (true) {
@@ -963,6 +976,7 @@ ExprPtr Parser::parse_expr(int min_prec) {
 }
 
 ExprPtr Parser::parse_prefix() {
+  RecursionGuard guard(*this, peek().span);
   const Token& t = peek();
 
   auto mk_prefix = [&](Expr::PrefixKind k) -> ExprPtr {
