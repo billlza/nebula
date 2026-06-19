@@ -1309,12 +1309,17 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
                 os << "{";
                 for (std::size_t i = 0; i < n.args.size(); ++i) {
                   if (i) os << ", ";
-                  os << emit_expr(ctx, *n.args[i]);
+                  os << emit_construct_arg_expr(ctx, *n.args[i], n.args, i);
                 }
                 os << "}";
               }
             } else {
-              for (const auto& a : n.args) os << ", " << emit_expr(ctx, *a);
+              // Constructor arguments are by-value field initializers; emit them
+              // as values (a nested construct must not be region-allocated into a
+              // pointer here).
+              for (std::size_t i = 0; i < n.args.size(); ++i) {
+                os << ", " << emit_construct_arg_expr(ctx, *n.args[i], n.args, i);
+              }
             }
             os << ")";
             return os.str();
@@ -1694,6 +1699,14 @@ static bool sibling_construct_args_use_var(const std::vector<nebula::nir::ExprPt
 static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e,
                                            const std::vector<nebula::nir::ExprPtr>& sibling_args,
                                            std::size_t sibling_index) {
+  // A nested construct passed as a constructor argument initializes a by-value
+  // field, so it must be a value temporary — not a region/heap allocation.
+  // emit_expr would region-allocate a bare construct inside a `region` block
+  // (yielding a pointer that does not match the value field), so emit the value
+  // form directly here.
+  if (const auto* nested = std::get_if<Expr::Construct>(&e.node)) {
+    return emit_construct_call(ctx, e.ty, *nested);
+  }
   const Expr::VarRef* movable = expr_last_use_movable_local_ref(ctx, e);
   if (movable != nullptr && !sibling_construct_args_use_var(sibling_args, sibling_index, movable->var)) {
     return "std::move(" + emit_expr(ctx, e) + ")";
@@ -1777,12 +1790,16 @@ static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
           os << "{";
           for (std::size_t i = 0; i < c.args.size(); ++i) {
             if (i) os << ", ";
-            os << emit_expr(ctx, *c.args[i]);
+            os << emit_variant_payload_arg(ctx, st.value->ty, c, i);
           }
           os << "}";
         }
       } else {
-        for (const auto& a : c.args) os << ", " << emit_expr(ctx, *a);
+        // By-value field initializers: emit nested constructs as values rather
+        // than region-allocated pointers.
+        for (std::size_t i = 0; i < c.args.size(); ++i) {
+          os << ", " << emit_construct_arg_expr(ctx, *c.args[i], c.args, i);
+        }
       }
       os << ");";
       out.line(os.str());

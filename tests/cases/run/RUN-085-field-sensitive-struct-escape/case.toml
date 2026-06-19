@@ -1,0 +1,13 @@
+id = "RUN-085-field-sensitive-struct-escape"
+suite = "run"
+
+# Field-sensitive escape for aggregate fields: nested struct construction inside
+# a region compiles (by-value field initializer, not a region pointer), and
+# returning a struct field of a region allocation copies the value out without
+# the base escaping. A soundness regression would be a use-after-free.
+
+command = "run"
+source = "fixtures/field_sensitive_struct_escape.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["field-struct-ok"]
