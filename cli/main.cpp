@@ -4031,7 +4031,14 @@ int compile_cpp(const CliOptions& opt,
     if (sources[i].language == NativeSourceLanguage::C) {
       compile_cmd.push_back("-x");
       compile_cmd.push_back("c");
-      compile_cmd.push_back("-std=c11");
+      // gnu11 rather than strict c11: vendored native C (e.g. the crypto
+      // package's oqs_mini) calls POSIX functions like posix_memalign, which
+      // glibc only declares when a feature macro (_DEFAULT_SOURCE, implied by a
+      // gnu* standard) is set. Under -std=c11 those are hidden, so newer clang
+      // on Linux fails with "call to undeclared function 'posix_memalign'".
+      // gnu11 is a superset of c11 and, unlike defining _POSIX_C_SOURCE, does
+      // not hide BSD extensions on macOS (which compiles fine today).
+      compile_cmd.push_back("-std=gnu11");
     } else if (sources[i].language == NativeSourceLanguage::Asm) {
       compile_cmd.push_back("-x");
       compile_cmd.push_back("assembler-with-cpp");
