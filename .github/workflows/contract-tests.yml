@@ -248,3 +248,39 @@ jobs:
 
       - name: Verify Linux Backend GA Hardening
         run: bash scripts/verify_linux_backend_ga_hardening.sh --binary build/nebula --dist-dir dist
+
+  contract-failure-diagnostic:
+    # Several vendored official/* smokes (crypto, pqc, qcomm) and the heavy
+    # release-control-plane workspace smokes fail only on the CI toolchain
+    # (ubuntu/gcc) while passing locally (macOS/clang). The contract harness only
+    # reports "step N: expected rc=0, got rc=1"; this non-blocking job re-runs
+    # those cases with --keep-temp and re-executes the underlying nebula
+    # build/run with FULL output so the real compiler/runtime error surfaces in
+    # the log and the emitted C++ is uploaded. Non-blocking.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure
+        run: cmake -S . -B build -DNEBULA_STRICT=ON -DNEBULA_WERROR=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Diagnose contract failures with full output
+        run: bash scripts/contract_failure_diagnostic.sh build/nebula
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contract-failure-diagnostic
+          path: diag/**
