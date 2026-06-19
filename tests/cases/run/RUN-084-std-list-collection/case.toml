@@ -1,0 +1,11 @@
+id = "RUN-084-std-list-collection"
+suite = "run"
+
+# The bundled std::list collection (a general-purpose generic list written in
+# Nebula) imports, builds, and runs end-to-end.
+
+command = "run"
+source = "fixtures/std_list_collection.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["std-list-ok"]

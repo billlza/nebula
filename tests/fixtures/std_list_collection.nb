@@ -1,0 +1,22 @@
+import std::list
+
+// Exercises the bundled std::list collection: construction, length, head,
+// reverse, append, and emptiness — a general-purpose generic collection
+// written entirely in Nebula.
+fn main() -> Void {
+  let xs = cons(1, cons(2, cons(3, Nil)))
+  expect_eq(len(xs), 3)
+  expect_eq(head_or(xs, 0), 1)
+
+  let r = reverse(xs)
+  expect_eq(head_or(r, 0), 3)
+
+  let both = append(xs, r)
+  expect_eq(len(both), 6)
+
+  if is_empty(xs) {
+    print("std-list-bad")
+  } else {
+    print("std-list-ok")
+  }
+}

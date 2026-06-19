@@ -1,0 +1,68 @@
+module list
+
+// An immutable, singly-linked generic list — the standard library's first
+// general-purpose collection written entirely in Nebula (no runtime intrinsics).
+// Built on recursive algebraic data types; construct the empty list with the
+// bare `Nil` variant in a typed position, e.g. `cons(1, cons(2, Nil))`.
+
+struct Cell<T> {
+  head: T
+  tail: List<T>
+}
+
+enum List<T> {
+  Nil(Void)
+  Cons(Cell<T>)
+}
+
+// Prepend an element, returning the new list (O(1)).
+fn cons<T>(head: T, tail: List<T>) -> List<T> {
+  return Cons(Cell(head, tail))
+}
+
+fn is_empty<T>(l: List<T>) -> Bool {
+  match l {
+    Nil => { return true }
+    Cons(c) => { return false }
+  }
+}
+
+// Number of elements (O(n)).
+fn len<T>(l: List<T>) -> Int {
+  match l {
+    Nil => { return 0 }
+    Cons(c) => { return 1 + len(c.tail) }
+  }
+}
+
+// First element, or `fallback` if empty.
+fn head_or<T>(l: List<T>, fallback: T) -> T {
+  match l {
+    Nil => { return fallback }
+    Cons(c) => { return c.head }
+  }
+}
+
+fn reverse_onto<T>(l: List<T>, acc: List<T>) -> List<T> {
+  match l {
+    Nil => { return acc }
+    Cons(c) => { return reverse_onto(c.tail, Cons(Cell(c.head, acc))) }
+  }
+}
+
+// Reverse the list (O(n)).
+fn reverse<T>(l: List<T>) -> List<T> {
+  return reverse_onto(l, Nil)
+}
+
+fn append_onto<T>(reversed_prefix: List<T>, suffix: List<T>) -> List<T> {
+  match reversed_prefix {
+    Nil => { return suffix }
+    Cons(c) => { return append_onto(c.tail, Cons(Cell(c.head, suffix))) }
+  }
+}
+
+// Concatenate two lists (O(n) in the first).
+fn append<T>(front: List<T>, back: List<T>) -> List<T> {
+  return append_onto(reverse(front), back)
+}
