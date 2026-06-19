@@ -189,12 +189,35 @@ jobs:
           done
           echo "asan-diagnostic-overall-rc=$overall"
 
-      - name: Upload ASan diagnostics
+      - name: Capture crash backtrace (plain build under gdb)
+        run: |
+          set +e
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+          mkdir -p gdb-out
+          # Plain -O0 builds are what `nebula run` executes (and what crashes on
+          # CI). ASan masks the fault, so run the plain binary under gdb to get
+          # the actual SIGSEGV backtrace.
+          for fx in result_try_run std_json_arrays_nested; do
+            echo "::group::gdb $fx"
+            ./build/nebula build "tests/fixtures/$fx.nb" --emit-cpp --out-dir gdb-out >/dev/null 2>&1
+            out="gdb-out/$fx.out"
+            if [ -f "$out" ]; then
+              gdb -batch -ex 'run' -ex 'bt full' -ex 'info registers' --args "$out" \
+                2>&1 | tee "gdb-out/$fx.gdb.log"
+            else
+              echo "no .out produced for $fx"
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: asan-generated-program-diagnostic
-          path: asan-out/*.log
+          path: |
+            asan-out/*.log
+            gdb-out/*.gdb.log
 
   linux-backend-ga-hardening:
     runs-on: ubuntu-latest
