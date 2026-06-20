@@ -24,17 +24,13 @@ shift || true
 
 FILTERS=("$@")
 if [ "${#FILTERS[@]}" -eq 0 ]; then
+  # The crypto/pqc/qcomm posix_memalign failures are fixed (gnu11); only the
+  # shell-only stragglers that still fail on CI but pass locally remain. Keep the
+  # filter to those so the diagnostic runs fast.
   FILTERS=(
-    TST-111-official-crypto-invalid-bytes-rejected
-    TST-131-official-pqc-protocols-package-smoke
-    TST-155-official-qcomm-sim-bb84-smoke
-    TST-292-official-pqc-channel-pinned-initiator-smoke
-    TST-224-example-release-control-plane-workspace-approval-runner-smoke
-    # Fail on CI but pass locally and are NOT timeouts: ps1 help surface (pwsh on
-    # Linux) and a competitive crypto benchmark (CI-hardware perf). Capture their
-    # real error here.
     TST-060-install-ps1-help-surface
     TST-201-competitive-benchmark-matrix-crypto-smoke
+    TST-176-reverse-proxy-backend-service-smoke
   )
 fi
 
@@ -82,6 +78,35 @@ for f in "${FILTERS[@]}"; do
       echo "----- nebula run $app -----"
       ( cd "$sb" && "$BIN" run "$app" --run-gate none ) 2>&1 | tee -a "diag/$f.rerun.log" || true
     done
+
+    # Re-run the case's own shell steps with full output. The harness keeps only
+    # each step's rc, so a stdout-only failure (e.g. the reverse-proxy probe) is
+    # otherwise invisible. Re-run in the kept sandbox with the harness env.
+    casedir="$(find tests/cases -type d -name "$f" 2>/dev/null | head -1)"
+    if [ -n "$casedir" ] && [ -f "$casedir/case.toml" ]; then
+      python3 - "$casedir/case.toml" "$sb" "$BIN" "$REPO_ROOT" <<'PY' 2>&1 | tee "diag/$f.stepreplay.log" || true
+import os, subprocess, sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    sys.exit(0)
+toml_path, sandbox, binary, repo_root = sys.argv[1:5]
+case = tomllib.load(open(toml_path, "rb"))
+env = {**os.environ, "NEBULA_BINARY": binary, "NEBULA_REPO_ROOT": repo_root}
+for i, step in enumerate(case.get("steps", [])):
+    if step.get("kind") != "shell":
+        continue
+    print(f"===== replay shell step {i+1} =====", flush=True)
+    try:
+        r = subprocess.run(step["run"], shell=True, env=env, cwd=sandbox,
+                           capture_output=True, text=True, timeout=180)
+        print("rc=", r.returncode)
+        print("--- stdout (tail) ---\n" + (r.stdout or "")[-4000:])
+        print("--- stderr (tail) ---\n" + (r.stderr or "")[-4000:])
+    except Exception as exc:
+        print("replay error:", exc)
+PY
+    fi
     echo "::endgroup::"
   done
 done
