@@ -113,6 +113,10 @@ def service_start_timeout(requested: float) -> float:
             return max(requested, float(override))
         except ValueError:
             return requested
-    if platform.system() == "Linux":
-        return max(requested, 90.0)
-    return requested
+    # CI runners are far slower to build and bind a service than dev machines.
+    # Linux already had a generous floor; macOS CI (e.g. macos-14) is just as slow
+    # to first-build + bind, so server smokes there were flaky (the bare 10s
+    # requested timeout fired before the listener came up). Apply the same floor
+    # on every platform; it is a max, so fast machines that bind quickly are
+    # unaffected.
+    return max(requested, 90.0)
