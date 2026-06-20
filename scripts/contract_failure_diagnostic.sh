@@ -57,6 +57,19 @@ for f in "${FILTERS[@]}"; do
       find "$sb" -maxdepth 4 \( -name '*.nb' -o -name 'nebula.toml' -o -name '*.cpp' -o -name '*.log' \) 2>/dev/null | head -80
     } | tee "diag/$f.tree.log"
 
+    # Dump step-output files (e.g. a shell step that redirects to work/*.out):
+    # for shell-only cases (ps1 help, benchmarks, reverse-proxy) the real error
+    # is captured there, not via an app re-run below.
+    {
+      echo "=== captured step-output files under work/ ==="
+      find "$sb/work" -maxdepth 4 -type f \( -name '*.out' -o -name '*.txt' -o -name '*.log' -o -name '*.json' -o -name '*.err' \) 2>/dev/null | head -40 | while read -r of; do
+        sz=$(wc -c < "$of" 2>/dev/null || echo 0)
+        echo "----- $of (${sz} bytes) -----"
+        head -c 4000 "$of" 2>/dev/null
+        echo
+      done
+    } 2>&1 | tee "diag/$f.stepout.log"
+
     # Re-run every app (dir holding nebula.toml under work/) with full output so
     # the real build/run error surfaces.
     find "$sb" -path '*/work/*' -name nebula.toml 2>/dev/null | while read -r toml; do
