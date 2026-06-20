@@ -331,7 +331,11 @@ def ensure_crypto_support_library(build_root: Path) -> tuple[Path, Path]:
         obj = obj_root / (rel_name + ".o")
         cmd = [
             cc,
-            "-std=c11",
+            # gnu11, not strict c11: the vendored crypto C reference calls POSIX
+            # functions (e.g. posix_memalign) that glibc only declares with a
+            # feature macro, so strict c11 fails to compile on Linux/clang. Mirrors
+            # the same fix in the nebula CLI native-C build.
+            "-std=gnu11",
             "-O2",
             "-DNDEBUG",
             *include_flags,
