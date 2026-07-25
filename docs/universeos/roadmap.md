@@ -8,6 +8,7 @@ freestanding work remains blocked by explicit gates.
 
 - Keep C++23 as the default and only production backend.
 - Keep system/no-std behavior documented as an experimental hosted codegen gate.
+- Keep the primitive freestanding object path experimental and isolated from hosted behavior.
 - Keep hosted service/profile tests and full contract tests green.
 - Keep GA, installed-preview, repo-local preview, experimental, and future surfaces distinct.
 
@@ -33,8 +34,12 @@ freestanding work remains blocked by explicit gates.
 
 ## Phase 4: Future Freestanding Substrate
 
-- Finish the freestanding target RFC before implementing runtime or backend behavior.
-- Add object-file generation, linker-script, and QEMU serial hello gates.
+- Keep the draft freestanding RFC synchronized with the implemented primitive object prerequisite.
+- Expand beyond the current `UOS-BOOT-002` `Int/Bool/Void` object slice only after target ABI and
+  runtime contracts are explicit.
+- Add the still-missing startup/runtime work, complete the pinned toolchain closure around the
+  existing Limine protocol/ABI candidate, and then implement the linked-kernel ELF, boot-media
+  assembly, and QEMU serial hello gates in order.
 - Keep hosted CLI/service behavior unaffected by freestanding experiments.
 - Do not promote kernel/driver support until boot/runtime/ABI/driver gates exist and pass.
 
@@ -46,6 +51,6 @@ freestanding work remains blocked by explicit gates.
 | Hosted control plane | example smoke and docs | no tested state transition path |
 | Observe/config/state | package-specific contract tests | preview packages without release posture |
 | Thin-host shell | bridge contract tests | host/core ownership ambiguity |
-| Freestanding substrate | `UOS-BOOT-*`, ABI/backend/core gates | no object, linker, runtime, or QEMU evidence |
+| Freestanding substrate | `UOS-BOOT-*`, ABI/backend/core gates | primitive object evidence plus a pinned protocol/ABI candidate only; no complete toolchain closure, startup/runtime, linked kernel ELF, boot medium, or QEMU evidence |
 
 The roadmap intentionally allows hosted UniverseOS work to ship before freestanding work exists.

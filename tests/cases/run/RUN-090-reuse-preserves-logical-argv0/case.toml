@@ -1,0 +1,43 @@
+id = "RUN-090-reuse-preserves-logical-argv0"
+suite = "run"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/reuse-argv0"
+rm -rf "$root"
+mkdir -p "$root"
+cat >"$root/main.nb" <<'EOF'
+fn main() -> Int {
+  if argc() != 2 {
+    print("argv0-argc-bad")
+    return 1
+  }
+  if argv(0) != argv(1) {
+    print("argv0-path-bad")
+    return 1
+  }
+  print("argv0-ok")
+  return 0
+}
+EOF
+'''
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/reuse-argv0/main.nb"
+args = ["--run-gate", "none", "-o", "work/reuse-argv0/program.out", "--", "work/reuse-argv0/program.out"]
+expect_rc = 0
+expect_stdout_contains = ["argv0-ok"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/reuse-argv0/main.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "work/reuse-argv0/program.out", "--", "work/reuse-argv0/program.out"]
+expect_rc = 0
+expect_stdout_contains = ["argv0-ok", "NBL-CLI-REUSE"]
+forbid_stdout_contains = ["argv0-path-bad"]

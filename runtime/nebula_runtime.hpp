@@ -163,6 +163,15 @@ inline void assert(bool cond, std::string msg) {
   }
 }
 
+// Optimization barrier for benchmarks (std::bench::black_box). Forces the
+// compiler to materialize `value` and treat it as used, defeating dead-code
+// elimination of the work that produced it. The empty asm with a "memory"
+// clobber and an r/m input is the portable clang/GCC idiom.
+template <class T>
+inline void black_box(const T& value) {
+  asm volatile("" : : "r,m"(value) : "memory");
+}
+
 struct Duration {
   std::int64_t millis = 0;
 };
@@ -293,9 +302,15 @@ inline typename Result<T, E>::Ok result_ok_variant_move(Result<T, E>& result) {
   return std::get<typename Result<T, E>::Ok>(std::move(result.data));
 }
 
+template <typename E> inline void validate_void_result_ok_variant(const Result<void, E> &result) {
+  if (!std::holds_alternative<typename Result<void, E>::Ok>(result.data)) {
+    throw std::bad_variant_access{};
+  }
+}
+
 template <typename E>
 inline void result_ok_move(Result<void, E>& result) {
-  std::get<typename Result<void, E>::Ok>(result.data);
+  validate_void_result_ok_variant(result);
 }
 
 template <typename E>
@@ -305,12 +320,12 @@ inline typename Result<void, E>::Ok result_ok_variant_move(Result<void, E>& resu
 
 template <typename E>
 inline void result_ok_ref(Result<void, E>& result) {
-  std::get<typename Result<void, E>::Ok>(result.data);
+  validate_void_result_ok_variant(result);
 }
 
 template <typename E>
 inline void result_ok_ref(const Result<void, E>& result) {
-  std::get<typename Result<void, E>::Ok>(result.data);
+  validate_void_result_ok_variant(result);
 }
 
 template <typename T, typename E>
@@ -2591,6 +2606,44 @@ inline Bytes bytes_concat_all(const Parts&... parts) {
 
 inline bool bytes_equal(const Bytes& lhs, const Bytes& rhs) {
   return lhs.data == rhs.data;
+}
+
+// Contiguous, growable vector backing std::vec::Vec<T>. The Nebula-level type
+// `Vec<T>` is mapped to this template; its operations lower to the free
+// functions below.
+template <class T>
+struct Vec {
+  // `data` is mutable so a growable vector can be modelled under Nebula's
+  // immutable-by-default `let` bindings (there is no `let mut`); each Vec value
+  // still owns an independent backing store, so value semantics are preserved.
+  mutable std::vector<T> data;
+};
+
+// `value`/`fallback` are in a non-deduced context (std::type_identity_t) so the
+// element type T is fixed by the vector alone; a literal argument (e.g. a string
+// literal) is then implicitly converted to T instead of forcing a conflicting
+// deduction.
+template <class T>
+inline void vec_push(const Vec<T>& v, std::type_identity_t<T> value) {
+  v.data.push_back(std::move(value));
+}
+
+template <class T>
+inline std::int64_t vec_len(const Vec<T>& v) {
+  return static_cast<std::int64_t>(v.data.size());
+}
+
+template <class T>
+inline bool vec_is_empty(const Vec<T>& v) {
+  return v.data.empty();
+}
+
+template <class T>
+inline T vec_get_or(const Vec<T>& v, std::int64_t index, std::type_identity_t<T> fallback) {
+  if (index < 0 || static_cast<std::size_t>(index) >= v.data.size()) {
+    return fallback;
+  }
+  return v.data[static_cast<std::size_t>(index)];
 }
 
 inline std::string json_escape_string(std::string_view text) {

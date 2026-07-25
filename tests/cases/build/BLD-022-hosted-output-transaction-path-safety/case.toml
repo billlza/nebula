@@ -1,0 +1,87 @@
+id = "BLD-022-hosted-output-transaction-path-safety"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/hosted-output-path-safety"
+rm -rf "$root"
+mkdir -p "$root/source" "$root/project/src" "$root/generated" "$root/existing"
+
+cat >"$root/source/main.nb" <<'EOF'
+fn main() -> Void {
+  print("path-safe")
+}
+EOF
+cp "$root/source/main.nb" "$root/source/main.sentinel"
+
+cat >"$root/project/nebula.toml" <<'EOF'
+name = "output-path-project"
+entry = "src/main.nb"
+EOF
+cp "$root/source/main.nb" "$root/project/src/main.nb"
+cp "$root/project/nebula.toml" "$root/project/nebula.toml.sentinel"
+
+expect_rejected() {
+  name="$1"
+  shift
+  set +e
+  "$NEBULA_BINARY" "$@" --diag-format json >"$root/$name.log" 2>&1
+  rc=$?
+  set -e
+  test "$rc" -ne 0
+  grep -F '"code":"NBL-CLI-ARTIFACT-PATH"' "$root/$name.log"
+}
+
+# A lexical output/input collision must be rejected before creating a lock or
+# invoking the host compiler.
+expect_rejected lexical build "$root/source/main.nb" -o "$root/source/main.nb"
+cmp "$root/source/main.nb" "$root/source/main.sentinel"
+test ! -e "$root/source/main.nb.nebula.lock"
+
+# Existing file identity matters as well as spelling: hard-linking the output
+# to an input must not permit the compiler to truncate the shared inode.
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+root = Path("work/hosted-output-path-safety")
+os.link(root / "source/main.nb", root / "source/hardlink.out")
+try:
+    os.symlink("main.nb", root / "source/symlink.out")
+except (NotImplementedError, OSError):
+    (root / "source/symlink-unavailable").write_text("host does not permit symlink creation\n")
+PY
+expect_rejected hardlink build "$root/source/main.nb" -o "$root/source/hardlink.out"
+cmp "$root/source/main.nb" "$root/source/main.sentinel"
+cmp "$root/source/hardlink.out" "$root/source/main.sentinel"
+
+if test ! -e "$root/source/symlink-unavailable"; then
+  expect_rejected symlink build "$root/source/main.nb" -o "$root/source/symlink.out"
+  cmp "$root/source/main.nb" "$root/source/main.sentinel"
+  test -L "$root/source/symlink.out"
+fi
+
+# Project control files are protected inputs too.
+expect_rejected manifest build "$root/project" -o "$root/project/nebula.toml"
+cmp "$root/project/nebula.toml" "$root/project/nebula.toml.sentinel"
+
+# Public outputs in one transaction must be pairwise distinct.
+expect_rejected generated build "$root/source/main.nb" \
+  --out-dir "$root/generated" -o "$root/generated/main.cpp"
+cmp "$root/source/main.nb" "$root/source/main.sentinel"
+
+# A pre-existing non-file sidecar is caller-owned. Failure must preserve both
+# the old artifact and the sidecar sentinel rather than deleting by pathname.
+printf 'old-artifact\n' >"$root/existing/app.out"
+mkdir -p "$root/existing/app.out.nebmeta"
+printf 'old-sidecar-sentinel\n' >"$root/existing/app.out.nebmeta/sentinel"
+expect_rejected sidecar build "$root/source/main.nb" -o "$root/existing/app.out"
+grep -Fx 'old-artifact' "$root/existing/app.out"
+grep -Fx 'old-sidecar-sentinel' "$root/existing/app.out.nebmeta/sentinel"
+
+echo hosted-output-path-safety-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["hosted-output-path-safety-ok"]

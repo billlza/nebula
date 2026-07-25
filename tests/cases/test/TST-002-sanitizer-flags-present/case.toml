@@ -11,4 +11,35 @@ kind = "nebula"
 command = "test"
 args = ["--diag-format", "json", "--dir", "work/testdir"]
 expect_rc = 0
-expect_stdout_contains = ["-fsanitize=address,undefined"]
+expect_stdout_contains = ["test result: ok. 1 passed; 0 failed"]
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+from pathlib import Path
+
+artifact = Path("generated_cpp/smoke_test.out")
+if not artifact.is_file():
+    raise SystemExit(f"missing compiled test artifact: {artifact}")
+size = artifact.stat().st_size
+if size <= 0 or size > 64 * 1024 * 1024:
+    raise SystemExit(f"compiled test artifact has an invalid size: {size}")
+
+image = artifact.read_bytes()
+required_runtime_markers = {
+    "AddressSanitizer": b"__asan_init",
+    "UndefinedBehaviorSanitizer": b"__ubsan_handle",
+}
+for sanitizer, marker in required_runtime_markers.items():
+    if marker not in image:
+        raise SystemExit(
+            f"compiled test artifact is missing {sanitizer} instrumentation marker: "
+            f"{marker.decode('ascii')}"
+        )
+
+print("sanitizer-runtime-instrumentation-ok")
+PY
+'''
+expect_rc = 0
+expect_stdout_contains = ["sanitizer-runtime-instrumentation-ok"]

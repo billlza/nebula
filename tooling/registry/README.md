@@ -26,25 +26,31 @@ python3 tooling/registry/server.py serve \
 Client:
 
 ```bash
-python3 tooling/registry/client.py --server http://127.0.0.1:8080 --token dev-token push examples/hello_api
-python3 tooling/registry/client.py --server http://127.0.0.1:8080 --token dev-token list
-python3 tooling/registry/client.py --server http://127.0.0.1:8080 --token dev-token search hello
-python3 tooling/registry/client.py --server http://127.0.0.1:8080 --token dev-token fetch /path/to/project
+# Assume NEBULA_REGISTRY_TOKEN was injected by a credential manager or CI secret store.
+python3 tooling/registry/client.py --server http://127.0.0.1:8080 push examples/hello_api
+python3 tooling/registry/client.py --server http://127.0.0.1:8080 list
+python3 tooling/registry/client.py --server http://127.0.0.1:8080 search hello
+python3 tooling/registry/client.py --server http://127.0.0.1:8080 fetch /path/to/project
 ```
 
 Installed-binary path:
 
 - release archives carry these helpers under `tooling/registry`
 - install prefixes place these helpers under `share/nebula/registry`
-- installed `nebula` binaries can call the bundled client through a helper-backed path:
+- installed `nebula` binaries can call the bundled client through a helper-backed path after a
+  credential manager or CI secret store has populated `NEBULA_REGISTRY_TOKEN`:
   - `nebula publish ... --registry-url URL`
   - `nebula fetch ... --registry-url URL`
   - `nebula update ... --registry-url URL`
+- `--registry-token` remains accepted by `nebula`, but an environment input avoids placing the
+  credential in the outer command line. Nebula always transfers the resolved credential to the
+  bundled client through its child-local `NEBULA_REGISTRY_TOKEN`, never through helper argv.
 - you can also invoke the installed helpers manually when needed:
 
 ```bash
 python3 "$PREFIX/share/nebula/registry/server.py" serve --root /tmp/nebula-registry --host 127.0.0.1 --port 8080 --token dev-token
-python3 "$PREFIX/share/nebula/registry/client.py" --server http://127.0.0.1:8080 --token dev-token list
+# Assume NEBULA_REGISTRY_TOKEN was injected without placing its value in shell history.
+python3 "$PREFIX/share/nebula/registry/client.py" --server http://127.0.0.1:8080 list
 ```
 
 Design notes:

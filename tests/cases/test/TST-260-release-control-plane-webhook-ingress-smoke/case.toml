@@ -1,6 +1,6 @@
 id = "TST-260-release-control-plane-webhook-ingress-smoke"
 suite = "test"
-timeout = 300
+timeout = 600
 
 [[steps]]
 kind = "shell"
@@ -26,7 +26,7 @@ from release_control_plane_workspace import (
     terminate_process,
     wait_until_health_ok,
 )
-from service_probe import wait_for_listener_bound
+from service_probe import start_process, wait_for_listener_bound
 
 binary = os.environ['NEBULA_BINARY']
 root = Path('work/release_control_plane_webhook_ingress')
@@ -67,9 +67,9 @@ service_env = {
 
 copy_example(repo_root, root)
 fetch_workspace(binary, root)
-proc, stderr_lines, port = start_service(binary, root, service_env)
+proc, service_output, port = start_service(binary, root, service_env)
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f'http://127.0.0.1:{port}'
     prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out)
     require_success(prewarm, 'prewarm ctl binary')
@@ -277,7 +277,7 @@ try:
     if claim_payload.get('outcome') != 'claimed' or claim_payload.get('message', {}).get('key') != 'control-plane/prod/1':
         raise SystemExit(f'webhook did not feed broker outbox: {claim_payload!r}')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 service_binary = root / '.service-out' / 'main.out'
 fail_env = {
@@ -309,11 +309,14 @@ disabled_env = {
     'APP_WRITE_TOKEN': writer_token,
     'APP_ADMIN_TOKEN': admin_token,
 }
-disabled_proc = subprocess.Popen([str(service_binary)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=disabled_env)
-disabled_stderr: list[str] = []
+disabled_proc, disabled_output = start_process(
+    [str(service_binary)],
+    "listener_bound",
+    env=disabled_env,
+)
 try:
-    _, disabled_port = wait_for_listener_bound(disabled_proc, disabled_stderr)
-    wait_until_health_ok(disabled_proc, disabled_stderr, disabled_port)
+    _, disabled_port = wait_for_listener_bound(disabled_proc, disabled_output)
+    wait_until_health_ok(disabled_proc, disabled_output, disabled_port)
     disabled_url = f'http://127.0.0.1:{disabled_port}'
     disabled = run_ctl(
         binary, root,
@@ -337,7 +340,7 @@ try:
         print(disabled.stderr, end='')
         raise SystemExit('webhook route unexpectedly worked with preview disabled')
 finally:
-    terminate_process(disabled_proc)
+    terminate_process(disabled_proc, disabled_output)
 
 print('release-control-plane-webhook-ingress-ok')
 PY

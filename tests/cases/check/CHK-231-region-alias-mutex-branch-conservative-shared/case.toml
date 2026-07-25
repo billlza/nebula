@@ -1,0 +1,23 @@
+id = "CHK-231-region-alias-mutex-branch-conservative-shared"
+suite = "check"
+
+# Documents the (sound but conservative) alias-fanout behavior: two aliases of
+# the same region object returned on mutually exclusive branches are promoted to
+# Heap Shared, even though at most one escapes on any feasible path so Unique
+# would be sound. The rep/owner pass is path-insensitive, and this case is
+# indistinguishable -- in every value the pass computes -- from the simultaneous
+# co-escape case (CHK-230) which MUST stay Shared. The test pins the conservative
+# choice so a future "optimization" to Unique cannot land without first adding
+# the analysis (co-occurrence + dominance + liveness) needed to keep CHK-230
+# Shared. Over-sharing is sound; under-sharing is a use-after-free.
+
+command = "check"
+source = "fixtures/region_alias_mutex_branch.nb"
+args = ["--dump-ownership"]
+expect_rc = 0
+expect_stdout_contains = [
+  "ownership: fn region_alias_mutex_branch::region_alias_mutex_branch::pick"
+]
+expect_stdout_regex = [
+  "v[0-9]+ x -> rep=Heap owner=Shared region=-"
+]

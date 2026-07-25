@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -57,6 +58,10 @@ public:
 };
 
 // The C++23 backend is the default and only production backend.
+// These are the exact include directives emitted at the start of every hosted
+// translation unit. The CLI uses the same list for its pre-compilation
+// dependency probe, preventing provenance drift from a duplicated prelude.
+std::span<const std::string_view> hosted_cpp_translation_unit_includes();
 const Backend& cpp23_backend();
 const Backend& default_backend();
 

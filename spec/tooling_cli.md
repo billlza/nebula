@@ -19,6 +19,9 @@ Nebula CLI is defined by three orthogonal axes:
 - `nebula build <file.nb>`: compile/link artifact, never execute
   - default output kind: executable
   - `--emit staticlib|sharedlib` switches build output to a library artifact and emits a matching C header
+  - `--emit freestanding-object` selects the isolated experimental primitive ELF object path and
+    requires explicit exact `--target x86_64-unknown-none --panic trap` plus an absolute
+    `--freestanding-toolchain-root` containing `bin/clang++`
   - library headers are emitted beside the selected library artifact, including raw single-file
     builds and custom `-o/--out-dir` output paths
 - `nebula run <file.nb> [-- <program-args...>]`: preflight + build (if needed) + execute
@@ -69,6 +72,12 @@ Current 1.0 GA scope:
   - install prefixes place it under `share/nebula/registry`
   it still reuses the mirror-to-local-registry model rather than teaching the core resolver about
   HTTP sources directly
+  - `NEBULA_REGISTRY_TOKEN` and `--registry-token` resolve to the same credential, with an explicit
+    command-line value taking precedence
+  - the resolved credential is delivered to the helper only through its child-local
+    `NEBULA_REGISTRY_TOKEN` environment entry; helper argv and Nebula process diagnostics must not
+    contain it, and the remaining parent environment is inherited without mutating global process
+    state
 - import syntax is uniform across these dependency sources:
   - same-package imports remain `import foo.bar`
   - package imports remain `import dep::foo.bar`
@@ -97,8 +106,52 @@ Current 1.0 GA scope:
 - installed binary surfaces cover compiler/tooling, bundled `std`, runtime headers, and release
   documentation only; repo-local preview packages under `official/*` are not installed by release
   assets
-- `build`, `run`, `test`, and `bench` require a working host C++23 compiler; Nebula uses `CXX`
-  when set and otherwise defaults to `clang++`
+- `build`, `test`, and `bench`, plus `run` unless `--no-build` is selected, require a working host
+  C++23 compiler; Nebula uses `CXX` when set and otherwise defaults to `clang++`. `run --no-build`
+  resolves an existing artifact without resolving a compiler, but still acquires a private verified
+  execution copy instead of executing the public pathname directly
+- experimental hosted `build` and build-enabled `run` publish generated source, artifact, metadata,
+  optional C ABI header, and optional import library through one process-level transaction. Public
+  destinations are locked in canonical owner-controlled parents; staged files are private, exact
+  protected-input digests are revalidated before publication, compiler-generated depfiles must
+  match the pre-compilation native-header closure, and a failed process-level commit is rolled back
+  without reporting success. On POSIX, the sealed output crosses one explicit signal checkpoint:
+  an already-observed termination signal aborts before commit, while later delivery remains blocked
+  until transaction cleanup completes. This is not a power-loss/SIGKILL atomic-set guarantee;
+  linker-selected inputs, durable multi-file journaling, and startup recovery remain future work
+- hosted `run --reuse` requires matching versioned build identity, metadata, artifact digest,
+  toolchain identity, and protected inputs. Both fresh and reusable execution copy the exact assessed
+  bytes through an open handle into an owner-private same-directory lease. The transaction locks are
+  released before the user process starts. POSIX pathname launch and final unlink retain an explicit
+  same-effective-UID trust boundary; the lease is not an immutable-file or hostile-same-UID sandbox
+  and catchable termination during the user process can still end the parent before lease cleanup
+- the experimental `build --emit freestanding-object` exception resolves exactly
+  `<--freestanding-toolchain-root>/bin/clang++` without consulting `PATH`, freezes the compiler's
+  canonical public path/content identity into provenance, and executes version, target, capability,
+  and compilation requests through one matching owner-private verified lease. Logical `argv[0]`
+  remains the canonical public compiler path, so later public replacement cannot select different
+  bytes. The `x86_64-none-clang-cxx20-v4` command schema records the lease execution boundary,
+  null-device stdin, minimal non-inherited environment, and separate 64 KiB stdout/stderr capture
+  limits. Overflow is an explicit contained infrastructure failure and captured control bytes are
+  never emitted raw. The private compiler lease must be identity-checked and removed before artifact
+  publication; cleanup failure prevents publication. Compilation retains the 30-second
+  process-group timeout, retains the POSIX leader as an unreaped identity anchor until the group is
+  sealed (including ordinary compiler exit), verifies a bounded Darwin/Linux zombie-only group
+  snapshot before claiming containment, and handles catchable CLI termination by cleaning the
+  owned compiler group before restoring and re-delivering `SIGHUP`, `SIGINT`, `SIGQUIT`, or
+  `SIGTERM`; a containment failure suppresses re-delivery and becomes an explicit infrastructure
+  error with process exit status `125`. A confirmed 30-second compiler timeout exits `124`; a
+  compiler that independently returns `124` remains an ordinary build failure and is not
+  mislabeled as a timeout. One move-only toolchain session owns the signal scope continuously from
+  before lease creation through resolver queries, analysis/emission, compilation, lease retirement,
+  and final restoration; every owner early-return closes that session explicitly. The transaction
+  freeze synchronously collects pending signals owned by the build and is
+  the commit/cancellation handoff; later signals stay blocked until cleanup and then belong to the
+  restored caller disposition. A signal already blocked by the caller is preserved instead of
+  being consumed by the build. It ignores `CXX` and hosted standard/include/SDK
+  overrides and never falls back to the
+  hosted compiler path. `SIGKILL`, host failure, and parent-process crashes require an external
+  supervisor for an orphan-free guarantee
 - official release behavior treats `clang++` as the supported default host compiler contract; the
   CLI does not silently auto-fallback to `g++`
 - the Homebrew formula depends on `llvm` and wraps `nebula` so `CXX` defaults to the brewed
@@ -132,8 +185,28 @@ Current 1.0 GA scope:
     so panic and target policy are visible in artifacts
   - `examples/system_no_std_smoke` is a check/hosted-C++ build fixture for this gate, not a
     freestanding execution proof
-  - this is not yet a freestanding object backend; hosted C++23 codegen and runtime headers remain
-    the implementation path until the system profile grows a real no-std runtime
+  - ordinary system/no-std builds are not freestanding objects; hosted C++23 codegen and runtime
+    headers remain their implementation path
+  - `build --emit freestanding-object --target x86_64-unknown-none --panic trap
+    --freestanding-toolchain-root <absolute-clang-root>` is a separate exact
+    experimental path for reachable `Int/Bool/Void`, direct resolved internal calls, and
+    stack/non-owning storage only
+  - the experimental publication implementation currently supports macOS/Linux hosts; Windows
+    compiler/tooling builds remain supported but reject the request with
+    `NBL-CLI-FS-HOST-UNSUPPORTED`
+  - that path produces an audited ELF64 relocatable object with exactly one global
+    `__nebula_uos_payload_entry_v1`, rejects payload ownership of the future image `_start`, has no
+    undefined symbols, and binds metadata to object size, SHA-256, and the immutable toolchain
+    snapshot; the build key also embeds the configured canonical protocol/ABI manifest size and
+    SHA-256, so a contract-byte change invalidates provenance; unsupported semantics,
+    toolchain output, or artifact state fail explicitly with no hosted fallback
+  - the first publication refuses to replace existing source/metadata/object paths, serializes
+    concurrent same-output builds, and commits the object last; callers must choose a clean output
+    path for a rebuild
+  - publication rollback is a process-failure guarantee for a caller-controlled output directory;
+    it is not a hostile shared-directory sandbox or a power-loss-durable filesystem transaction
+  - the object path remains clang-backed and does not link, execute, provide a runtime, or claim a
+    direct object backend
 - current complex-application positioning is intentionally narrow:
   - credible today for multi-file CLI/tools, especially file-oriented utilities, async service
     cores, backend-first internal app slices, and host-bridged modules

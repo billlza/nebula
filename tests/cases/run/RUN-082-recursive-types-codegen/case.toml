@@ -1,0 +1,13 @@
+id = "RUN-082-recursive-types-codegen"
+suite = "run"
+
+# Recursive algebraic data types (linked list + binary tree) compile and run.
+# The codegen must box recursive enum variant payloads (std::shared_ptr) and
+# order/forward-declare the mutually-recursive types so the emitted C++ is
+# finite and complete. Asserts the program executes and prints its marker.
+
+command = "run"
+source = "fixtures/recursive_types.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["recursive-types-ok"]

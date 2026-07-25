@@ -2,7 +2,7 @@
 
 The system profile is the future contract for using Nebula in low-level universeOS-facing code.
 It is not implemented today as a full no-std/freestanding runtime and is not part of the 1.0 GA
-surface. The repo now has a first experimental CLI gate that makes the boundary visible:
+surface. The repo has an experimental hosted CLI gate that makes the boundary visible:
 `--target system|freestanding|<triple>`, `--profile system`, `--no-std`, and
 `--panic abort|trap`.
 
@@ -32,8 +32,28 @@ The experimental system/no-std gate currently:
 - can check and hosted-C++ build the repo-local `examples/system_no_std_smoke` fixture without
   bundled `std` imports
 
-That profile is useful for CLI tools, backend services, control-plane programs, and thin-host app
-cores. It is not a kernel, bootloader, driver, interrupt-handler, or no-std runtime profile.
+A separate, exact experimental object slice now accepts:
+
+```text
+nebula build <path> --emit freestanding-object \
+  --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root <absolute-clang-root>
+```
+
+The publication slice is currently implemented on macOS/Linux compiler hosts. Windows remains in
+the compiler/tooling release matrix but rejects this exact request with
+`NBL-CLI-FS-HOST-UNSUPPORTED`.
+
+This path does not use the bundled runtime headers or C++ standard library in the emitted artifact.
+It accepts only reachable `Int`, `Bool`, and `Void` code with direct resolved internal calls and
+stack/non-owning storage, emits an include-free bootstrap translation unit, invokes a fixed
+`clang++` cross-target command, and audits the resulting ELF64 relocatable object before a
+no-replace transaction publishes it. Its compiler implementation still depends on C++ and clang;
+it is not a direct object backend or no-std runtime.
+
+The broader hosted Nebula profile is useful for CLI tools, backend services, control-plane
+programs, and thin-host app cores. The primitive relocatable-object slice above is not an
+executable service profile, kernel, bootloader, driver, interrupt-handler, or no-std runtime.
 The experimental gate is therefore a contract check, not proof of kernel suitability.
 
 ## CLI Gate Matrix
@@ -48,9 +68,10 @@ The experimental gate is therefore a contract check, not proof of kernel suitabi
 | `--panic abort` | accepted and recorded in generated artifacts |
 | `--panic trap` | accepted and recorded in generated artifacts |
 | `--panic unwind` with system/no-std | rejected before compilation |
+| `build --emit freestanding-object --target x86_64-unknown-none --panic trap --freestanding-toolchain-root <absolute-clang-root>` | emits the experimental primitive-only audited ELF object; target, panic policy, and owner-controlled Clang root must be explicit and exact |
 
-The smoke fixture's build path is still hosted C++23 codegen and uses bundled runtime headers. It is
-not a freestanding runtime build.
+The ordinary smoke fixture commands remain hosted C++23 codegen and use bundled runtime headers.
+They are not redirected to the object path and are not freestanding runtime builds.
 
 ## Required Contract Areas
 
@@ -81,7 +102,8 @@ The current repo does not claim:
 - interrupt or MMU integration
 - raw hardware access
 - stable syscall ABI
-- direct object/backend independence from the C++23 transpiler path
+- direct object/backend independence from the C++ bootstrap path
+- a linked image, startup runtime, QEMU boot, kernel entry, or hardware-facing API
 
 Until those contracts exist, universeOS-adjacent work should use Nebula for tools, services,
 control planes, and app-core logic rather than kernel or driver implementation.
@@ -99,4 +121,6 @@ The first credible system-profile milestone should include:
 - strict-region behavior without implicit auto-promote for system targets (first CLI policy exists)
 - a panic/abort policy visible in generated artifacts (first codegen marker exists)
 - a minimal ABI/layout test suite
+- a primitive freestanding object gate with exact target/panic selection and fail-closed artifact
+  audit (first experimental slice exists; aggregate ABI, runtime, link, and boot work remains)
 - release notes and support-matrix language that keep the profile experimental until proven

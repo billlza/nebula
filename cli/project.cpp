@@ -1,23 +1,26 @@
 #include "project.hpp"
+#include "artifact_digest.hpp"
+#include "host_process.hpp"
+#include "tool_lookup.hpp"
 
 #include "frontend/errors.hpp"
 #include "frontend/lexer.hpp"
 #include "frontend/parser.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
-#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
-#include <sys/wait.h>
 
 namespace {
 
@@ -230,41 +233,38 @@ std::string stable_hash_string(const std::string& text) {
   return os.str();
 }
 
-std::string quote_shell_arg(std::string_view text) {
-  std::string out;
-  out.reserve(text.size() + 2);
-  out.push_back('\'');
-  for (char ch : text) {
-    if (ch == '\'') {
-      out += "'\\''";
-    } else {
-      out.push_back(ch);
-    }
+std::optional<std::string> capture_command_output(const std::vector<std::string> &args,
+                                                  std::string &failure) {
+  failure.clear();
+  if (args.empty()) {
+    failure = "host command request was empty";
+    return std::nullopt;
   }
-  out.push_back('\'');
-  return out;
-}
-
-std::optional<std::string> capture_command_output(const std::vector<std::string>& args) {
-  if (args.empty()) return std::nullopt;
-  std::ostringstream cmd;
-  for (std::size_t i = 0; i < args.size(); ++i) {
-    if (i) cmd << ' ';
-    cmd << quote_shell_arg(args[i]);
+  const auto executable = find_executable_on_path(args.front());
+  if (!executable.has_value()) {
+    failure = "host command executable is unavailable";
+    return std::nullopt;
   }
-  cmd << " 2>/dev/null";
 
-  FILE* pipe = popen(cmd.str().c_str(), "r");
-  if (pipe == nullptr) return std::nullopt;
-
-  std::string out;
-  char buffer[512];
-  while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) out += buffer;
-
-  const int status = pclose(pipe);
-  if (status == -1) return std::nullopt;
-  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return std::nullopt;
-  return trim(out);
+  constexpr std::size_t kGitCaptureLimitBytes = 1024U * 1024U;
+  nebula::cli::HostProcessRequest request;
+  request.executable_path = *executable;
+  request.arguments = args;
+  request.stdout_mode = nebula::cli::HostProcessStreamMode::Capture;
+  request.stderr_mode = nebula::cli::HostProcessStreamMode::Discard;
+  request.max_stdout_bytes = kGitCaptureLimitBytes;
+  const nebula::cli::HostProcessResult result = nebula::cli::run_host_process(request);
+  std::string exit_error;
+  const int exit_code = nebula::cli::host_process_compatible_exit_code(result, exit_error);
+  if (!exit_error.empty()) {
+    failure = std::move(exit_error);
+    return std::nullopt;
+  }
+  if (exit_code != 0) {
+    failure = "host command exited with status " + std::to_string(exit_code);
+    return std::nullopt;
+  }
+  return trim(result.stdout_data);
 }
 
 std::optional<fs::path> resolve_root_manifest(const fs::path& input) {
@@ -466,26 +466,100 @@ bool is_tracked_package_source(const fs::path& path) {
          ext == ".h" || ext == ".hh" || ext == ".hpp" || ext == ".hxx";
 }
 
-std::vector<fs::path> collect_package_source_files(const LockedPackage& pkg,
-                                                   const PackageManifest& manifest) {
+std::vector<fs::path> collect_package_source_files(const LockedPackage &pkg,
+                                                   const PackageManifest &manifest,
+                                                   std::string *strict_error = nullptr) {
   std::vector<fs::path> files;
   std::set<std::string> seen;
+  auto record_error = [&](std::string detail) {
+    if (strict_error != nullptr && strict_error->empty()) {
+      *strict_error = std::move(detail);
+    }
+  };
   auto add_file = [&](const fs::path& candidate) {
     std::error_code ec;
-    if (!fs::exists(candidate, ec) || ec || !fs::is_regular_file(candidate, ec) || ec) return;
-    const fs::path normalized = fs::absolute(candidate).lexically_normal();
+    const fs::file_status status = fs::symlink_status(candidate, ec);
+    const bool regular = strict_error == nullptr
+                           ? (!ec && fs::is_regular_file(candidate, ec) && !ec)
+                           : (!ec && fs::is_regular_file(status));
+    if (!regular) {
+      if (ec) {
+        record_error("failed to inspect package build input " + candidate.string() + ": " +
+                     ec.message());
+      } else if (fs::is_symlink(status)) {
+        record_error("package build input is a symbolic link: " + candidate.string());
+      } else {
+        record_error("package build input is not a regular file: " + candidate.string());
+      }
+      return;
+    }
+    const fs::path normalized = fs::absolute(candidate, ec).lexically_normal();
+    if (ec) {
+      record_error("failed to normalize package build input " + candidate.string() + ": " +
+                   ec.message());
+      return;
+    }
     const std::string key = normalized.string();
     if (!seen.insert(key).second) return;
     files.push_back(normalized);
   };
-  auto add_dir = [&](const fs::path& dir) {
+  auto add_dir = [&](const fs::path &dir, bool include_all_regular_files = false) {
     std::error_code dir_ec;
-    if (!fs::exists(dir, dir_ec) || dir_ec || !fs::is_directory(dir, dir_ec) || dir_ec) return;
-    for (const auto& entry : fs::recursive_directory_iterator(dir, dir_ec)) {
-      if (dir_ec) break;
-      if (!entry.is_regular_file()) continue;
-      if (!is_tracked_package_source(entry.path())) continue;
-      add_file(entry.path());
+    const fs::file_status root_status = fs::symlink_status(dir, dir_ec);
+    const bool directory = strict_error == nullptr
+                             ? (!dir_ec && fs::is_directory(dir, dir_ec) && !dir_ec)
+                             : (!dir_ec && fs::is_directory(root_status));
+    if (!directory) {
+      if (dir_ec) {
+        record_error("failed to inspect package source directory " + dir.string() + ": " +
+                     dir_ec.message());
+      } else if (fs::is_symlink(root_status)) {
+        record_error("package source directory is a symbolic link: " + dir.string());
+      } else {
+        record_error("package source directory is not a directory: " + dir.string());
+      }
+      return;
+    }
+    fs::recursive_directory_iterator iterator(dir, fs::directory_options::none, dir_ec);
+    const fs::recursive_directory_iterator end;
+    while (!dir_ec && iterator != end) {
+      const fs::path entry_path = iterator->path();
+      const fs::file_status entry_status = fs::symlink_status(entry_path, dir_ec);
+      if (dir_ec)
+        break;
+      if (fs::is_symlink(entry_status)) {
+        if (strict_error != nullptr) {
+          std::error_code target_error;
+          const bool target_is_directory = fs::is_directory(entry_path, target_error);
+          const bool tracked_source_link =
+            include_all_regular_files || is_tracked_package_source(entry_path);
+          if (target_error) {
+            record_error("failed to inspect symbolic-link target in package source tree " +
+                         entry_path.string() + ": " + target_error.message());
+            return;
+          }
+          if (target_is_directory || tracked_source_link) {
+            record_error("package build-input tree contains a symbolic link: " +
+                         entry_path.string());
+            return;
+          }
+        }
+        std::error_code regular_error;
+        if (fs::is_regular_file(entry_path, regular_error) && !regular_error &&
+            (include_all_regular_files || is_tracked_package_source(entry_path))) {
+          add_file(entry_path);
+        }
+      } else if (fs::is_regular_file(entry_status) &&
+                 (include_all_regular_files || is_tracked_package_source(entry_path))) {
+        add_file(entry_path);
+        if (strict_error != nullptr && !strict_error->empty())
+          return;
+      }
+      iterator.increment(dir_ec);
+    }
+    if (dir_ec) {
+      record_error("failed while enumerating package source directory " + dir.string() + ": " +
+                   dir_ec.message());
     }
   };
 
@@ -493,13 +567,21 @@ std::vector<fs::path> collect_package_source_files(const LockedPackage& pkg,
   add_dir(src_root);
 
   add_file(pkg.root / manifest.entry);
-  for (const auto& rel : manifest.host_cxx) add_file(pkg.root / rel);
-  for (const auto& rel : manifest.native.c_sources) add_file(pkg.root / rel);
-  for (const auto& rel : manifest.native.cxx_sources) add_file(pkg.root / rel);
-  for (const auto& rel : manifest.native.include_dirs) add_dir(pkg.root / rel);
+  for (const auto &rel : manifest.host_cxx) {
+    add_file(pkg.root / rel);
+  }
+  for (const auto &rel : manifest.native.c_sources) {
+    add_file(pkg.root / rel);
+  }
+  for (const auto &rel : manifest.native.cxx_sources) {
+    add_file(pkg.root / rel);
+  }
+  for (const auto &rel : manifest.native.include_dirs)
+    add_dir(pkg.root / rel, true);
   for (const auto& source : manifest.native.sources) {
     add_file(pkg.root / source.path);
-    for (const auto& rel : source.include_dirs) add_dir(pkg.root / rel);
+    for (const auto &rel : source.include_dirs)
+      add_dir(pkg.root / rel, true);
   }
   for (const auto& header : manifest.native.generated_headers) add_file(pkg.root / header.template_path);
 
@@ -789,8 +871,8 @@ std::string render_publish_metadata(const PackageManifest& manifest,
   return out.str();
 }
 
-std::optional<std::string> git_head_revision(const fs::path& repo_root) {
-  return capture_command_output({"git", "-C", repo_root.string(), "rev-parse", "HEAD"});
+std::optional<std::string> git_head_revision(const fs::path &repo_root, std::string &failure) {
+  return capture_command_output({"git", "-C", repo_root.string(), "rev-parse", "HEAD"}, failure);
 }
 
 bool preflight_git_dependency_environment_impl(const ManifestDependency& dep,
@@ -812,18 +894,19 @@ bool preflight_git_dependency_environment_impl(const ManifestDependency& dep,
   }
 
   if (!require_remote_probe) return true;
-  if (!capture_command_output(
-          {"git", "-c", "credential.interactive=never", "-c", "core.askPass=", "ls-remote",
-           "--symref", dep.git, "HEAD"})
-           .has_value()) {
-    diags.push_back(make_cli_diag(
-        Severity::Error, "NBL-CLI-DEP-GIT-REMOTE",
-        "failed to reach git dependency source before checkout: " + dep.git, stage, DiagnosticRisk::High,
-        "git ls-remote could not query the dependency source",
-        "dependency resolution cannot continue until the source is reachable",
-        {"check network/auth access to the git remote before nebula " + command_text,
-         "verify the git URL/path exists",
-         "or remove the git dependency"}));
+  std::string remote_probe_failure;
+  if (!capture_command_output({"git", "-c", "credential.interactive=never", "-c",
+                               "core.askPass=", "ls-remote", "--symref", dep.git, "HEAD"},
+                              remote_probe_failure)
+         .has_value()) {
+    diags.push_back(
+      make_cli_diag(Severity::Error, "NBL-CLI-DEP-GIT-REMOTE",
+                    "failed to reach git dependency source before checkout: " + dep.git, stage,
+                    DiagnosticRisk::High,
+                    "git ls-remote could not query the dependency source: " + remote_probe_failure,
+                    "dependency resolution cannot continue until the source is reachable",
+                    {"check network/auth access to the git remote before nebula " + command_text,
+                     "verify the git URL/path exists", "or remove the git dependency"}));
     return false;
   }
   return true;
@@ -1383,7 +1466,19 @@ bool resolve_project_lock_from_manifest(const fs::path& manifest_path,
             if (source_kind == "git") {
               dep_it->second.locked.git_url = dep.git;
               dep_it->second.locked.git_requested_rev = dep.rev;
-              dep_it->second.locked.resolved_rev = git_head_revision(dep_it->second.locked.root).value_or("");
+              std::string revision_failure;
+              const auto revision = git_head_revision(dep_it->second.locked.root, revision_failure);
+              if (!revision.has_value()) {
+                diags.push_back(make_cli_diag(
+                  Severity::Error, "NBL-CLI-DEP-GIT-HEAD",
+                  "failed to resolve the checked-out git dependency revision: " + dep.alias, stage,
+                  DiagnosticRisk::High, "git rev-parse failed after checkout: " + revision_failure,
+                  "the lockfile cannot record an exact dependency revision",
+                  {"verify the checkout and git executable, then retry fetch/update"}));
+                state.visiting.erase(manifest_key);
+                return std::nullopt;
+              }
+              dep_it->second.locked.resolved_rev = *revision;
             }
             dep_it->second.locked.source_fingerprint =
                 package_lock_source_fingerprint(dep_it->second.locked, dep_it->second.manifest);
@@ -1400,7 +1495,19 @@ bool resolve_project_lock_from_manifest(const fs::path& manifest_path,
                   });
 
         if (node.locked.source_kind == "git" && node.locked.resolved_rev.empty()) {
-          node.locked.resolved_rev = git_head_revision(node.locked.root).value_or("");
+          std::string revision_failure;
+          const auto revision = git_head_revision(node.locked.root, revision_failure);
+          if (!revision.has_value()) {
+            diags.push_back(make_cli_diag(
+              Severity::Error, "NBL-CLI-DEP-GIT-HEAD",
+              "failed to resolve a checked-out git dependency revision: " + node.locked.name, stage,
+              DiagnosticRisk::High, "git rev-parse failed after checkout: " + revision_failure,
+              "the lockfile cannot record an exact dependency revision",
+              {"verify the checkout and git executable, then retry fetch/update"}));
+            state.visiting.erase(manifest_key);
+            return std::nullopt;
+          }
+          node.locked.resolved_rev = *revision;
         }
         node.locked.source_fingerprint = package_lock_source_fingerprint(node.locked, node.manifest);
         node.locked.integrity_fingerprint = package_integrity_fingerprint(node.locked, node.manifest);
@@ -2394,9 +2501,12 @@ bool load_project_input(const fs::path& input,
   fs::path root_manifest_path;
   if (auto manifest_path = resolve_root_manifest(abs_input); manifest_path.has_value()) {
     root_manifest_path = *manifest_path;
+    out.root_manifest_path = root_manifest_path;
     if (!read_package_manifest(root_manifest_path, root_manifest, diags, stage)) return false;
 
     const fs::path lock_path = lockfile_path_for_manifest(root_manifest_path);
+    if (fs::exists(lock_path))
+      out.lockfile_path = lock_path;
     const bool requires_lock = !root_manifest.dependencies.empty() || !root_manifest.workspace_members.empty();
     if (requires_lock) {
       if (!fs::exists(lock_path)) {
@@ -2658,6 +2768,25 @@ bool load_project_input(const fs::path& input,
                           "native generated-header materialization cannot continue"));
           return std::nullopt;
         }
+        const nebula::cli::FileDigestResult generated_digest =
+          nebula::cli::sha256_file(output_path);
+        const auto *rendered_bytes = reinterpret_cast<const std::uint8_t *>(rendered.data());
+        const std::string expected_sha256 =
+          nebula::cli::sha256_hex(std::span<const std::uint8_t>(rendered_bytes, rendered.size()));
+        if (!generated_digest.ok() || generated_digest.value->size != rendered.size() ||
+            generated_digest.value->sha256 != expected_sha256) {
+          diags.push_back(make_cli_diag(
+            Severity::Error, "NBL-CLI-NATIVE-GENERATED",
+            "generated native header could not be bound to its rendered content: " +
+              output_path.string(),
+            stage, DiagnosticRisk::High,
+            generated_digest.ok() ? "generated header bytes changed while being materialized"
+                                  : generated_digest.detail,
+            "native compilation refuses a generated include whose exact bytes are unknown"));
+          return std::nullopt;
+        }
+        out.build_input_identities.push_back(BuildInputFileIdentity{
+          output_path, generated_digest.value->size, generated_digest.value->sha256});
         return generated_root;
       };
       for (const auto &header : native_cfg.generated_headers) {
@@ -3011,6 +3140,83 @@ bool load_project_input(const fs::path& input,
     return false;
   }
 
+  std::vector<fs::path> hosted_input_roots;
+  hosted_input_roots.reserve(out.host_cxx_sources.size() + out.native_inputs.sources.size() * 2U);
+  const auto package_root_containing = [&](const fs::path &source) -> std::optional<fs::path> {
+    std::optional<fs::path> best;
+    for (const std::string &package_name : ordered_loaded_packages) {
+      const auto package = package_by_name.find(package_name);
+      if (package == package_by_name.end() || !path_is_within(source, package->second.root)) {
+        continue;
+      }
+      const fs::path candidate = absolute_normalized(package->second.root);
+      if (!best.has_value() || candidate.generic_string().size() > best->generic_string().size()) {
+        best = candidate;
+      }
+    }
+    return best;
+  };
+  const auto append_translation_unit_local_root = [&](const fs::path &source) {
+    const fs::path parent = absolute_normalized(source.parent_path());
+    const std::optional<fs::path> package_root = package_root_containing(source);
+    // Recursively treating the package root as an implicit include tree also
+    // captures Nebula's own output/cache directories. That makes a build
+    // invalidate or conflict with itself. Root-level translation units remain
+    // exact file inputs; their complete compiler-discovered dependency closure
+    // requires depfile or immutable-input support rather than a broad scan.
+    if (package_root.has_value() && parent == *package_root)
+      return;
+    hosted_input_roots.push_back(parent);
+  };
+  for (const fs::path &source : out.host_cxx_sources)
+    append_translation_unit_local_root(source);
+  for (const NativeSourceInput &source : out.native_inputs.sources) {
+    append_translation_unit_local_root(source.path);
+    for (const fs::path &include_dir : source.include_dirs)
+      hosted_input_roots.push_back(absolute_normalized(include_dir));
+  }
+  std::sort(hosted_input_roots.begin(), hosted_input_roots.end(),
+            [](const fs::path &left, const fs::path &right) {
+              const auto left_depth =
+                static_cast<std::size_t>(std::distance(left.begin(), left.end()));
+              const auto right_depth =
+                static_cast<std::size_t>(std::distance(right.begin(), right.end()));
+              if (left_depth != right_depth)
+                return left_depth < right_depth;
+              return left.generic_string() < right.generic_string();
+            });
+  std::vector<fs::path> minimal_hosted_input_roots;
+  for (const fs::path &candidate : hosted_input_roots) {
+    const bool already_covered =
+      std::any_of(minimal_hosted_input_roots.begin(), minimal_hosted_input_roots.end(),
+                  [&](const fs::path &root) { return path_is_within(candidate, root); });
+    if (!already_covered)
+      minimal_hosted_input_roots.push_back(candidate);
+  }
+  std::vector<std::pair<fs::path, std::string>> hosted_tree_content_identities;
+  for (const fs::path &root : minimal_hosted_input_roots) {
+    const nebula::cli::DirectoryTreeSnapshotResult snapshot =
+      nebula::cli::snapshot_directory_tree(root);
+    if (!snapshot.ok()) {
+      diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+        "cannot freeze hosted input-directory contents: " + root.string(), stage,
+        DiagnosticRisk::High, snapshot.detail,
+        "native compilation refuses a directory whose candidate file set or exact contents "
+        "are incomplete or unstable",
+        {"remove symbolic links and special files from native source/include trees",
+         "stop concurrent writers and retry"}));
+      return false;
+    }
+    out.build_input_directory_identities.push_back(BuildInputDirectoryIdentity{
+      root, snapshot.value->membership.entry_count, snapshot.value->membership.sha256});
+    hosted_tree_content_identities.emplace_back(root, snapshot.value->content_sha256);
+    for (const nebula::cli::DirectoryTreeFileSnapshot &file : snapshot.value->regular_files) {
+      out.build_input_identities.push_back(
+        BuildInputFileIdentity{root / file.relative_path, file.content.size, file.content.sha256});
+    }
+  }
+
   std::ostringstream cache_seed;
   cache_seed << "root=" << target_pkg->name << "\n";
   for (const auto& pkg_name : ordered_reachable_packages) {
@@ -3019,6 +3225,173 @@ bool load_project_input(const fs::path& input,
     const auto& pkg = pkg_it->second;
     cache_seed << "pkg " << pkg.name << " " << pkg.version << " " << pkg.source_kind << " "
                << pkg.source_hint << " " << pkg.integrity_fingerprint << "\n";
+  }
+  for (const auto &[root, content_sha256] : hosted_tree_content_identities) {
+    cache_seed << "hosted_tree.path=" << root.generic_string() << "\n";
+    cache_seed << "hosted_tree.content_sha256=" << content_sha256 << "\n";
+  }
+
+  for (const auto &pkg_name : ordered_loaded_packages) {
+    const auto pkg_it = package_by_name.find(pkg_name);
+    if (pkg_it == package_by_name.end())
+      continue;
+    const auto &pkg = pkg_it->second;
+    const auto manifest_it = package_manifest_by_name.find(pkg.name);
+    if (manifest_it == package_manifest_by_name.end()) {
+      if (pkg.source_kind == "implicit") {
+        // Standalone source files intentionally have no manifest. Their exact
+        // loaded module closure is hashed and verified below.
+        continue;
+      }
+      diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+        "reachable package manifest is unavailable while deriving build identity: " + pkg.name,
+        stage, DiagnosticRisk::High,
+        "Nebula cannot enumerate every source, native bridge, header, and generated-header "
+        "template that can affect this build",
+        "artifact reuse and compiler caching require a complete build-input identity"));
+      return false;
+    }
+
+    std::string collection_error;
+    std::vector<fs::path> identity_files =
+      collect_package_source_files(pkg, manifest_it->second, &collection_error);
+    if (!collection_error.empty()) {
+      diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+        "cannot enumerate the complete package build-input set: " + pkg.name, stage,
+        DiagnosticRisk::High, collection_error,
+        "Nebula refuses to derive a reusable artifact identity from a partial source or "
+        "header traversal",
+        {"remove symbolic links from package source/include trees",
+         "restore readable package directories and retry"}));
+      return false;
+    }
+    if (!pkg.manifest_path.empty())
+      identity_files.push_back(pkg.manifest_path);
+    std::sort(identity_files.begin(), identity_files.end(),
+              [](const fs::path &lhs, const fs::path &rhs) {
+                return lhs.generic_string() < rhs.generic_string();
+              });
+    identity_files.erase(
+      std::unique(identity_files.begin(), identity_files.end(),
+                  [](const fs::path &lhs, const fs::path &rhs) { return lhs == rhs; }),
+      identity_files.end());
+
+    for (const fs::path &input_file : identity_files) {
+      if (!path_is_within(input_file, pkg.root)) {
+        diags.push_back(make_cli_diag(
+          Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+          "build input resolves outside its package root: " + input_file.string(), stage,
+          DiagnosticRisk::High,
+          "source/include paths must remain inside the canonical package root",
+          "Nebula refuses to read external content through a package path while deriving a "
+          "reproducible artifact identity",
+          {"move the input inside the package root",
+           "replace escaping symbolic-link or junction paths with package-local files"}));
+        return false;
+      }
+      const nebula::cli::FileDigestResult digest = nebula::cli::sha256_file(input_file);
+      if (!digest.ok()) {
+        diags.push_back(make_cli_diag(
+          Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+          "cannot establish a stable build-input identity for: " + input_file.string(), stage,
+          DiagnosticRisk::High, digest.detail,
+          "Nebula refuses to cache or publish an artifact whose complete input content is "
+          "unknown",
+          {"restore a readable regular file and retry",
+           "replace symbolic-link build inputs with files inside the package root"}));
+        return false;
+      }
+      std::error_code relative_error;
+      fs::path relative = fs::relative(input_file, pkg.root, relative_error);
+      if (relative_error || relative.empty()) {
+        diags.push_back(make_cli_diag(
+          Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+          "cannot normalize build-input identity relative to package root: " + input_file.string(),
+          stage, DiagnosticRisk::High,
+          relative_error ? relative_error.message() : "the normalized relative path is empty",
+          "artifact reuse and compiler caching require an unambiguous package-relative path"));
+        return false;
+      }
+      cache_seed << "input.pkg=" << pkg.name << "\n";
+      cache_seed << "input.path=" << relative.generic_string() << "\n";
+      cache_seed << "input.size=" << digest.value->size << "\n";
+      cache_seed << "input.sha256=" << digest.value->sha256 << "\n";
+      out.build_input_identities.push_back(
+        BuildInputFileIdentity{input_file, digest.value->size, digest.value->sha256});
+    }
+  }
+
+  for (const auto &[role, control_file] : std::array<std::pair<std::string_view, fs::path>, 2>{{
+         {"root_manifest", out.root_manifest_path},
+         {"lockfile", out.lockfile_path},
+       }}) {
+    if (control_file.empty() ||
+        std::find_if(out.build_input_identities.begin(), out.build_input_identities.end(),
+                     [&](const BuildInputFileIdentity &identity) {
+                       return identity.path == control_file;
+                     }) != out.build_input_identities.end()) {
+      continue;
+    }
+    const nebula::cli::FileDigestResult digest = nebula::cli::sha256_file(control_file);
+    if (!digest.ok()) {
+      diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+        "cannot establish a stable build identity for project control file: " +
+          control_file.string(),
+        stage, DiagnosticRisk::High, digest.detail,
+        "manifest and lockfile bytes that select the package graph must be bound to the "
+        "artifact identity"));
+      return false;
+    }
+    cache_seed << "input.role=" << role << "\n";
+    cache_seed << "input.path=" << absolute_normalized(control_file).generic_string() << "\n";
+    cache_seed << "input.size=" << digest.value->size << "\n";
+    cache_seed << "input.sha256=" << digest.value->sha256 << "\n";
+    out.build_input_identities.push_back(
+      BuildInputFileIdentity{control_file, digest.value->size, digest.value->sha256});
+  }
+
+  for (const auto &source : out.sources) {
+    const fs::path source_path = absolute_normalized(fs::path(source.path));
+    const auto *source_bytes = reinterpret_cast<const std::uint8_t *>(source.text.data());
+    const nebula::cli::FileDigest loaded_digest{
+      source.text.size(),
+      nebula::cli::sha256_hex(std::span<const std::uint8_t>(source_bytes, source.text.size()))};
+    const nebula::cli::FileDigestResult disk_digest = nebula::cli::sha256_file(source_path);
+    if (!disk_digest.ok() || disk_digest.value->size != loaded_digest.size ||
+        disk_digest.value->sha256 != loaded_digest.sha256) {
+      diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+        "loaded source changed before its build identity was frozen: " + source_path.string(),
+        stage, DiagnosticRisk::High,
+        disk_digest.ok() ? "on-disk bytes differ from the parsed source snapshot"
+                         : disk_digest.detail,
+        "Nebula refuses to compile one source snapshot under another snapshot's provenance"));
+      return false;
+    }
+    const auto existing = std::find_if(
+      out.build_input_identities.begin(), out.build_input_identities.end(),
+      [&](const BuildInputFileIdentity &identity) { return identity.path == source_path; });
+    if (existing != out.build_input_identities.end()) {
+      if (existing->size != loaded_digest.size || existing->sha256 != loaded_digest.sha256) {
+        diags.push_back(make_cli_diag(
+          Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+          "source produced inconsistent build-input snapshots: " + source_path.string(), stage,
+          DiagnosticRisk::High,
+          "the same canonical source path was observed with different bytes during loading",
+          "artifact provenance cannot represent a concurrent source mutation"));
+        return false;
+      }
+    } else {
+      out.build_input_identities.push_back(
+        BuildInputFileIdentity{source_path, loaded_digest.size, loaded_digest.sha256});
+      cache_seed << "input.role=loaded_source\n";
+      cache_seed << "input.path=" << source_path.generic_string() << "\n";
+      cache_seed << "input.size=" << loaded_digest.size << "\n";
+      cache_seed << "input.sha256=" << loaded_digest.sha256 << "\n";
+    }
   }
   for (const auto& host : out.host_cxx_sources) cache_seed << "host_cxx=" << host.string() << "\n";
   for (const auto& input : out.native_inputs.sources) {
@@ -3044,6 +3417,40 @@ bool load_project_input(const fs::path& input,
       cache_seed << "import=" << import_name << "\n";
     }
     cache_seed << source.text << "\n---\n";
+  }
+  std::sort(out.build_input_identities.begin(), out.build_input_identities.end(),
+            [](const BuildInputFileIdentity &lhs, const BuildInputFileIdentity &rhs) {
+              return lhs.path.generic_string() < rhs.path.generic_string();
+            });
+  for (std::size_t index = 1U; index < out.build_input_identities.size(); ++index) {
+    const BuildInputFileIdentity &previous = out.build_input_identities[index - 1U];
+    const BuildInputFileIdentity &current = out.build_input_identities[index];
+    if (previous.path == current.path &&
+        (previous.size != current.size || previous.sha256 != current.sha256)) {
+      diags.push_back(make_cli_diag(
+        Severity::Error, "NBL-CLI-BUILD-IDENTITY",
+        "build input changed while the project graph was being loaded: " + current.path.string(),
+        stage, DiagnosticRisk::High,
+        "the same canonical input path produced different SHA-256 snapshots",
+        "Nebula refuses to collapse concurrent file states into one artifact identity"));
+      return false;
+    }
+  }
+  out.build_input_identities.erase(
+    std::unique(out.build_input_identities.begin(), out.build_input_identities.end(),
+                [](const BuildInputFileIdentity &lhs, const BuildInputFileIdentity &rhs) {
+                  return lhs.path == rhs.path;
+                }),
+    out.build_input_identities.end());
+  for (const BuildInputFileIdentity &identity : out.build_input_identities) {
+    cache_seed << "bound_input.path=" << identity.path.generic_string() << "\n";
+    cache_seed << "bound_input.size=" << identity.size << "\n";
+    cache_seed << "bound_input.sha256=" << identity.sha256 << "\n";
+  }
+  for (const BuildInputDirectoryIdentity &identity : out.build_input_directory_identities) {
+    cache_seed << "bound_directory.path=" << identity.path.generic_string() << "\n";
+    cache_seed << "bound_directory.entries=" << identity.entry_count << "\n";
+    cache_seed << "bound_directory.membership_sha256=" << identity.membership_sha256 << "\n";
   }
   out.cache_key_source = cache_seed.str();
   return true;
@@ -3076,6 +3483,8 @@ LoadedCompileInput load_compile_input(const fs::path& input,
   }
 
   out.ok = true;
+  out.root_manifest_path = loaded.root_manifest_path;
+  out.lockfile_path = loaded.lockfile_path;
   out.manifest_path = loaded.manifest_path;
   out.project_root = loaded.project_root;
   out.module_root = fs::exists(loaded.project_root / "src") ? (loaded.project_root / "src")
@@ -3083,6 +3492,8 @@ LoadedCompileInput load_compile_input(const fs::path& input,
   out.entry_file = loaded.entry_path;
   out.project_name = loaded.project_name;
   out.cache_key_source = loaded.cache_key_source;
+  out.build_input_identities = loaded.build_input_identities;
+  out.build_input_directory_identities = loaded.build_input_directory_identities;
   out.host_cxx_sources = loaded.host_cxx_sources;
   out.native_inputs = loaded.native_inputs;
   return out;

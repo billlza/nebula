@@ -1,0 +1,16 @@
+struct Holder<T> {
+}
+
+// The element type is supplied by the return type, not by any argument.
+fn empty_ints() -> Holder<Int> {
+  return Holder()
+}
+fn empty_bools() -> Holder<Bool> {
+  return Holder()
+}
+
+fn main() -> Void {
+  let a = empty_ints()
+  let b = empty_bools()
+  print("empty-generic-ok")
+}

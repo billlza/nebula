@@ -1,0 +1,27 @@
+id = "CHK-229-parser-recursion-depth-guard"
+suite = "check"
+
+# Pathologically deep nesting must yield a diagnostic (NBL-PAR900), not a
+# stack-overflow crash (exit 139). Guards the recursive-descent parser against
+# unbounded expression/block nesting.
+
+[[steps]]
+kind = "shell"
+run = '''
+set -u
+mkdir -p work
+f=work/parser-depth-bomb.nb
+n=20000
+open=$(printf '(%.0s' $(seq 1 "$n"))
+close=$(printf ')%.0s' $(seq 1 "$n"))
+printf 'fn main() -> Void {\n  let x = %s1%s\n}\n' "$open" "$close" > "$f"
+out="$("$NEBULA_BINARY" check "$f" 2>&1)"
+rc=$?
+printf '%s\n' "$out"
+echo "exit-code=$rc"
+test "$rc" -ne 139
+printf '%s\n' "$out" | grep -F 'NBL-PAR900' >/dev/null
+'''
+expect_rc = 0
+expect_stdout_contains = ["NBL-PAR900", "exit-code="]
+forbid_stdout_contains = ["exit-code=139"]

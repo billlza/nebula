@@ -3,6 +3,37 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "$NEBULA_BINARY update \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" && $NEBULA_BINARY check \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" && $NEBULA_BINARY run \"$NEBULA_REPO_ROOT/examples/local_ops_console_ui\" --run-gate none"
+run = """
+python3 - <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+sys.path.insert(0, str(repo / "tests" / "lib"))
+from local_ops_ui_workspace import copy_local_ops_console_ui
+
+binary = os.environ["NEBULA_BINARY"]
+app = copy_local_ops_console_ui(repo, Path("work/local_ops_console_ui"))
+
+def run_checked(label: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        raise SystemExit(f"{label} failed: rc={result.returncode}")
+    return result
+
+run_checked("Local Ops UI update", [binary, "update", str(app)])
+run_checked("Local Ops UI check", [binary, "check", str(app)])
+run = run_checked(
+    "Local Ops UI run",
+    [binary, "run", str(app), "--run-gate", "none"],
+)
+print(run.stdout, end="")
+print(run.stderr, end="", file=sys.stderr)
+PY
+"""
 expect_rc = 0
 expect_stdout_contains = ["nebula-ui.tree.v1", "\"component\":\"Window\"", "\"component\":\"Input\"", "\"action\":\"targets.refresh\"", "\"action\":\"targets.filter\"", "\"accessibility_label\":\"Filter targets\"", "Window title=Local Ops", "Input value=targets action=targets.filter accessibility_label=Filter targets", "Button text=Refresh action=targets.refresh", "nebula-ui-action-dispatched=targets.refresh", "nebula-ui-action-dispatched=targets.filter"]

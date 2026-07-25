@@ -35,6 +35,15 @@ inline std::optional<std::string> runtime_std_call_name(
     const std::optional<nebula::frontend::QualifiedName>& qualified,
     std::string_view fallback_callee = {}) {
   if (qualified.has_value() && qualified->package_name == "std") {
+    if (qualified->module_name == "bench") {
+      if (qualified->local_name == "black_box") return "nebula::rt::black_box";
+    }
+    if (qualified->module_name == "vec") {
+      if (qualified->local_name == "push") return "nebula::rt::vec_push";
+      if (qualified->local_name == "len") return "nebula::rt::vec_len";
+      if (qualified->local_name == "is_empty") return "nebula::rt::vec_is_empty";
+      if (qualified->local_name == "get_or") return "nebula::rt::vec_get_or";
+    }
     if (qualified->module_name == "bytes") {
       if (qualified->local_name == "from_string") return "nebula::rt::bytes_from_string";
       if (qualified->local_name == "to_string") return "nebula::rt::bytes_to_string";

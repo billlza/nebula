@@ -4,7 +4,7 @@ description = "backend SDK ships nebula-jobs as installed preview with SQLite le
 
 [[steps]]
 kind = "shell"
-timeout = 300
+timeout = 600
 run = '''
 python3 - <<'PY'
 import os

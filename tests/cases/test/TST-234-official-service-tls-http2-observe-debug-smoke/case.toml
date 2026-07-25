@@ -3,13 +3,13 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
+timeout = 240
 run = '''
 python3 - <<'PY'
 import json
 import os
 import platform
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -24,18 +24,33 @@ if shutil.which('openssl') is None:
 
 repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
 sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
-from service_probe import collect_observe_events, fail_with_output, finish_process_output, wait_for_listener_bound
+from process_containment import (
+    InvocationError,
+    ProcessContainmentPolicy,
+    run_contained_command,
+)
+from service_probe import (
+    collect_observe_events,
+    fail_with_output,
+    finish_process_output,
+    start_process,
+    terminate_process,
+    wait_for_listener_bound,
+)
 
 root = Path('work/official_service_tls_http2_observe_debug')
 server_app = root / 'server_app'
 client_app = root / 'client_app'
-shutil.rmtree(root, ignore_errors=True)
+server_artifact_dir = root / 'server_build'
+client_artifact_dir = root / 'client_build'
+server_artifact = server_artifact_dir / 'tls-http2-server.out'
+client_artifact = client_artifact_dir / 'tls-http2-client.out'
+if root.is_symlink():
+    root.unlink()
+elif root.exists():
+    shutil.rmtree(root)
 (server_app / 'src').mkdir(parents=True, exist_ok=True)
 (client_app / 'src').mkdir(parents=True, exist_ok=True)
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-    probe.bind(('127.0.0.1', 0))
-    port = probe.getsockname()[1]
 
 (root / 'openssl_ca.cnf').write_text("""[req]\ndistinguished_name = dn\nx509_extensions = v3_ca\nprompt = no\n\n[dn]\nCN = Nebula Service TLS HTTP2 Observe CA\n\n[v3_ca]\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid:always,issuer\nbasicConstraints = critical, CA:true\nkeyUsage = critical, digitalSignature, keyCertSign, cRLSign\n""", encoding='utf-8')
 (root / 'openssl_server.cnf').write_text("""[req]\ndistinguished_name = dn\nreq_extensions = v3_req\nprompt = no\n\n[dn]\nCN = localhost\n\n[v3_req]\nsubjectAltName = @alt_names\nbasicConstraints = CA:false\nkeyUsage = critical, digitalSignature, keyEncipherment\nextendedKeyUsage = serverAuth\n\n[alt_names]\nDNS.1 = localhost\nIP.1 = 127.0.0.1\n""", encoding='utf-8')
@@ -117,7 +132,16 @@ src_dir = "src"
 [dependencies]
 tlsc = {{ path = "{repo_root / 'official' / 'nebula-tls'}" }}
 """, encoding='utf-8')
+(client_app / 'src' / 'port_env.nb').write_text("""module port_env
+import std::env
+import std::result
+
+fn test_port_from_env() -> Result<Int, String> {
+  return get_int("NEBULA_TEST_PORT")
+}
+""", encoding='utf-8')
 (client_app / 'src' / 'main.nb').write_text(f"""module main
+import port_env
 import std::http
 import std::http_json
 import std::json
@@ -125,25 +149,30 @@ import tlsc::client
 import tlsc::http2
 
 async fn main() -> Void {{
-  match client_config_from_ca_pem_text("{lit(ca_pem)}") {{
-    Ok(base_cfg) => {{
-      let cfg0 = with_version_policy(base_cfg, tls13_only())
-      let cfg1 = with_alpn_policy(cfg0, alpn_http2_only())
-      match await dial_host("localhost", {port}, cfg1) {{
-        Ok(stream) => {{
-          let request = get_request("localhost:{port}", "/slow")
-          match await TlsClientStream_write_request_h2(stream, request) {{
-            Ok(_) => {{
-              match await TlsClientStream_read_response_h2(stream) {{
-                Ok(response) => {{
-                  match parse_json_body(response.body) {{
-                    Ok(body) => {{
-                      print(stringify(object2(
-                        "status",
-                        int_value(response.status),
-                        "body",
-                        body
-                      )))
+  match test_port_from_env() {{
+    Ok(port) => {{
+      match client_config_from_ca_pem_text("{lit(ca_pem)}") {{
+        Ok(base_cfg) => {{
+          let cfg0 = with_version_policy(base_cfg, tls13_only())
+          let cfg1 = with_alpn_policy(cfg0, alpn_http2_only())
+          match await dial_host("localhost", port, cfg1) {{
+            Ok(stream) => {{
+              let request = get_request("localhost", "/slow")
+              match await TlsClientStream_write_request_h2(stream, request) {{
+                Ok(_) => {{
+                  match await TlsClientStream_read_response_h2(stream) {{
+                    Ok(response) => {{
+                      match parse_json_body(response.body) {{
+                        Ok(body) => {{
+                          print(stringify(object2(
+                            "status",
+                            int_value(response.status),
+                            "body",
+                            body
+                          )))
+                        }}
+                        Err(msg) => {{ print(msg) }}
+                      }}
                     }}
                     Err(msg) => {{ print(msg) }}
                   }}
@@ -163,30 +192,136 @@ async fn main() -> Void {{
 """, encoding='utf-8')
 
 for app in (server_app, client_app):
-    subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(app)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    update = subprocess.run(
+        [os.environ['NEBULA_BINARY'], 'update', str(app)],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    print(update.stdout, end='')
+    print(update.stderr, end='')
+    if update.returncode != 0:
+        raise SystemExit(update.returncode)
 
-proc = subprocess.Popen(
-    [os.environ['NEBULA_BINARY'], 'run', str(server_app), '--run-gate', 'none'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    text=True,
+build_specs = (
+    ('server', server_app, server_artifact_dir, server_artifact),
+    ('client', client_app, client_artifact_dir, client_artifact),
+)
+build_processes = []
+try:
+    for label, app, out_dir, artifact in build_specs:
+        build_proc, build_output = start_process(
+            [
+                os.environ['NEBULA_BINARY'],
+                'build',
+                str(app),
+                '--out-dir',
+                str(out_dir),
+                '-o',
+                str(artifact),
+            ],
+            f'tls_http2_{label}_build',
+            env=os.environ.copy(),
+            thread_name_prefix=f'tls-http2-{label}-build',
+        )
+        build_processes.append((label, artifact, build_proc, build_output))
+
+    build_deadline = time.monotonic() + 100.0
+    for label, artifact, build_proc, build_output in build_processes:
+        remaining = build_deadline - time.monotonic()
+        if remaining <= 0:
+            fail_with_output(
+                build_proc,
+                build_output,
+                f'{label} TLS HTTP/2 prebuild did not finish in time',
+            )
+        try:
+            build_proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            fail_with_output(
+                build_proc,
+                build_output,
+                f'{label} TLS HTTP/2 prebuild did not finish in time',
+            )
+        build_stdout, build_stderr = finish_process_output(
+            build_proc, build_output
+        )
+        print(build_stdout, end='')
+        print(build_stderr, end='')
+        if build_proc.returncode != 0:
+            raise SystemExit(
+                f'{label} TLS HTTP/2 prebuild failed: rc={build_proc.returncode}'
+            )
+        if not artifact.is_file() or not Path(str(artifact) + '.nebmeta').is_file():
+            raise SystemExit(
+                f'{label} TLS HTTP/2 prebuild did not publish artifact and metadata'
+            )
+finally:
+    for _, _, build_proc, build_output in reversed(build_processes):
+        terminate_process(build_proc, build_output)
+
+proc, service_output = start_process(
+    [
+        os.environ['NEBULA_BINARY'],
+        'run',
+        str(server_app),
+        '--no-build',
+        '-o',
+        str(server_artifact),
+        '--run-gate',
+        'none',
+    ],
+    'listener_bound',
     env={
         **os.environ,
         'NEBULA_BIND_HOST': '127.0.0.1',
-        'NEBULA_PORT': str(port),
+        'NEBULA_PORT': '0',
         'NEBULA_HANDLER_TIMEOUT_MS': '1',
         'NEBULA_WRITE_TIMEOUT_MS': '50',
     },
 )
-stderr_lines = []
-_, bound_port = wait_for_listener_bound(proc, stderr_lines, timeout=45.0)
-if bound_port != port:
-    fail_with_output(proc, stderr_lines, f'listener_bound port mismatch: expected {port}, got {bound_port}')
-
 try:
-    client = subprocess.run([os.environ['NEBULA_BINARY'], 'run', str(client_app), '--run-gate', 'none'], capture_output=True, text=True, env=os.environ.copy())
+    _, bound_port = wait_for_listener_bound(
+        proc,
+        service_output,
+        timeout=10.0,
+        timeout_mode='exact',
+    )
+    try:
+        client = run_contained_command(
+            [
+                os.environ['NEBULA_BINARY'],
+                'run',
+                str(client_app),
+                '--no-build',
+                '-o',
+                str(client_artifact),
+                '--run-gate',
+                'none',
+            ],
+            cwd=Path.cwd(),
+            shell=False,
+            env={**os.environ, 'NEBULA_TEST_PORT': str(bound_port)},
+            timeout_sec=20.0,
+            containment_policy=ProcessContainmentPolicy.TRUSTED_COOPERATIVE,
+            combine_stderr=False,
+        )
+    except InvocationError as exc:
+        if exc.output:
+            print(
+                exc.output,
+                end='' if exc.output.endswith('\n') else '\n',
+                file=sys.stderr,
+            )
+        raise SystemExit(f'TLS HTTP/2 client containment failed: {exc}') from exc
     print(client.stdout, end='')
     print(client.stderr, end='')
+    if client.timed_out:
+        raise SystemExit('TLS HTTP/2 client did not finish in time')
+    if not client.containment_complete:
+        raise SystemExit(
+            'TLS HTTP/2 client containment did not reach its terminal oracle'
+        )
     if client.returncode != 0:
         raise SystemExit(client.returncode)
     lines = [line.strip() for line in client.stdout.splitlines() if line.strip()]
@@ -200,9 +335,9 @@ try:
     try:
         proc.wait(timeout=20)
     except subprocess.TimeoutExpired:
-        fail_with_output(proc, stderr_lines, 'service TLS HTTP/2 observe debug server did not exit after one request')
+        fail_with_output(proc, service_output, 'service TLS HTTP/2 observe debug server did not exit after one request')
 
-    stdout, stderr = finish_process_output(proc, stderr_lines)
+    stdout, stderr = finish_process_output(proc, service_output)
     print(stdout, end='')
     print(stderr, end='')
     if proc.returncode != 0:
@@ -239,13 +374,7 @@ try:
         raise SystemExit(f'unexpected HTTP/2 GOAWAY debug-state details: {event!r}')
     print('service-tls-http2-observe-debug-ok')
 finally:
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+    terminate_process(proc, service_output)
 PY
 '''
 expect_rc = 0

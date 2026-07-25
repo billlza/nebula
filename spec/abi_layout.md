@@ -7,6 +7,9 @@ Nebula's current supported pipeline is source to C++23 to a host C++ compiler. A
 must therefore distinguish current hosted C++ representation from future freestanding or
 backend-independent object representation.
 
+The experimental freestanding object slice below is an implementation contract for one exact
+target, not a stable system ABI.
+
 ## Current Hosted C++23 Representation
 
 | Nebula type | Current emitted C++ representation | C ABI export status |
@@ -23,6 +26,36 @@ backend-independent object representation.
 `String`, `struct`, `enum`, `Result`, callable types, `ref` parameters, generic functions, and
 exported `extern fn` declarations are rejected from the public C ABI by the current typechecker and
 library build path.
+
+## Experimental Primitive Freestanding Representation
+
+The exact request `--emit freestanding-object --target x86_64-unknown-none --panic trap
+--freestanding-toolchain-root <absolute-clang-root>` currently
+uses these bootstrap representations:
+
+| Nebula type | Emitted bootstrap representation | Enforced invariant |
+| --- | --- | --- |
+| `Int` | `__INT64_TYPE__` | size and alignment are both asserted as 8 bytes |
+| `Bool` | C++ `bool` | size is asserted as 1 byte |
+| `Void` | C++ `void` | valid only where no value representation is required |
+
+Only reachable scalar parameters, returns, and locals with `Stack x None` representation/ownership
+are admitted. `Float`, `String`, aggregates, enums, callables, generics, references, async, extern,
+runtime/builtin calls, heap/region ownership, and all other unapproved NIR forms fail closed before
+artifact compilation.
+
+The object is ELF64 little-endian `ET_REL` / `EM_X86_64`, has no program headers, and exports
+exactly one default-visible global function named `__nebula_uos_payload_entry_v1`; reachable Nebula
+functions are internal symbols. The payload entry calls the root package's unique zero-argument
+`@entry fn -> Void` and then traps. `_start` is reserved for the future protocol adapter and is
+rejected if exposed by the payload object.
+Checked integer add/subtract/multiply trap on overflow; division and remainder trap on zero and on
+the `INT64_MIN / -1` overflow case.
+
+These choices are not yet a public calling convention or stable aggregate ABI. There is no pointer,
+struct, enum, stack-frame, syscall, interrupt-frame, linker-section, or cross-version compatibility
+guarantee. Expanding the subset requires target-layout and calling-convention specifications before
+new representations become accepted evidence.
 
 ## Struct Layout
 
@@ -114,7 +147,7 @@ Before ABI/layout can support a real system profile, Nebula needs:
 - linker and object-file expectations
 - C ABI export behavior that does not depend on hosted C++ runtime facilities
 
-## Golden Tests To Implement Next
+## Current Hosted Golden Evidence
 
 Current hosted C++23 golden tests:
 
@@ -126,6 +159,8 @@ Current hosted C++23 golden tests:
 - C ABI unsafe type rejections: `CHK-194`, `CHK-222`, `CHK-223`, and `CHK-224`
 - C ABI non-shape rule rejections: `CHK-193` for `ref` parameters and `CHK-195` for generic
   exports
+- C ABI annotation/export-shape rejections: `CHK-191`, `CHK-192`, and `CHK-196`
+- Source-level evidence guard: `TST-339-abi-layout-evidence-contract`
 
 Future freestanding ABI tests:
 
@@ -137,3 +172,10 @@ Future freestanding ABI tests:
 - `ABI-106-system-panic-trap-no-unwind-symbols`
 - `ABI-107-system-object-backend-symbol-map`
 - `ABI-108-system-c-header-no-hosted-runtime-include`
+
+Current prerequisite object evidence, which is narrower than those future ABI gates:
+
+- `BLD-017-freestanding-object-elf-contract`
+- `BLD-018-freestanding-request-state-machine`
+- `BLD-019-freestanding-nir-allowlist`
+- `BLD-020-freestanding-transaction-and-toolchain`

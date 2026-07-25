@@ -4,7 +4,50 @@ description = "release control plane lease claim and complete paths are compare-
 
 [[steps]]
 kind = "shell"
-timeout = 240
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import build_service_binary, copy_example, fetch_workspace
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/release_control_plane_lease_concurrency')
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+build_service_binary(binary, root)
+print('release-control-plane-service-prebuilt')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-service-prebuilt"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import build_ctl_binary
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/release_control_plane_lease_concurrency')
+build_ctl_binary(binary, root, root / '.ctl-out')
+print('release-control-plane-ctl-prebuilt')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-ctl-prebuilt"]
+
+[[steps]]
+kind = "shell"
 run = """
 python3 - <<'PY'
 import concurrent.futures
@@ -18,11 +61,9 @@ from pathlib import Path
 repo_root = Path(os.environ["NEBULA_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "tests" / "lib"))
 from release_control_plane_workspace import (
-    copy_example,
-    fetch_workspace,
     require_success,
     run_ctl,
-    start_service,
+    start_prebuilt_service,
     terminate_process,
     wait_until_health_ok,
 )
@@ -36,9 +77,6 @@ writer_token = "writer-lease-token"
 reader_token = "reader-lease-token"
 worker_token = "worker-lease-token"
 
-copy_example(repo_root, root)
-fetch_workspace(binary, root)
-
 def post_json(port: int, path: str, token: str, payload: dict) -> tuple[int, dict]:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
@@ -51,7 +89,7 @@ def post_json(port: int, path: str, token: str, payload: dict) -> tuple[int, dic
         text = resp.read().decode("utf-8")
         try:
             parsed = json.loads(text) if text else {}
-        except Exception:
+        except json.JSONDecodeError:
             parsed = {"raw": text}
         return resp.status, parsed
     finally:
@@ -289,12 +327,25 @@ def run_lane(name: str, extra_env: dict[str, str]) -> None:
         "APP_WORKER_TOKEN": worker_token,
     }
     env.update(extra_env)
-    proc, stderr_lines, port = start_service(binary, root, env)
+    proc, service_output, port = start_prebuilt_service(
+        root / ".service-out" / "main.out",
+        env,
+    )
     try:
-        wait_until_health_ok(proc, stderr_lines, port)
-        require_success(run_ctl(binary, root, "control-plane-validate",
-                                "--url", f"http://127.0.0.1:{port}",
-                                out_dir=ctl_out), name + " prewarm ctl")
+        wait_until_health_ok(proc, service_output, port)
+        base_url = f"http://127.0.0.1:{port}"
+        require_success(
+            run_ctl(
+                binary,
+                root,
+                "control-plane-validate",
+                "--url",
+                base_url,
+                out_dir=ctl_out,
+                no_build=True,
+            ),
+            "prebuilt ctl control-plane validation",
+        )
         drain_existing_worker_leases(port)
         drain_existing_broker_messages(port)
         app_name = "lease-" + name + "-" + str(int(time.time() * 1000))
@@ -302,7 +353,7 @@ def run_lane(name: str, extra_env: dict[str, str]) -> None:
         assert_single_broker_claim_and_complete(port, app_name)
         assert_concurrent_dag_sibling_complete(port, app_name + "-dag")
     finally:
-        terminate_process(proc)
+        terminate_process(proc, service_output)
 
 run_lane("sqlite", {})
 

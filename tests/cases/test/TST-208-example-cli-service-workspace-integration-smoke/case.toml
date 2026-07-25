@@ -31,10 +31,10 @@ root = Path('work/example_cli_service_workspace_integration')
 ctl_out_dir = root / '.ctl-out'
 copy_example(repo_root, root)
 fetch_workspace(binary, root)
-proc, stderr_lines, port = start_service(binary, root)
+proc, service_output, port = start_service(binary, root)
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
-    wait_until_ready_status(proc, stderr_lines, port, 200, 'ready')
+    wait_until_health_ok(proc, service_output, port)
+    wait_until_ready_status(proc, service_output, port, 200, 'ready')
 
     health_status, health_payload = json_request('127.0.0.1', port, 'GET', '/healthz')
     ready_status, ready_payload = json_request('127.0.0.1', port, 'GET', '/readyz')
@@ -119,7 +119,7 @@ try:
 
     print('example-cli-service-workspace-integration-ok')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 PY
 """
 expect_rc = 0

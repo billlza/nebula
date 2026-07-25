@@ -1,12 +1,16 @@
 #include "codegen/cpp_backend.hpp"
 
+#include "codegen/symbol_names.hpp"
+
 #include "frontend/types.hpp"
 #include "nir/runtime_ops.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <sstream>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,32 +65,6 @@ static std::string escape_string(const std::string& s) {
   return out;
 }
 
-static std::string stable_symbol_hash(std::string_view text) {
-  std::uint64_t h = 1469598103934665603ULL;
-  for (unsigned char c : text) {
-    h ^= static_cast<std::uint64_t>(c);
-    h *= 1099511628211ULL;
-  }
-  std::ostringstream os;
-  os << std::hex << h;
-  return os.str();
-}
-
-static std::string sanitize_ident_piece(std::string_view text) {
-  std::string out;
-  out.reserve(text.size());
-  for (char ch : text) {
-    if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
-      out.push_back(ch);
-    } else {
-      out.push_back('_');
-    }
-  }
-  if (out.empty()) return "fn";
-  if (std::isdigit(static_cast<unsigned char>(out.front()))) out.insert(out.begin(), '_');
-  return out;
-}
-
 static const char* runtime_profile_name(RuntimeProfile profile) {
   switch (profile) {
   case RuntimeProfile::Hosted: return "hosted";
@@ -127,7 +105,8 @@ static void emit_panic_policy(Cpp& out, const EmitOptions& opt, const std::strin
 static std::string emitted_cpp_type_name_for_identity(std::string_view identity,
                                                       std::string_view fallback_name) {
   if (identity.empty()) return std::string(fallback_name);
-  return "__nebula_ty_" + stable_symbol_hash(identity) + "_" + sanitize_ident_piece(fallback_name);
+  return "__nebula_ty_" + stable_symbol_hash(identity) + "_" +
+         sanitize_cpp_identifier_piece(fallback_name);
 }
 
 static std::string emitted_cpp_type_name_for(const std::optional<nebula::frontend::QualifiedName>& name,
@@ -141,6 +120,9 @@ static std::string emitted_cpp_type_name_for(const nebula::frontend::QualifiedNa
 }
 
 static std::string cpp_type(const Ty& t);
+
+// Defined later; recursive enum variant payloads are stored boxed (shared_ptr).
+static bool is_boxed_variant_payload(const std::string& enum_id, const std::string& variant);
 
 static bool matches_std_type(const Ty& t, std::string_view module_name, std::string_view local_name) {
   return t.qualified_name.has_value() && t.qualified_name->package_name == "std" &&
@@ -278,6 +260,9 @@ static std::string cpp_type(const Ty& t) {
     }
     if (matches_std_type(t, "task", "Task") && t.type_args.size() == 1) {
       return task_cpp_type(t.type_args.front());
+    }
+    if (matches_std_type(t, "vec", "Vec") && t.type_args.size() == 1) {
+      return "nebula::rt::Vec<" + cpp_type(t.type_args.front()) + ">";
     }
     if (matches_std_type(t, "time", "Duration")) {
       return "nebula::rt::Duration";
@@ -464,28 +449,22 @@ static const StorageDecision* lookup_decision(const RepOwnerResult& rep_owner, c
 
 using FunctionSymbolMap = std::unordered_map<std::string, std::string>;
 
-static std::string emitted_cpp_name_for(const Function& fn) {
-  if (fn.is_extern) return fn.name;
-  const std::string identity = nebula::nir::function_identity(fn);
-  return "__nebula_fn_" + stable_symbol_hash(identity) + "_" + sanitize_ident_piece(fn.name);
-}
-
 static std::string c_abi_export_name_for(const Function& fn) {
   const auto& q = fn.qualified_name;
   std::string out = "nebula";
   std::string last_piece;
   if (!q.package_name.empty()) {
-    last_piece = sanitize_ident_piece(q.package_name);
+    last_piece = sanitize_cpp_identifier_piece(q.package_name);
     out += "_" + last_piece;
   }
   if (!q.module_name.empty()) {
-    const std::string module_piece = sanitize_ident_piece(q.module_name);
+    const std::string module_piece = sanitize_cpp_identifier_piece(q.module_name);
     if (module_piece != last_piece) {
       out += "_" + module_piece;
       last_piece = module_piece;
     }
   }
-  out += "_" + sanitize_ident_piece(fn.name);
+  out += "_" + sanitize_cpp_identifier_piece(fn.name);
   return out;
 }
 
@@ -738,7 +717,10 @@ static std::string emit_http_path_matches_exact_path(const EmitCtx& ctx,
 }
 
 static std::string match_variant_cpp_type(const Ty& subject_ty, const std::string& variant_name) {
-  return cpp_type(subject_ty) + "::" + variant_name;
+  // Used only as a type-template argument (std::get_if<...>). `typename` is
+  // required when the enum type is dependent (matching on a type parameter,
+  // e.g. List<T> inside a generic fn) and permitted otherwise in C++20+.
+  return "typename " + cpp_type(subject_ty) + "::" + variant_name;
 }
 
 static bool is_std_result_enum(const Ty& subject_ty) {
@@ -785,9 +767,16 @@ static std::string emit_match_enum_payload(const std::string& subject_name,
              (move_synthetic_try ? "result_err_move(" : "result_err_ref(") + subject_name + ")";
     }
   }
+  const std::string value_access =
+      emit_match_enum_variant_ptr("__nebula_enum", subject_ty, variant_name) + "->value";
+  // A boxed (recursive) payload is stored as shared_ptr; dereference to recover
+  // the payload value.
+  const std::string payload =
+      is_boxed_variant_payload(nebula::nir::type_identity(subject_ty), variant_name)
+          ? "*(" + value_access + ")"
+          : value_access;
   return "nebula::rt::project_value_ref(" + subject_name +
-         ", [&](auto&& __nebula_enum) -> decltype(auto) { return (" +
-         emit_match_enum_variant_ptr("__nebula_enum", subject_ty, variant_name) + "->value); })";
+         ", [&](auto&& __nebula_enum) -> decltype(auto) { return (" + payload + "); })";
 }
 
 static void collect_bytes_concat_terms(const Expr& expr, std::vector<const Expr*>& out) {
@@ -1011,6 +1000,19 @@ static std::string emit_heap_make(PrefixKind k, const EmitCtx& ctx, const std::s
   return os.str();
 }
 
+// A variant payload argument, wrapped in std::make_shared when the variant is
+// recursive (boxed). Construction happens in a function body where the payload
+// type is complete, so make_shared is valid here.
+static std::string emit_variant_payload_arg(const EmitCtx& ctx, const Ty& constructed_ty,
+                                            const Expr::Construct& construct, std::size_t i) {
+  std::string arg = emit_construct_arg_expr(ctx, *construct.args[i], construct.args, i);
+  if (construct.variant_name.has_value() &&
+      is_boxed_variant_payload(nebula::nir::type_identity(constructed_ty), *construct.variant_name)) {
+    arg = "std::make_shared<" + cpp_type(construct.args[i]->ty) + ">(" + arg + ")";
+  }
+  return arg;
+}
+
 static std::string emit_construct_call(const EmitCtx& ctx,
                                        const Ty& constructed_ty,
                                        const Expr::Construct& construct) {
@@ -1019,14 +1021,14 @@ static std::string emit_construct_call(const EmitCtx& ctx,
     return emit_construct_call(ctx, type_name, construct.args);
   }
   std::ostringstream os;
-  os << type_name << "(" << type_name << "::" << *construct.variant_name;
+  os << type_name << "(typename " << type_name << "::" << *construct.variant_name;
   if (construct.args.empty()) {
     os << "{}";
   } else {
     os << "{";
     for (std::size_t i = 0; i < construct.args.size(); ++i) {
       if (i) os << ", ";
-      os << emit_construct_arg_expr(ctx, *construct.args[i], construct.args, i);
+      os << emit_variant_payload_arg(ctx, constructed_ty, construct, i);
     }
     os << "}";
   }
@@ -1050,14 +1052,14 @@ static std::string emit_heap_make(PrefixKind k,
   case PrefixKind::Promote: maker = "std::make_unique"; break;
   }
   std::ostringstream os;
-  os << maker << "<" << type_name << ">(" << type_name << "::" << *construct.variant_name;
+  os << maker << "<" << type_name << ">(typename " << type_name << "::" << *construct.variant_name;
   if (construct.args.empty()) {
     os << "{}";
   } else {
     os << "{";
     for (std::size_t i = 0; i < construct.args.size(); ++i) {
       if (i) os << ", ";
-      os << emit_construct_arg_expr(ctx, *construct.args[i], construct.args, i);
+      os << emit_variant_payload_arg(ctx, constructed_ty, construct, i);
     }
     os << "}";
   }
@@ -1070,7 +1072,9 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
       [&](auto&& n) -> std::string {
         using N = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<N, Expr::IntLit>) {
-          return std::to_string(n.value);
+          // Emit with the exact Int type (std::int64_t) so generic argument
+          // deduction sees `Int`, not a platform int/long-long literal type.
+          return "static_cast<std::int64_t>(" + std::to_string(n.value) + ")";
         } else if constexpr (std::is_same_v<N, Expr::BoolLit>) {
           return n.value ? "true" : "false";
         } else if constexpr (std::is_same_v<N, Expr::FloatLit>) {
@@ -1281,12 +1285,17 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
                 os << "{";
                 for (std::size_t i = 0; i < n.args.size(); ++i) {
                   if (i) os << ", ";
-                  os << emit_expr(ctx, *n.args[i]);
+                  os << emit_construct_arg_expr(ctx, *n.args[i], n.args, i);
                 }
                 os << "}";
               }
             } else {
-              for (const auto& a : n.args) os << ", " << emit_expr(ctx, *a);
+              // Constructor arguments are by-value field initializers; emit them
+              // as values (a nested construct must not be region-allocated into a
+              // pointer here).
+              for (std::size_t i = 0; i < n.args.size(); ++i) {
+                os << ", " << emit_construct_arg_expr(ctx, *n.args[i], n.args, i);
+              }
             }
             os << ")";
             return os.str();
@@ -1342,12 +1351,19 @@ static std::string emit_expr(const EmitCtx& ctx, const Expr& e) {
                 os << "if (auto* " << variant_ptr << " = "
                    << emit_match_enum_variant_ptr(subject_name, n.subject->ty, arm.variant_name)
                    << ") { ";
+                // Boxed (recursive) payloads are stored as shared_ptr; deref to
+                // bind the payload value.
+                const std::string payload_value =
+                    is_boxed_variant_payload(nebula::nir::type_identity(n.subject->ty),
+                                             arm.variant_name)
+                        ? "(*" + variant_ptr + "->value)"
+                        : variant_ptr + "->value";
                 if (arm.payload_binding.has_value()) {
-                  os << "const auto& " << arm.payload_binding->name << " = " << variant_ptr << "->value; ";
+                  os << "const auto& " << arm.payload_binding->name << " = " << payload_value << "; ";
                 } else if (!arm.payload_struct_bindings.empty()) {
                   const std::string payload_name =
                       "__nebula_payload_" + std::to_string(ctx.temp_counter++);
-                  os << "const auto& " << payload_name << " = " << variant_ptr << "->value; ";
+                  os << "const auto& " << payload_name << " = " << payload_value << "; ";
                   for (const auto& field : arm.payload_struct_bindings) {
                     os << "const auto& " << field.binding.name << " = "
                        << emit_value_field_chain(payload_name, field.field_name) << "; ";
@@ -1659,6 +1675,14 @@ static bool sibling_construct_args_use_var(const std::vector<nebula::nir::ExprPt
 static std::string emit_construct_arg_expr(const EmitCtx& ctx, const Expr& e,
                                            const std::vector<nebula::nir::ExprPtr>& sibling_args,
                                            std::size_t sibling_index) {
+  // A nested construct passed as a constructor argument initializes a by-value
+  // field, so it must be a value temporary — not a region/heap allocation.
+  // emit_expr would region-allocate a bare construct inside a `region` block
+  // (yielding a pointer that does not match the value field), so emit the value
+  // form directly here.
+  if (const auto* nested = std::get_if<Expr::Construct>(&e.node)) {
+    return emit_construct_call(ctx, e.ty, *nested);
+  }
   const Expr::VarRef* movable = expr_last_use_movable_local_ref(ctx, e);
   if (movable != nullptr && !sibling_construct_args_use_var(sibling_args, sibling_index, movable->var)) {
     return "std::move(" + emit_expr(ctx, e) + ")";
@@ -1742,12 +1766,16 @@ static void emit_let(Cpp& out, EmitCtx& ctx, const Stmt::Let& st) {
           os << "{";
           for (std::size_t i = 0; i < c.args.size(); ++i) {
             if (i) os << ", ";
-            os << emit_expr(ctx, *c.args[i]);
+            os << emit_variant_payload_arg(ctx, st.value->ty, c, i);
           }
           os << "}";
         }
       } else {
-        for (const auto& a : c.args) os << ", " << emit_expr(ctx, *a);
+        // By-value field initializers: emit nested constructs as values rather
+        // than region-allocated pointers.
+        for (std::size_t i = 0; i < c.args.size(); ++i) {
+          os << ", " << emit_construct_arg_expr(ctx, *c.args[i], c.args, i);
+        }
       }
       os << ");";
       out.line(os.str());
@@ -1895,7 +1923,8 @@ static void emit_struct_def(Cpp& out, const StructDef& s) {
   }
   if (s.qualified_name.package_name == "std" &&
       (s.qualified_name.module_name == "task" || s.qualified_name.module_name == "time" ||
-       s.qualified_name.module_name == "bytes" || s.qualified_name.module_name == "net")) {
+       s.qualified_name.module_name == "bytes" || s.qualified_name.module_name == "net" ||
+       s.qualified_name.module_name == "vec")) {
     return;
   }
   if (s.qualified_name.package_name == "std" && s.qualified_name.module_name == "http" &&
@@ -1971,6 +2000,7 @@ static void emit_enum_def(Cpp& out, const EnumDef& e) {
     tmpl += ">";
     out.line(tmpl);
   }
+  const std::string enum_id = nebula::nir::defined_type_identity(e);
   out.line("struct " + cpp_name + " {");
   out.indent++;
   for (const auto& variant : e.variants) {
@@ -1979,8 +2009,16 @@ static void emit_enum_def(Cpp& out, const EnumDef& e) {
     out.line("struct " + variant.name + " {");
     out.indent++;
     if (variant.payload.kind != Ty::Kind::Void) {
-      out.line(payload_cpp + " value;");
-      out.line(variant.name + "(" + payload_cpp + " value_) : value(value_) {}");
+      if (is_boxed_variant_payload(enum_id, variant.name)) {
+        // Recursive payload: store boxed so the enum is a finite, complete type.
+        // The constructor takes the box directly; construction sites wrap the
+        // value with std::make_shared where the payload type is complete.
+        out.line("std::shared_ptr<" + payload_cpp + "> value;");
+        out.line(variant.name + "(std::shared_ptr<" + payload_cpp + "> value_) : value(std::move(value_)) {}");
+      } else {
+        out.line(payload_cpp + " value;");
+        out.line(variant.name + "(" + payload_cpp + " value_) : value(value_) {}");
+      }
     } else {
       out.line(variant.name + "() = default;");
     }
@@ -2000,6 +2038,166 @@ static void emit_enum_def(Cpp& out, const EnumDef& e) {
   }
   out.indent--;
   out.line("};");
+}
+
+// Recursive enum variant payloads are stored boxed (std::shared_ptr) to break
+// the otherwise-infinite by-value type cycle (e.g. List -> Cons(Cell) -> Cell
+// -> List). The set of boxed (enum, variant) payloads is computed once per
+// translation unit and consulted from the free emit helpers below.
+static std::string boxed_variant_key(const std::string& enum_id, const std::string& variant) {
+  return enum_id + "#" + variant;
+}
+
+static const std::unordered_set<std::string>* g_boxed_variant_payloads = nullptr;
+
+static bool is_boxed_variant_payload(const std::string& enum_id, const std::string& variant) {
+  return g_boxed_variant_payloads != nullptr &&
+         g_boxed_variant_payloads->count(boxed_variant_key(enum_id, variant)) != 0;
+}
+
+// A variant payload is boxed iff its type can transitively reach the enum it
+// belongs to through by-value containment — i.e. it participates in a type
+// cycle. Computed over the full (pre-boxing) containment graph.
+static std::unordered_set<std::string> compute_boxed_variant_payloads(const Program& p) {
+  std::unordered_map<std::string, std::unordered_set<std::string>> adj;
+  std::unordered_set<std::string> user_types;
+  for (const auto& it : p.items) {
+    if (std::holds_alternative<StructDef>(it.node)) {
+      const auto& s = std::get<StructDef>(it.node);
+      const std::string id = nebula::nir::defined_type_identity(s);
+      user_types.insert(id);
+      for (const auto& f : s.fields) {
+        std::string u = nebula::nir::type_identity(f.ty);
+        if (!u.empty()) adj[id].insert(std::move(u));
+      }
+    } else if (std::holds_alternative<EnumDef>(it.node)) {
+      const auto& e = std::get<EnumDef>(it.node);
+      const std::string id = nebula::nir::defined_type_identity(e);
+      user_types.insert(id);
+      for (const auto& v : e.variants) {
+        if (v.payload.kind == Ty::Kind::Void) continue;
+        std::string u = nebula::nir::type_identity(v.payload);
+        if (!u.empty()) adj[id].insert(std::move(u));
+      }
+    }
+  }
+
+  auto reaches = [&](const std::string& start, const std::string& target) {
+    std::unordered_set<std::string> seen;
+    std::vector<std::string> stack{start};
+    while (!stack.empty()) {
+      const std::string cur = stack.back();
+      stack.pop_back();
+      if (cur == target) return true;
+      if (!seen.insert(cur).second) continue;
+      auto it = adj.find(cur);
+      if (it == adj.end()) continue;
+      for (const auto& nx : it->second) stack.push_back(nx);
+    }
+    return false;
+  };
+
+  std::unordered_set<std::string> boxed;
+  for (const auto& it : p.items) {
+    if (!std::holds_alternative<EnumDef>(it.node)) continue;
+    const auto& e = std::get<EnumDef>(it.node);
+    const std::string id = nebula::nir::defined_type_identity(e);
+    for (const auto& v : e.variants) {
+      if (v.payload.kind == Ty::Kind::Void) continue;
+      const std::string payload_id = nebula::nir::type_identity(v.payload);
+      if (payload_id.empty() || user_types.count(payload_id) == 0) continue;
+      if (reaches(payload_id, id)) boxed.insert(boxed_variant_key(id, v.name));
+    }
+  }
+  return boxed;
+}
+
+// The C++ types a struct/enum contains BY VALUE (struct fields, enum variant
+// payloads). Used to order type definitions so that a type's by-value
+// dependencies are emitted before it. Boxed (pointer) payloads are not by-value
+// and are excluded so the cycle they break does not reappear in the ordering.
+static void collect_contained_type_identities(const StructDef& s,
+                                              std::unordered_set<std::string>& out) {
+  for (const auto& f : s.fields) {
+    std::string id = nebula::nir::type_identity(f.ty);
+    if (!id.empty()) out.insert(std::move(id));
+  }
+}
+
+static void collect_contained_type_identities(const EnumDef& e,
+                                              std::unordered_set<std::string>& out) {
+  const std::string enum_id = nebula::nir::defined_type_identity(e);
+  for (const auto& v : e.variants) {
+    if (v.payload.kind == Ty::Kind::Void) continue;
+    if (is_boxed_variant_payload(enum_id, v.name)) continue;
+    std::string id = nebula::nir::type_identity(v.payload);
+    if (!id.empty()) out.insert(std::move(id));
+  }
+}
+
+static std::string type_item_identity(const nebula::nir::Item& it) {
+  if (std::holds_alternative<StructDef>(it.node)) {
+    return nebula::nir::defined_type_identity(std::get<StructDef>(it.node));
+  }
+  return nebula::nir::defined_type_identity(std::get<EnumDef>(it.node));
+}
+
+// Order struct/enum definitions so a type's by-value dependencies are emitted
+// before it (C++ requires complete types for by-value members). Non-recursive
+// by-value containment is a DAG, so this resolves forward references; any
+// remaining cycle (a recursive type) is appended in source order.
+static std::vector<const nebula::nir::Item*> topo_sort_type_items(const Program& p) {
+  std::vector<const nebula::nir::Item*> items;
+  std::unordered_map<std::string, const nebula::nir::Item*> by_id;
+  for (const auto& it : p.items) {
+    if (std::holds_alternative<StructDef>(it.node) || std::holds_alternative<EnumDef>(it.node)) {
+      items.push_back(&it);
+      by_id[type_item_identity(it)] = &it;
+    }
+  }
+
+  std::unordered_map<std::string, std::unordered_set<std::string>> dependents; // U -> {T depends on U}
+  std::unordered_map<std::string, std::size_t> indeg;
+  for (const auto* it : items) indeg[type_item_identity(*it)] = 0;
+
+  for (const auto* it : items) {
+    const std::string id = type_item_identity(*it);
+    std::unordered_set<std::string> contained;
+    if (std::holds_alternative<StructDef>(it->node)) {
+      collect_contained_type_identities(std::get<StructDef>(it->node), contained);
+    } else {
+      collect_contained_type_identities(std::get<EnumDef>(it->node), contained);
+    }
+    for (const auto& u : contained) {
+      if (u == id || by_id.count(u) == 0) continue;
+      if (dependents[u].insert(id).second) indeg[id] += 1;
+    }
+  }
+
+  std::vector<std::string> q;
+  for (const auto* it : items) {
+    const std::string id = type_item_identity(*it);
+    if (indeg[id] == 0) q.push_back(id); // source order preserved for ties
+  }
+
+  std::vector<const nebula::nir::Item*> ordered;
+  ordered.reserve(items.size());
+  for (std::size_t qi = 0; qi < q.size(); ++qi) {
+    const std::string u = q[qi];
+    ordered.push_back(by_id[u]);
+    for (const auto& t : dependents[u]) {
+      if (--indeg[t] == 0) q.push_back(t);
+    }
+  }
+
+  if (ordered.size() != items.size()) {
+    std::unordered_set<std::string> seen;
+    for (const auto* it : ordered) seen.insert(type_item_identity(*it));
+    for (const auto* it : items) {
+      if (seen.insert(type_item_identity(*it)).second) ordered.push_back(it);
+    }
+  }
+  return ordered;
 }
 
 static void collect_calls_in_expr(const Expr& e, std::unordered_set<std::string>& out) {
@@ -2151,7 +2349,7 @@ static void emit_function(Cpp& out,
   }
   if (fn.is_extern) {
     std::ostringstream decl;
-    const std::string fn_name = emitted_cpp_name_for(fn);
+    const std::string fn_name = emitted_cpp_function_name(fn);
     decl << cpp_type(fn.ret) << " " << fn_name << "(";
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
       if (i) decl << ", ";
@@ -2173,7 +2371,7 @@ static void emit_function(Cpp& out,
   const std::string ret_cpp =
       (const_json_return != nullptr) ? ("const " + cpp_type(fn.ret) + "&")
                                      : function_return_cpp_type(fn, rep_owner, opt);
-  sig << "auto " << emitted_cpp_name_for(fn) << "(";
+  sig << "auto " << emitted_cpp_function_name(fn) << "(";
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
     const auto& p = fn.params[i];
@@ -2213,7 +2411,7 @@ static void emit_function_forward_decl(Cpp& out,
   }
   if (fn.is_extern) {
     std::ostringstream decl;
-    const std::string fn_name = emitted_cpp_name_for(fn);
+    const std::string fn_name = emitted_cpp_function_name(fn);
     decl << cpp_type(fn.ret) << " " << fn_name << "(";
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
       if (i) decl << ", ";
@@ -2227,7 +2425,7 @@ static void emit_function_forward_decl(Cpp& out,
   const std::string ret_cpp =
       (const_json_return_stmt(fn) != nullptr) ? ("const " + cpp_type(fn.ret) + "&")
                                               : function_return_cpp_type(fn, rep_owner, opt);
-  sig << "auto " << emitted_cpp_name_for(fn) << "(";
+  sig << "auto " << emitted_cpp_function_name(fn) << "(";
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
     const auto& p = fn.params[i];
@@ -2307,21 +2505,88 @@ static std::string make_header_guard(std::string_view header_stem) {
 
 } // namespace
 
+static void emit_type_forward_decl(Cpp& out, const std::vector<std::string>& type_params,
+                                   const std::string& cpp_name) {
+  if (!type_params.empty()) {
+    std::string tmpl = "template <";
+    for (std::size_t i = 0; i < type_params.size(); ++i) {
+      if (i) tmpl += ", ";
+      tmpl += "typename " + type_params[i];
+    }
+    tmpl += ">";
+    out.line(tmpl);
+  }
+  out.line("struct " + cpp_name + ";");
+}
+
+std::span<const std::string_view> hosted_cpp_translation_unit_includes() {
+  static constexpr std::array<std::string_view, 12U> includes = {
+    "#include \"runtime/nebula_runtime.hpp\"",
+    "#include <algorithm>",
+    "#include <chrono>",
+    "#include <cmath>",
+    "#include <cstdint>",
+    "#include <cstdlib>",
+    "#include <iostream>",
+    "#include <memory>",
+    "#include <string>",
+    "#include <utility>",
+    "#include <variant>",
+    "#include <vector>",
+  };
+  return includes;
+}
+
+// A boxed payload type is referenced through std::shared_ptr from the enum that
+// boxes it, and may be defined later, so it needs a forward declaration. Only
+// these cyclic types need one; non-recursive types are ordered by topo-sort.
+static void emit_boxed_payload_forward_decls(Cpp& out, const Program& p,
+                                             const std::unordered_set<std::string>& boxed) {
+  std::unordered_set<std::string> payload_ids;
+  for (const auto& it : p.items) {
+    if (!std::holds_alternative<EnumDef>(it.node)) continue;
+    const auto& e = std::get<EnumDef>(it.node);
+    const std::string enum_id = nebula::nir::defined_type_identity(e);
+    for (const auto& v : e.variants) {
+      if (v.payload.kind == Ty::Kind::Void) continue;
+      if (boxed.count(boxed_variant_key(enum_id, v.name)) == 0) continue;
+      std::string pid = nebula::nir::type_identity(v.payload);
+      if (!pid.empty()) payload_ids.insert(std::move(pid));
+    }
+  }
+  if (payload_ids.empty()) return;
+
+  bool emitted_any = false;
+  for (const auto& it : p.items) {
+    if (std::holds_alternative<StructDef>(it.node)) {
+      const auto& s = std::get<StructDef>(it.node);
+      if (payload_ids.count(nebula::nir::defined_type_identity(s)) == 0) continue;
+      emit_type_forward_decl(out, s.type_params, emitted_cpp_type_name_for(s));
+      emitted_any = true;
+    } else if (std::holds_alternative<EnumDef>(it.node)) {
+      const auto& e = std::get<EnumDef>(it.node);
+      if (payload_ids.count(nebula::nir::defined_type_identity(e)) == 0) continue;
+      emit_type_forward_decl(out, e.type_params, emitted_cpp_type_name_for(e));
+      emitted_any = true;
+    }
+  }
+  if (emitted_any) out.blank();
+}
+
 std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const EmitOptions& opt) {
   Cpp out;
 
-  out.line("#include \"runtime/nebula_runtime.hpp\"");
-  out.line("#include <algorithm>");
-  out.line("#include <chrono>");
-  out.line("#include <cmath>");
-  out.line("#include <cstdint>");
-  out.line("#include <cstdlib>");
-  out.line("#include <iostream>");
-  out.line("#include <memory>");
-  out.line("#include <string>");
-  out.line("#include <utility>");
-  out.line("#include <variant>");
-  out.line("#include <vector>");
+  // Recursive enum variant payloads are stored boxed to break by-value type
+  // cycles. The set is consulted by free emit helpers via a thread-local-free
+  // pointer (codegen is single-threaded); the guard restores it on exit.
+  const std::unordered_set<std::string> boxed_payloads = compute_boxed_variant_payloads(p);
+  g_boxed_variant_payloads = &boxed_payloads;
+  struct BoxedGuard {
+    ~BoxedGuard() { g_boxed_variant_payloads = nullptr; }
+  } boxed_guard;
+
+  for (const std::string_view include : hosted_cpp_translation_unit_includes())
+    out.line(std::string(include));
   out.blank();
 
   out.line("// nebula-codegen-profile runtime_profile=" +
@@ -2351,13 +2616,15 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
   out.line("}");
   out.blank();
 
-  // Types first
-  for (const auto& it : p.items) {
-    if (std::holds_alternative<StructDef>(it.node)) {
-      emit_struct_def(out, std::get<StructDef>(it.node));
+  // Forward-declare boxed (recursive) payload types, then emit definitions
+  // ordered so by-value dependencies are defined before dependents.
+  emit_boxed_payload_forward_decls(out, p, boxed_payloads);
+  for (const auto* it : topo_sort_type_items(p)) {
+    if (std::holds_alternative<StructDef>(it->node)) {
+      emit_struct_def(out, std::get<StructDef>(it->node));
       out.blank();
-    } else if (std::holds_alternative<EnumDef>(it.node)) {
-      emit_enum_def(out, std::get<EnumDef>(it.node));
+    } else if (std::holds_alternative<EnumDef>(it->node)) {
+      emit_enum_def(out, std::get<EnumDef>(it->node));
       out.blank();
     }
   }
@@ -2367,7 +2634,7 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
   FunctionSymbolMap function_symbols;
   function_symbols.reserve(ordered.size());
   for (const auto* fn : ordered) {
-    function_symbols.insert({nebula::nir::function_identity(*fn), emitted_cpp_name_for(*fn)});
+    function_symbols.insert({nebula::nir::function_identity(*fn), emitted_cpp_function_name(*fn)});
   }
   for (const auto* fn : ordered) {
     emit_function_forward_decl(out, rep_owner, opt, *fn);

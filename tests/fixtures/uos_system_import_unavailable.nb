@@ -1,0 +1,5 @@
+import system::boot
+
+fn main() -> Int {
+  return 0
+}

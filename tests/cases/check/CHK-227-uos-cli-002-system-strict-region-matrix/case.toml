@@ -1,0 +1,155 @@
+id = "CHK-227-uos-cli-002-system-strict-region-matrix"
+suite = "check"
+timeout = 60
+
+[[steps]]
+kind = "shell"
+run = '''
+"$NEBULA_BINARY" check "$NEBULA_TESTS_ROOT/fixtures/uos_cli_002_region_escape.nb" \
+  --diag-format json --dump-ownership
+'''
+expect_rc = 0
+expect_stdout_contains = [
+  "region escape; auto-promoted to heap unique",
+  "ok: check passed (with warnings)",
+]
+expect_stdout_regex = ["v[0-9]+ x -> rep=Heap owner=Unique region=-"]
+
+[[steps.expect_diag]]
+code = "NBL-R001"
+severity = "warning"
+stage = "build"
+category = "memory-safety"
+machine_reason = "return"
+machine_subreason = "direct-return"
+machine_owner = "heap-unique"
+machine_owner_reason = "single-owner-flow"
+
+[[steps.forbid_diag]]
+code = "NBL-R001"
+severity = "error"
+
+[[steps]]
+kind = "shell"
+run = '''
+"$NEBULA_BINARY" check "$NEBULA_TESTS_ROOT/fixtures/uos_cli_002_region_escape.nb" \
+  --target system --diag-format json
+'''
+expect_rc = 1
+expect_stdout_contains = ["region escape rejected in strict mode"]
+forbid_stdout_contains = ["auto-promoted"]
+
+[[steps.expect_diag]]
+code = "NBL-R001"
+severity = "error"
+stage = "build"
+category = "memory-safety"
+machine_reason = "return"
+machine_subreason = "direct-return"
+
+[[steps.forbid_diag]]
+code = "NBL-R001"
+severity = "warning"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "shell"
+run = '''
+"$NEBULA_BINARY" check "$NEBULA_TESTS_ROOT/fixtures/uos_cli_002_region_escape.nb" \
+  --target freestanding --diag-format json
+'''
+expect_rc = 1
+expect_stdout_contains = ["region escape rejected in strict mode"]
+forbid_stdout_contains = ["auto-promoted"]
+
+[[steps.expect_diag]]
+code = "NBL-R001"
+severity = "error"
+stage = "build"
+category = "memory-safety"
+machine_reason = "return"
+machine_subreason = "direct-return"
+
+[[steps.forbid_diag]]
+code = "NBL-R001"
+severity = "warning"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "shell"
+run = '''
+"$NEBULA_BINARY" check "$NEBULA_TESTS_ROOT/fixtures/uos_cli_002_region_escape.nb" \
+  --target x86_64-unknown-none --diag-format json
+'''
+expect_rc = 1
+expect_stdout_contains = ["region escape rejected in strict mode"]
+forbid_stdout_contains = ["auto-promoted"]
+
+[[steps.expect_diag]]
+code = "NBL-R001"
+severity = "error"
+stage = "build"
+category = "memory-safety"
+machine_reason = "return"
+machine_subreason = "direct-return"
+
+[[steps.forbid_diag]]
+code = "NBL-R001"
+severity = "warning"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "shell"
+run = '''
+"$NEBULA_BINARY" check "$NEBULA_TESTS_ROOT/fixtures/uos_cli_002_region_escape.nb" \
+  --profile system --diag-format json
+'''
+expect_rc = 1
+expect_stdout_contains = ["region escape rejected in strict mode"]
+forbid_stdout_contains = ["auto-promoted"]
+
+[[steps.expect_diag]]
+code = "NBL-R001"
+severity = "error"
+stage = "build"
+category = "memory-safety"
+machine_reason = "return"
+machine_subreason = "direct-return"
+
+[[steps.forbid_diag]]
+code = "NBL-R001"
+severity = "warning"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "shell"
+run = '''
+"$NEBULA_BINARY" check "$NEBULA_TESTS_ROOT/fixtures/uos_cli_002_region_escape.nb" \
+  --no-std --diag-format json
+'''
+expect_rc = 1
+expect_stdout_contains = ["region escape rejected in strict mode"]
+forbid_stdout_contains = ["auto-promoted"]
+
+[[steps.expect_diag]]
+code = "NBL-R001"
+severity = "error"
+stage = "build"
+category = "memory-safety"
+machine_reason = "return"
+machine_subreason = "direct-return"
+
+[[steps.forbid_diag]]
+code = "NBL-R001"
+severity = "warning"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"

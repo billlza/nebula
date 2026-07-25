@@ -1,0 +1,12 @@
+id = "RUN-083-generic-recursive-list"
+suite = "run"
+
+# A generic recursive type List<T> compiles and runs end-to-end: recursive enum
+# payload boxing in a template, type-argument inference for a bare zero-payload
+# variant (Nil), and matching on a type-parameter enum inside a generic fn.
+
+command = "run"
+source = "fixtures/generic_recursive_list.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["generic-list-ok"]

@@ -1,0 +1,26 @@
+fn checked_step(value: Int) -> Int {
+  return ((value * 2 + 4) / 2 - 1) % 100
+}
+
+fn bool_id(value: Bool) -> Bool {
+  return !value
+}
+
+// Unsupported types are permitted only when they are unreachable from @entry.
+fn hosted_only_unreachable() -> String {
+  return "not emitted"
+}
+
+@entry
+fn kernel_entry() -> Void {
+  let answer = checked_step(40)
+  let invalid = bool_id(true)
+  if invalid {
+    while true {
+    }
+  }
+  if answer != 41 {
+    while true {
+    }
+  }
+}

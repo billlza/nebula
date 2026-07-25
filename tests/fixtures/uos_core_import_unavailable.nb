@@ -1,0 +1,5 @@
+import core::result
+
+fn main() -> Int {
+  return 0
+}

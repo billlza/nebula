@@ -45,7 +45,7 @@ function Read-BoolEnv([string]$Name) {
     "false" { return $false }
     "no" { return $false }
     "off" { return $false }
-    default { throw "invalid boolean value for $Name: $raw" }
+    default { throw "invalid boolean value for ${Name}: $raw" }
   }
 }
 

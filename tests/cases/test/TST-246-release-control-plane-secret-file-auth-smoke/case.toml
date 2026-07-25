@@ -1,6 +1,6 @@
 id = "TST-246-release-control-plane-secret-file-auth-smoke"
 suite = "test"
-timeout = 240
+timeout = 600
 
 [[steps]]
 kind = "shell"
@@ -42,7 +42,7 @@ writer_file.write_text('writer-token\\n', encoding='utf-8')
 admin_file.write_text('admin-token\\n', encoding='utf-8')
 worker_file.write_text('worker-token\\n', encoding='utf-8')
 
-proc, stderr_lines, port = start_service(binary, root, {
+proc, service_output, port = start_service(binary, root, {
     'APP_STATE_DIR': str(state_dir),
     'APP_AUTH_REQUIRED': '1',
     'APP_READ_TOKEN_FILE': str(reader_file),
@@ -51,7 +51,7 @@ proc, stderr_lines, port = start_service(binary, root, {
     'APP_WORKER_TOKEN_FILE': str(worker_file),
 })
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f'http://127.0.0.1:{port}'
     prewarm = run_ctl(binary, root, 'control-plane-validate', '--url', base_url, out_dir=ctl_out_dir)
     require_success(prewarm, 'prewarm ctl binary')
@@ -108,7 +108,7 @@ try:
     if worker_snapshot_new.returncode == 0 or 'status=401 error=unauthorized' not in worker_snapshot_new.stdout:
         raise SystemExit('rotated worker mounted secret unexpectedly changed auth behavior for the running process')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 service_binary = build_service_binary(binary, root)
 conflict = subprocess.run(

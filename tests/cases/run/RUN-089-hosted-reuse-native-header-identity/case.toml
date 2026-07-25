@@ -1,0 +1,92 @@
+id = "RUN-089-hosted-reuse-native-header-identity"
+suite = "run"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/reuse-native-header"
+rm -rf "$root"
+mkdir -p "$root/src"
+cat >"$root/nebula.toml" <<'EOF'
+name = "reuse-native-header"
+entry = "src/main.nb"
+host_cxx = ["host.cpp"]
+EOF
+cat >"$root/src/main.nb" <<'EOF'
+extern fn host_answer() -> Int
+
+fn main() -> Void {
+  let answer = host_answer()
+  if answer == 41 {
+    print("41")
+  } else {
+    if answer == 42 {
+      print("42")
+    } else {
+      print("unexpected-native-answer")
+    }
+  }
+}
+EOF
+cat >"$root/answer.hpp" <<'EOF'
+#pragma once
+#include "answer_fragment"
+EOF
+cat >"$root/answer_fragment" <<'EOF'
+#define NEBULA_REUSE_ANSWER 41
+EOF
+cat >"$root/host.cpp" <<'EOF'
+#include <cstdint>
+#include "answer.hpp"
+
+std::int64_t host_answer() {
+  return NEBULA_REUSE_ANSWER;
+}
+EOF
+'''
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/reuse-native-header"
+args = ["--diag-format", "json", "--run-gate", "none", "-o", "work/reuse-native-header/app.out"]
+expect_rc = 0
+expect_stdout_contains = ["41"]
+must_exist = ["work/reuse-native-header/app.out", "work/reuse-native-header/app.out.nebmeta"]
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+python3 - <<'PY'
+from pathlib import Path
+
+header = Path("work/reuse-native-header/answer_fragment")
+before = header.read_bytes()
+after = before.replace(b" 41\n", b" 42\n")
+if after == before or len(after) != len(before):
+    raise SystemExit("header mutation fixture did not preserve size")
+header.write_bytes(after)
+PY
+'''
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/reuse-native-header"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "work/reuse-native-header/app.out"]
+expect_rc = 0
+expect_stdout_contains = ["42", "wrote: "]
+forbid_stdout_contains = ["NBL-CLI-REUSE"]
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "work/reuse-native-header"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "work/reuse-native-header/app.out"]
+expect_rc = 0
+expect_stdout_contains = ["42", "NBL-CLI-REUSE"]
+forbid_stdout_contains = ["wrote: "]

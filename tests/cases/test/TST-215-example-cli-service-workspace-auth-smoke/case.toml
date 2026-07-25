@@ -29,7 +29,7 @@ state_dir = root / 'state'
 ctl_out_dir = root / '.ctl-out'
 copy_example(repo_root, root)
 fetch_workspace(binary, root)
-proc, stderr_lines, port = start_service(
+proc, service_output, port = start_service(
     binary,
     root,
     {
@@ -41,7 +41,7 @@ proc, stderr_lines, port = start_service(
     },
 )
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f'http://127.0.0.1:{port}'
 
     prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
@@ -96,7 +96,7 @@ try:
 
     print('example-cli-service-workspace-auth-ok')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 PY
 """
 expect_rc = 0

@@ -1,0 +1,5 @@
+# The vendored TLS root bundle is hash-pinned (its SHA256 is verified by
+# scripts/sync_tls_root_bundle.py), so it must be byte-identical on every
+# platform. Disable end-of-line conversion so Windows checkouts (autocrlf)
+# do not rewrite LF->CRLF and change the digest.
+*.pem -text

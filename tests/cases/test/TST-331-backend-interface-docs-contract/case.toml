@@ -4,31 +4,111 @@ suite = "test"
 [[steps]]
 kind = "shell"
 run = '''
-set -eu
-test -f "$NEBULA_REPO_ROOT/codegen/backend.hpp"
-test -f "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-grep -F 'class Backend' "$NEBULA_REPO_ROOT/codegen/backend.hpp"
-grep -F 'const Backend& default_backend();' "$NEBULA_REPO_ROOT/codegen/backend.hpp"
-grep -F 'const Backend& default_backend() {' "$NEBULA_REPO_ROOT/codegen/cpp_backend.cpp"
-grep -F 'return cpp23_backend();' "$NEBULA_REPO_ROOT/codegen/cpp_backend.cpp"
-grep -F 'C++23 remains the default and only' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-grep -F 'production backend. There is no LLVM backend' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-grep -F 'Cranelift backend, direct object backend' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-if "$NEBULA_BINARY" --help | grep -F -- '--backend'; then
-  exit 1
-fi
-grep -F 'Parser:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-grep -F 'Typechecker:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-grep -F 'NIR/CFG:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-grep -F 'Codegen:' "$NEBULA_REPO_ROOT/spec/compiler_pipeline.md"
-deps="CMakeLists.txt"
-if [ -d "$NEBULA_REPO_ROOT/cmake" ]; then
-  deps="$deps cmake"
-fi
-cd "$NEBULA_REPO_ROOT"
-if rg -n 'find_package\((LLVM|Cranelift)|llvm-config|cranelift' $deps; then
-  exit 1
-fi
+python3 - <<'PY'
+import os
+import re
+import subprocess
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+backend_h = repo / "codegen" / "backend.hpp"
+cpp_backend = repo / "codegen" / "cpp_backend.cpp"
+compiler_pipeline = repo / "spec" / "compiler_pipeline.md"
+cli_sources = [repo / "cli" / "main.cpp", repo / "cli" / "build_run.cpp"]
+parse_cpp = repo / "cli" / "parse.cpp"
+
+for path in [backend_h, cpp_backend, compiler_pipeline, parse_cpp, *cli_sources]:
+    if not path.exists():
+        raise SystemExit(f"missing backend boundary source: {path.relative_to(repo)}")
+
+backend_text = backend_h.read_text(encoding="utf-8")
+for needle in [
+    "class Backend",
+    "virtual std::string emit_translation_unit",
+    "virtual std::vector<CAbiFunction> collect_c_abi_exports",
+    "virtual std::string emit_c_abi_header",
+    "const Backend& cpp23_backend();",
+    "const Backend& default_backend();",
+]:
+    if needle not in backend_text:
+        raise SystemExit(f"backend.hpp missing boundary declaration: {needle}")
+
+cpp_backend_text = cpp_backend.read_text(encoding="utf-8")
+if "const Backend& default_backend()" not in cpp_backend_text:
+    raise SystemExit("cpp_backend.cpp missing default_backend implementation")
+if not re.search(r"const Backend& default_backend\(\)\s*\{\s*return cpp23_backend\(\);\s*\}", cpp_backend_text):
+    raise SystemExit("default_backend() no longer delegates directly to cpp23_backend()")
+
+pipeline_text = compiler_pipeline.read_text(encoding="utf-8")
+for needle in [
+    "C++23 remains the default and only",
+    "production backend. There is no LLVM backend",
+    "Cranelift backend, direct object backend",
+    "use `default_backend()` at build, run cache-miss, test, and bench emission callsites",
+    "Parser:",
+    "Typechecker:",
+    "NIR/CFG:",
+    "Codegen:",
+]:
+    if needle not in pipeline_text:
+        raise SystemExit(f"compiler_pipeline.md missing backend contract text: {needle}")
+
+help_text = subprocess.check_output([os.environ["NEBULA_BINARY"], "--help"], text=True)
+if "--backend" in help_text:
+    raise SystemExit("CLI help unexpectedly exposes a backend selector")
+
+parse_text = parse_cpp.read_text(encoding="utf-8")
+if re.search(r'tok\s*==\s*"--backend"|--backend(?:=|\s+)', parse_text):
+    raise SystemExit("parse.cpp unexpectedly accepts a backend selector")
+
+cli_joined = "\n".join(path.read_text(encoding="utf-8") for path in cli_sources)
+for forbidden in [
+    "cpp23_backend(",
+    "emit_cpp23(",
+    "llvm_backend",
+    "cranelift_backend",
+    "object_backend",
+    "fallback_backend",
+]:
+    if forbidden in cli_joined:
+        raise SystemExit(f"CLI production path bypasses default backend boundary: {forbidden}")
+
+emission_sites = []
+for path in cli_sources:
+    text = path.read_text(encoding="utf-8")
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if "emit_translation_unit(" in line:
+            emission_sites.append((path.relative_to(repo).as_posix(), line_no, line.strip()))
+
+if len(emission_sites) < 7:
+    raise SystemExit(f"expected build/run/test/bench emission callsites, found {len(emission_sites)}")
+
+for rel, line_no, line in emission_sites:
+    if "default_backend().emit_translation_unit(" in line:
+        continue
+    if "backend.emit_translation_unit(" in line:
+        text = (repo / rel).read_text(encoding="utf-8")
+        backend_binding = re.compile(
+            r"\bconst\s+auto\s*&\s*backend\s*=\s*"
+            r"nebula::codegen::default_backend\(\)\s*;"
+        )
+        if backend_binding.search(text):
+            continue
+    raise SystemExit(f"{rel}:{line_no}: emission does not use default_backend(): {line}")
+
+dep_files = [repo / "CMakeLists.txt"]
+cmake_dir = repo / "cmake"
+if cmake_dir.exists():
+    dep_files.extend(sorted(cmake_dir.rglob("*")))
+for path in dep_files:
+    if path.is_dir():
+        continue
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if re.search(r"find_package\((LLVM|Cranelift)|llvm-config|cranelift", text, re.IGNORECASE):
+        raise SystemExit(f"backend dependency appeared in build config: {path.relative_to(repo)}")
+
+print("backend-interface-boundary-ok")
+PY
 '''
 expect_rc = 0
-expect_stdout_contains = ["class Backend", "C++23 remains the default and only"]
+expect_stdout_contains = ["backend-interface-boundary-ok"]

@@ -1,5 +1,7 @@
 #include "cli_shared.hpp"
+#include "host_process.hpp"
 #include "project.hpp"
+#include "tool_lookup.hpp"
 
 #include "json.hpp"
 #include "frontend/errors.hpp"
@@ -9,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
@@ -21,10 +22,8 @@
 #include <set>
 #include <sstream>
 #include <tuple>
-#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
-#include <sys/wait.h>
 
 namespace {
 
@@ -110,18 +109,19 @@ std::optional<fs::path> manifest_path_from_input(const fs::path& input) {
   return std::nullopt;
 }
 
+std::string environment_value_or_empty(const char *name) {
+  const char *value = std::getenv(name);
+  return value != nullptr ? value : "";
+}
+
 struct HostedRegistryPreviewOptions {
-  std::string server = std::getenv("NEBULA_REGISTRY_URL") != nullptr
-                           ? std::getenv("NEBULA_REGISTRY_URL")
-                           : "";
-  std::string token = std::getenv("NEBULA_REGISTRY_TOKEN") != nullptr
-                          ? std::getenv("NEBULA_REGISTRY_TOKEN")
-                          : "";
-  std::string timeout_seconds = std::getenv("NEBULA_REGISTRY_TIMEOUT_SECONDS") != nullptr
-                                    ? std::getenv("NEBULA_REGISTRY_TIMEOUT_SECONDS")
-                                    : "";
+  std::string server = environment_value_or_empty("NEBULA_REGISTRY_URL");
+  std::string token = environment_value_or_empty("NEBULA_REGISTRY_TOKEN");
+  std::string timeout_seconds = environment_value_or_empty("NEBULA_REGISTRY_TIMEOUT_SECONDS");
   std::string registry_root;
 };
+
+constexpr std::string_view kHostedRegistryTokenEnvironment = "NEBULA_REGISTRY_TOKEN";
 
 bool hosted_registry_enabled(const HostedRegistryPreviewOptions& options) {
   return !options.server.empty();
@@ -212,34 +212,15 @@ std::string hosted_registry_python() {
 #endif
 }
 
-int normalize_hosted_registry_wait_status(int status) {
-  if (WIFEXITED(status)) return WEXITSTATUS(status);
-  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-  return 1;
-}
-
-int run_hosted_registry_quiet_command(const std::vector<std::string>& args) {
-  if (args.empty()) return 1;
-
-  std::vector<char*> argv;
-  argv.reserve(args.size() + 1);
-  for (const auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
-  argv.push_back(nullptr);
-
-  const pid_t pid = fork();
-  if (pid < 0) return 1;
-
-  if (pid == 0) {
-    execvp(argv[0], argv.data());
-    _exit(127);
-  }
-
-  int status = 0;
-  while (waitpid(pid, &status, 0) < 0) {
-    if (errno == EINTR) continue;
-    return 1;
-  }
-  return normalize_hosted_registry_wait_status(status);
+int run_hosted_registry_quiet_command(const std::vector<std::string> &args, std::string &failure) {
+  nebula::cli::HostProcessRequest request;
+  if (!args.empty())
+    request.executable_path = args.front();
+  request.arguments = args;
+  request.stdout_mode = nebula::cli::HostProcessStreamMode::Discard;
+  request.stderr_mode = nebula::cli::HostProcessStreamMode::Discard;
+  const nebula::cli::HostProcessResult result = nebula::cli::run_host_process(request);
+  return nebula::cli::host_process_compatible_exit_code(result, failure);
 }
 
 bool hosted_registry_command_looks_like_path(std::string_view command) {
@@ -265,13 +246,16 @@ std::optional<fs::path> hosted_registry_python_executable(std::string& error) {
     return std::nullopt;
   }
 
+  std::string probe_failure;
   const int rc = run_hosted_registry_quiet_command(
-      {resolved->string(),
-       "-c",
-       "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"});
+    {resolved->string(), "-c",
+     "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"},
+    probe_failure);
   if (rc != 0) {
-    error = "hosted registry --registry-url workflows require Python 3.11+; current interpreter is too old or incompatible: "
-            + resolved->string();
+    error = "hosted registry --registry-url workflows require Python 3.11+; interpreter probe "
+            "failed";
+    if (!probe_failure.empty())
+      error += ": " + probe_failure;
     return std::nullopt;
   }
   return resolved;
@@ -302,16 +286,10 @@ int run_hosted_registry_fetch_preview(const CliOptions& opt,
     return 1;
   }
 
-  std::vector<std::string> cmd = {python->string(),
-                                  client->string(),
-                                  "--server",
-                                  options.server,
-                                  "--nebula-binary",
-                                  opt.self_executable.empty() ? "nebula" : opt.self_executable.string()};
-  if (!options.token.empty()) {
-    cmd.push_back("--token");
-    cmd.push_back(options.token);
-  }
+  std::vector<std::string> cmd = {
+    python->string(),  client->string(),
+    "--server",        options.server,
+    "--nebula-binary", opt.self_executable.empty() ? "nebula" : opt.self_executable.string()};
   if (!options.timeout_seconds.empty()) {
     cmd.push_back("--timeout-seconds");
     cmd.push_back(options.timeout_seconds);
@@ -322,7 +300,8 @@ int run_hosted_registry_fetch_preview(const CliOptions& opt,
     cmd.push_back("--registry-root");
     cmd.push_back(options.registry_root);
   }
-  return run_command(cmd);
+  return nebula::cli::run_host_process_with_environment_override(
+    cmd, {std::string(kHostedRegistryTokenEnvironment), options.token});
 }
 
 int run_hosted_registry_publish_preview(const CliOptions& opt,
@@ -340,16 +319,10 @@ int run_hosted_registry_publish_preview(const CliOptions& opt,
     return 1;
   }
 
-  std::vector<std::string> cmd = {python->string(),
-                                  client->string(),
-                                  "--server",
-                                  options.server,
-                                  "--nebula-binary",
-                                  opt.self_executable.empty() ? "nebula" : opt.self_executable.string()};
-  if (!options.token.empty()) {
-    cmd.push_back("--token");
-    cmd.push_back(options.token);
-  }
+  std::vector<std::string> cmd = {
+    python->string(),  client->string(),
+    "--server",        options.server,
+    "--nebula-binary", opt.self_executable.empty() ? "nebula" : opt.self_executable.string()};
   if (!options.timeout_seconds.empty()) {
     cmd.push_back("--timeout-seconds");
     cmd.push_back(options.timeout_seconds);
@@ -357,7 +330,8 @@ int run_hosted_registry_publish_preview(const CliOptions& opt,
   cmd.push_back("push");
   cmd.push_back(project.string());
   if (force) cmd.push_back("--force");
-  return run_command(cmd);
+  return nebula::cli::run_host_process_with_environment_override(
+    cmd, {std::string(kHostedRegistryTokenEnvironment), options.token});
 }
 
 std::string render_string_list(const std::vector<std::string>& values) {

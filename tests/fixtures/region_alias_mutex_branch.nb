@@ -1,0 +1,32 @@
+struct Foo {
+  v: Int
+}
+
+// Two aliases (`a`, `b`) of the same region object `x` escape only on mutually
+// exclusive branches, so at most one of them escapes on any feasible path --
+// Heap *Unique* would be sound here. The rep/owner pass is path-insensitive
+// (gather_escape_seeds collects both aliases into one flow-insensitive seed set),
+// so it conservatively infers Heap *Shared* (reason "alias-fanout").
+//
+// This test pins that conservative-but-sound behavior. It is intentionally NOT a
+// bug: relaxing it to Unique is unsound unless the analysis can also distinguish
+// the simultaneous-co-escape case (region_alias_construct_coescape), which is
+// indistinguishable from this one in every value the pass currently computes.
+fn pick(cond: Bool) -> Foo {
+  region R {
+    let x = Foo(1)
+    let a = x
+    let b = x
+    if cond {
+      return a
+    } else {
+      return b
+    }
+  }
+}
+
+fn main() -> Void {
+  let f = pick(true)
+  expect_eq(f.v, 1)
+  print("mutex-branch-ok")
+}

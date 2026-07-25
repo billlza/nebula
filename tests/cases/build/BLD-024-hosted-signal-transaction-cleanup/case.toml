@@ -1,0 +1,153 @@
+id = "BLD-024-hosted-signal-transaction-cleanup"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo hosted-signal-cleanup-ok-windows-skip
+    exit 0
+    ;;
+esac
+
+root="work/hosted-signal-transaction"
+rm -rf "$root"
+mkdir -p "$root"
+
+cat >"$root/main.nb" <<'EOF'
+fn main() -> Void {
+  print("before-signal")
+}
+EOF
+
+"$NEBULA_BINARY" build "$root/main.nb" -o "$root/app" \
+  --diag-format json >"$root/baseline.log" 2>&1
+
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+root = Path("work/hosted-signal-transaction")
+for name in ("app", "app.nebmeta"):
+    payload = (root / name).read_bytes()
+    (root / f"{name}.sha256").write_text(
+        hashlib.sha256(payload).hexdigest() + "\n", encoding="ascii"
+    )
+PY
+
+cat >"$root/main.nb" <<'EOF'
+fn main() -> Void {
+  print("after-signal")
+}
+EOF
+
+wrapper="$PWD/$root/slow-cxx"
+marker="$PWD/$root/compiler.pid"
+cat >"$wrapper" <<'EOF'
+#!/bin/sh
+set -eu
+is_compile=0
+is_probe=0
+for argument in "$@"; do
+  case "$argument" in
+    -c) is_compile=1 ;;
+    -fsyntax-only) is_probe=1 ;;
+  esac
+done
+if test "$is_compile" -eq 1 && test "$is_probe" -eq 0; then
+  printf '%s\n' "$$" >"$(dirname "$0")/compiler.pid"
+  sleep 30
+fi
+exec c++ "$@"
+EOF
+chmod 700 "$wrapper"
+
+python3 - "$NEBULA_BINARY" "$wrapper" "$marker" "$root" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+binary, wrapper, marker_text, root_text = sys.argv[1:]
+marker = Path(marker_text)
+root = Path(root_text)
+environment = os.environ.copy()
+environment["CXX"] = wrapper
+command = [
+    binary,
+    "build",
+    str(root / "main.nb"),
+    "-o",
+    str(root / "app"),
+    "--diag-format",
+    "json",
+]
+with (root / "interrupted.log").open("wb") as log:
+    process = subprocess.Popen(
+        command,
+        env=environment,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    deadline = time.monotonic() + 20.0
+    while not marker.exists() or marker.stat().st_size == 0:
+        if process.poll() is not None:
+            raise SystemExit(
+                "Nebula exited before the slow compiler reached its compile phase"
+            )
+        if time.monotonic() >= deadline:
+            process.kill()
+            process.wait()
+            raise SystemExit("slow compiler did not reach the interruptible compile phase")
+        time.sleep(0.05)
+
+    compiler_pid = int(marker.read_text(encoding="ascii").strip())
+    process.send_signal(signal.SIGINT)
+    try:
+        return_code = process.wait(timeout=15.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise SystemExit("Nebula did not finish interrupted-build cleanup")
+
+if return_code not in (130, -signal.SIGINT):
+    raise SystemExit(f"interrupted Nebula build returned {return_code}, expected SIGINT/130")
+try:
+    os.kill(compiler_pid, 0)
+except ProcessLookupError:
+    pass
+else:
+    raise SystemExit("host compiler survived the interrupted Nebula build")
+PY
+
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+root = Path("work/hosted-signal-transaction")
+for name in ("app", "app.nebmeta"):
+    expected = (root / f"{name}.sha256").read_text(encoding="ascii").strip()
+    actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    if actual != expected:
+        raise SystemExit(f"interrupted build changed published {name}")
+PY
+
+if find "$root" -maxdepth 1 \
+    \( -name '.nebula-txn-*' -o -name '.nebula-obj-*' -o -name '.nebula-exec-*' \) \
+    -print | grep -q .; then
+  echo "interrupted build left private transaction state behind" >&2
+  find "$root" -maxdepth 1 \
+    \( -name '.nebula-txn-*' -o -name '.nebula-obj-*' -o -name '.nebula-exec-*' \) \
+    -print >&2
+  exit 1
+fi
+
+echo hosted-signal-cleanup-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["hosted-signal-cleanup-ok"]

@@ -11,6 +11,12 @@
 #include <utility>
 #include <vector>
 
+#include "artifact_metadata.hpp"
+#include "build_types.hpp"
+#include "compiler_execution.hpp"
+#include "freestanding_toolchain.hpp"
+#include "hosted_native_dependencies.hpp"
+#include "hosted_toolchain.hpp"
 #include "frontend/diagnostic.hpp"
 #include "frontend/runtime_profile.hpp"
 #include "frontend/typed_ast.hpp"
@@ -20,7 +26,6 @@
 
 namespace fs = std::filesystem;
 
-enum class BuildMode : std::uint8_t { Debug, Release };
 enum class AnalysisProfile : std::uint8_t { Auto, Fast, Deep };
 enum class AnalysisTier : std::uint8_t { Auto, Basic, Smart, Deep };
 enum class DiagFormat : std::uint8_t { Text, Json };
@@ -34,15 +39,20 @@ enum class CrossStageReuseMode : std::uint8_t { Off, Safe };
 enum class DiskCacheMode : std::uint8_t { Off, On };
 enum class CompileFlavor : std::uint8_t { Normal, Test, Bench };
 enum class CacheReportFormat : std::uint8_t { Text, Json };
-enum class BuildArtifactKind : std::uint8_t { Executable, StaticLib, SharedLib };
+enum class BuildArtifactKind : std::uint8_t {
+  Executable,
+  StaticLib,
+  SharedLib,
+  FreestandingObject,
+};
 enum class NativeSourceLanguage : std::uint8_t { C, Cxx, Asm };
 
-using nebula::frontend::PanicPolicy;
-using nebula::frontend::RuntimeProfile;
 using nebula::frontend::effective_no_std;
 using nebula::frontend::effective_strict_region;
 using nebula::frontend::is_system_profile;
 using nebula::frontend::panic_policy_requires_host_unwind;
+using nebula::frontend::PanicPolicy;
+using nebula::frontend::RuntimeProfile;
 
 struct NativeSourceSpec {
   fs::path path;
@@ -93,18 +103,18 @@ inline constexpr std::uint32_t kWarnClassPerformance = 1u << 1;
 inline constexpr std::uint32_t kWarnClassBestPractice = 1u << 2;
 inline constexpr std::uint32_t kWarnClassSafety = 1u << 3;
 inline constexpr std::uint32_t kWarnClassGeneral = 1u << 4;
-inline constexpr std::uint32_t kWarnClassAll =
-    kWarnClassApi | kWarnClassPerformance | kWarnClassBestPractice | kWarnClassSafety |
-    kWarnClassGeneral;
+inline constexpr std::uint32_t kWarnClassAll = kWarnClassApi | kWarnClassPerformance |
+                                               kWarnClassBestPractice | kWarnClassSafety |
+                                               kWarnClassGeneral;
 
 inline constexpr std::uint32_t kGateDimApiLifecycle = 1u << 0;
 inline constexpr std::uint32_t kGateDimPerfRuntime = 1u << 1;
 inline constexpr std::uint32_t kGateDimBestPracticeDrift = 1u << 2;
 inline constexpr std::uint32_t kGateDimSafetyContract = 1u << 3;
 inline constexpr std::uint32_t kGateDimGeneral = 1u << 4;
-inline constexpr std::uint32_t kGateDimAll =
-    kGateDimApiLifecycle | kGateDimPerfRuntime | kGateDimBestPracticeDrift |
-    kGateDimSafetyContract | kGateDimGeneral;
+inline constexpr std::uint32_t kGateDimAll = kGateDimApiLifecycle | kGateDimPerfRuntime |
+                                             kGateDimBestPracticeDrift | kGateDimSafetyContract |
+                                             kGateDimGeneral;
 
 struct CliOptions {
   bool warnings_as_errors = false;
@@ -121,6 +131,7 @@ struct CliOptions {
   bool disk_cache_prune = false;
   bool no_std = false;
   bool runtime_profile_explicit = false;
+  bool hosted_runtime_profile_requested = false;
   bool target_explicit = false;
   bool panic_policy_explicit = false;
 
@@ -159,6 +170,7 @@ struct CliOptions {
   fs::path include_root;
   fs::path std_root;
   fs::path backend_sdk_root;
+  std::optional<fs::path> freestanding_toolchain_root;
   std::string include_root_error;
   std::string std_root_error;
   std::string backend_sdk_root_error;
@@ -194,13 +206,34 @@ struct CompilePipelineOptions {
   nebula::frontend::DiagnosticStage stage = nebula::frontend::DiagnosticStage::Build;
 };
 
+struct BuildInputFileIdentity {
+  fs::path path;
+  std::uintmax_t size = 0U;
+  std::string sha256;
+};
+
+struct BuildInputDirectoryIdentity {
+  fs::path path;
+  std::uint64_t entry_count = 0U;
+  std::string membership_sha256;
+};
+
 struct LoadedProjectInput {
   fs::path project_root;
+  fs::path root_manifest_path;
+  fs::path lockfile_path;
   fs::path manifest_path;
   fs::path entry_path;
   std::string project_name;
   std::string cache_key_source;
   std::vector<nebula::frontend::SourceFile> sources;
+  // Every exact file image hashed while deriving cache_key_source. Hosted builds
+  // re-hash these files after acquiring their output transaction so a change
+  // cannot be compiled under an earlier provenance key.
+  std::vector<BuildInputFileIdentity> build_input_identities;
+  // Hosted include lookup can change when a file or directory is added. These
+  // recursive membership identities complement file-content identities.
+  std::vector<BuildInputDirectoryIdentity> build_input_directory_identities;
   std::vector<fs::path> host_cxx_sources;
   NativeBuildInputs native_inputs;
 };
@@ -215,6 +248,7 @@ struct CompilePipelineResult {
   std::size_t analysis_elapsed_ms = 0;
   std::size_t fn_count = 0;
   std::size_t cfg_nodes = 0;
+  std::size_t dead_bindings_removed = 0;
   std::string cached_cpp;
   std::vector<nebula::frontend::Diagnostic> diags;
   std::shared_ptr<std::vector<nebula::frontend::TProgram>> typed_programs;
@@ -245,90 +279,109 @@ struct CompilePipelineCacheStats {
   std::size_t entries = 0;
 };
 
-struct ArtifactMeta {
-  std::string source_hash;
-  std::string mode;
-  std::string profile;
-  std::string artifact_kind = "executable";
-  int compiler_schema_version = 1;
-  int cache_schema_version = 2;
-  bool strict_region = false;
-  bool warnings_as_errors = false;
-  bool no_std = false;
-  std::string runtime_profile = "hosted";
-  std::string target = "host";
-  std::string panic_policy = "abort";
-};
-
 struct ArtifactLookupResult {
   std::optional<fs::path> artifact;
   std::vector<nebula::frontend::Diagnostic> diags;
 };
 
-void print_version(std::ostream& os);
+void print_version(std::ostream &os);
 void print_usage();
-bool parse_cli_options(const std::vector<std::string>& args,
-                       const std::string& cmd,
-                       CliOptions& opt,
-                       std::string& err);
+bool parse_cli_options(const std::vector<std::string> &args, const std::string &cmd,
+                       CliOptions &opt, std::string &err);
 
-std::optional<fs::path> find_executable_on_path(std::string_view command);
-int run_command(const std::vector<std::string>& args);
+int run_command(const std::vector<std::string> &args);
+struct CliCommandResult {
+  int exit_code = 1;
+  int interrupted_signal = 0;
+};
 AnalysisProfile resolve_profile(BuildMode mode, AnalysisProfile requested);
 AnalysisTier resolve_analysis_tier(BuildMode mode, AnalysisTier requested);
-bool should_include_lint_in_build_stage(const CliOptions& opt);
-CompilePipelineResult run_compile_pipeline(const std::string& src, const CompilePipelineOptions& opt);
-CompilePipelineResult run_compile_pipeline(const std::vector<nebula::frontend::SourceFile>& sources,
-                                           const CompilePipelineOptions& opt);
+bool should_include_lint_in_build_stage(const CliOptions &opt);
+CompilePipelineResult run_compile_pipeline(const std::string &src,
+                                           const CompilePipelineOptions &opt);
+CompilePipelineResult run_compile_pipeline(const std::vector<nebula::frontend::SourceFile> &sources,
+                                           const CompilePipelineOptions &opt);
 CompilePipelineCacheStats get_compile_pipeline_cache_stats();
-void emit_cache_report(const CliOptions& opt, const CompilePipelineCacheStats& before, std::ostream& os);
-void emit_diagnostics(const std::vector<nebula::frontend::Diagnostic>& diags, const CliOptions& opt,
-                      std::ostream& os);
-nebula::frontend::Diagnostic make_cli_diag(nebula::frontend::Severity severity,
-                                           std::string code,
+void emit_cache_report(const CliOptions &opt, const CompilePipelineCacheStats &before,
+                       std::ostream &os);
+void emit_diagnostics(const std::vector<nebula::frontend::Diagnostic> &diags, const CliOptions &opt,
+                      std::ostream &os);
+nebula::frontend::Diagnostic make_cli_diag(nebula::frontend::Severity severity, std::string code,
                                            std::string message,
                                            nebula::frontend::DiagnosticStage stage,
                                            nebula::frontend::DiagnosticRisk risk,
-                                           std::string cause = {},
-                                           std::string impact = {},
+                                           std::string cause = {}, std::string impact = {},
                                            std::vector<std::string> suggestions = {});
-int compile_cpp(const CliOptions& opt,
-                const fs::path& cpp_path,
-                const fs::path& out_bin,
-                CompileFlavor flavor,
-                const std::vector<fs::path>& extra_sources = {},
-                const NativeBuildInputs& native_inputs = {},
-                BuildArtifactKind artifact_kind = BuildArtifactKind::Executable);
-bool write_text_file(const fs::path& path, const std::string& text);
-fs::path cpp_output_path(const fs::path& source, const CliOptions& opt, const std::string& suffix);
-fs::path chosen_artifact_path(const fs::path& source, const CliOptions& opt);
-std::string hash_source(const std::string& src);
-ArtifactMeta expected_meta_for(const CliOptions& opt,
-                               AnalysisProfile resolved_profile,
-                               const std::string& source_hash);
-bool write_artifact_meta(const fs::path& artifact, const ArtifactMeta& m);
-std::optional<ArtifactMeta> read_artifact_meta(const fs::path& artifact);
-bool artifact_meta_matches(const ArtifactMeta& lhs, const ArtifactMeta& rhs);
-ArtifactLookupResult resolve_no_build_artifact(const fs::path& source_file, const CliOptions& opt);
-bool read_source(const fs::path& file,
-                 std::string& out,
-                 std::vector<nebula::frontend::Diagnostic>& diags,
-                 nebula::frontend::DiagnosticStage stage);
-int run_preflight_if_enabled(const fs::path& file,
-                             const std::vector<nebula::frontend::SourceFile>& sources,
-                             const std::string& cache_key_source,
-                             const CliOptions& opt);
+std::optional<nebula::frontend::Diagnostic> validate_runtime_include_root(const CliOptions &opt);
+int compile_cpp(
+  const CliOptions &opt, const nebula::cli::ResolvedHostedToolchain &toolchain,
+  const fs::path &cpp_path, const fs::path &out_bin, CompileFlavor flavor,
+  const std::vector<fs::path> &extra_sources = {}, const NativeBuildInputs &native_inputs = {},
+  BuildArtifactKind artifact_kind = BuildArtifactKind::Executable,
+  const fs::path &public_artifact_path = {},
+  const std::optional<fs::path> &import_library_path = std::nullopt,
+  nebula::cli::HostedNativeDependencySnapshot *compiled_native_dependencies = nullptr);
+std::vector<nebula::cli::HostedNativeDependencyUnit>
+plan_hosted_compile_units(const CliOptions &opt,
+                          const nebula::cli::ResolvedHostedToolchain &toolchain,
+                          CompileFlavor flavor, const fs::path &generated_source,
+                          const std::vector<fs::path> &extra_sources,
+                          const NativeBuildInputs &native_inputs, BuildArtifactKind artifact_kind);
+std::optional<nebula::cli::ResolvedHostedToolchain> resolve_hosted_toolchain_or_emit(
+  const CliOptions &opt, BuildArtifactKind artifact_kind, nebula::frontend::DiagnosticStage stage,
+  const nebula::cli::ResolvedHostedToolPaths *expected_paths = nullptr,
+  CompilerTerminationSignalScope *termination_signals = nullptr);
+std::optional<nebula::cli::ResolvedHostedToolPaths>
+resolve_hosted_tool_paths_or_emit(const CliOptions &opt, BuildArtifactKind artifact_kind,
+                                  nebula::frontend::DiagnosticStage stage);
+bool write_text_file(const fs::path &path, const std::string &text);
+fs::path cpp_output_path(const fs::path &source, const CliOptions &opt, const std::string &suffix);
+fs::path chosen_artifact_path(const fs::path &source, const CliOptions &opt);
+std::string hash_source(const std::string &src);
+struct ArtifactBuildKeyResult {
+  std::optional<ArtifactBuildKey> value;
+  std::string detail;
 
-int cmd_check(const fs::path& file, const CliOptions& opt);
-int cmd_build(const fs::path& file, const CliOptions& opt);
-int cmd_run(const fs::path& file, const CliOptions& opt);
-int cmd_test(const CliOptions& opt);
-int cmd_bench(const CliOptions& opt);
-int cmd_new(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_add(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_publish(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_fetch(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_update(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_fmt(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_explain(const std::vector<std::string>& args, const CliOptions& opt);
-int cmd_lsp(const std::vector<std::string>& args, const CliOptions& opt);
+  [[nodiscard]] bool ok() const noexcept { return value.has_value() && detail.empty(); }
+};
+struct RuntimeHeaderIdentityResult {
+  std::vector<BuildInputFileIdentity> identities;
+  std::optional<BuildInputDirectoryIdentity> directory_identity;
+  std::string directory_content_sha256;
+  std::string detail;
+
+  [[nodiscard]] bool ok() const noexcept {
+    return !identities.empty() && directory_identity.has_value() &&
+           !directory_content_sha256.empty() && detail.empty();
+  }
+};
+RuntimeHeaderIdentityResult resolve_runtime_header_identities(const CliOptions &opt);
+ArtifactBuildKeyResult derive_artifact_build_key_for(
+  const CliOptions &opt, AnalysisProfile resolved_profile, const std::string &source_graph_sha256,
+  const nebula::cli::ResolvedHostedToolchain &toolchain,
+  const RuntimeHeaderIdentityResult &runtime_headers,
+  const nebula::cli::HostedNativeDependencySnapshot &native_dependencies);
+ArtifactBuildKeyResult derive_freestanding_artifact_build_key_for(
+  const CliOptions &opt, AnalysisProfile resolved_profile, const std::string &source_graph_sha256,
+  const nebula::cli::ResolvedFreestandingToolchain &toolchain);
+ArtifactLookupResult resolve_no_build_artifact(const fs::path &source_file, const CliOptions &opt);
+bool read_source(const fs::path &file, std::string &out,
+                 std::vector<nebula::frontend::Diagnostic> &diags,
+                 nebula::frontend::DiagnosticStage stage);
+int run_preflight_if_enabled(const fs::path &file,
+                             const std::vector<nebula::frontend::SourceFile> &sources,
+                             const std::string &cache_key_source, const CliOptions &opt);
+
+int cmd_check(const fs::path &file, const CliOptions &opt);
+CliCommandResult cmd_build(const fs::path &file, const CliOptions &opt);
+int cmd_run(const fs::path &file, const CliOptions &opt);
+int cmd_test(const CliOptions &opt);
+int cmd_bench(const CliOptions &opt);
+int cmd_new(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_add(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_publish(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_fetch(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_update(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_fmt(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_explain(const std::vector<std::string> &args, const CliOptions &opt);
+int cmd_lsp(const std::vector<std::string> &args, const CliOptions &opt);

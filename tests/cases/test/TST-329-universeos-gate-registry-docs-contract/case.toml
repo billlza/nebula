@@ -5,7 +5,195 @@ suite = "test"
 kind = "shell"
 run = "python3 \"$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py\" --repo-root \"$NEBULA_REPO_ROOT\""
 expect_rc = 0
-expect_stdout_contains = ["universeos-gate-docs-ok: 10 gates"]
+expect_stdout_contains = ["universeos-gate-docs-ok: 15 gates"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_missing_support_matrix_mapping.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "spec/abi_layout.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "spec/library_layers.md",
+      "maps_to": ["UOS-DOC-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-DOC-001",
+      "title": "Language and specification gate",
+      "status": "experimental",
+      "owner_area": "docs/spec",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_support_matrix_mapping.md
+'''
+expect_rc = 1
+expect_stdout_contains = [
+  "source_doc_mapping missing docs/support_matrix.md",
+  "UOS-DOC-001: evidence_cases must be a non-empty list for status experimental",
+]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+known = "TST-280-universeos-convergence-docs-contract"
+unknown = "TST-999-missing-gate-evidence"
+if known not in source:
+    raise SystemExit(f"expected evidence id is absent: {known}")
+Path("work/bad_gate_registry_unknown_evidence.md").write_text(
+    source.replace(known, unknown, 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_unknown_evidence.md
+'''
+expect_rc = 1
+expect_stdout_contains = [
+  "UOS-DOC-001: evidence case does not exist: TST-999-missing-gate-evidence",
+]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_missing_library_layers_mapping.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "spec/abi_layout.md",
+      "maps_to": ["UOS-CORE-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-CORE-001",
+      "title": "No-std Smoke",
+      "status": "experimental",
+      "owner_area": "core/std-profile",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_library_layers_mapping.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["source_doc_mapping missing spec/library_layers.md"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+cat > work/bad_gate_registry_missing_abi_layout_mapping.md <<'MD'
+# Bad Gate Registry
+
+```json
+{
+  "gate_registry_version": 1,
+  "gate_naming": {
+    "UOS-DOC": "documentation and language/specification gates",
+    "UOS-CLI": "CLI and system-profile gates",
+    "UOS-ABI": "ABI and layout gates",
+    "UOS-CORE": "no-std and core-library gates",
+    "UOS-BE": "backend and object-code gates",
+    "UOS-BOOT": "boot and freestanding gates"
+  },
+  "source_doc_mapping": [
+    {
+      "path": "docs/system_profile.md",
+      "maps_to": ["UOS-ABI-001"],
+      "relationship": "negative test"
+    },
+    {
+      "path": "docs/universeos_convergence.md",
+      "maps_to": ["UOS-ABI-001"],
+      "relationship": "negative test"
+    }
+  ],
+  "gates": [
+    {
+      "id": "UOS-ABI-001",
+      "title": "Layout Golden Tests",
+      "status": "experimental",
+      "owner_area": "abi/codegen",
+      "required_evidence": ["evidence"],
+      "non_claim": "This test gate does not prove runtime support."
+    }
+  ]
+}
+```
+MD
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_abi_layout_mapping.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["source_doc_mapping missing spec/abi_layout.md"]
 
 [[steps]]
 kind = "shell"
@@ -158,7 +346,7 @@ cat > work/bad_gate_registry_path.md <<'MD'
 
 ```json
 {
-  "gate_registry_version": 2,
+  "gate_registry_version": 3,
   "gate_naming": {
     "UOS-DOC": "documentation and language/specification gates",
     "UOS-CLI": "CLI and system-profile gates",
@@ -199,4 +387,187 @@ MD
 python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_path.md
 '''
 expect_rc = 1
-expect_stdout_contains = ["gate_registry_version must be integer 1", "title is required", "path must be a safe repo-relative docs/spec/rfcs path"]
+expect_stdout_contains = ["gate_registry_version must be integer 2", "title is required", "path must be a safe repo-relative docs/spec/rfcs path"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+needle = '"depends_on": [],'
+if source.count(needle) != 1:
+    raise SystemExit(f"expected one root dependency declaration, found {source.count(needle)}")
+Path("work/bad_gate_registry_unknown_dependency.md").write_text(
+    source.replace(needle, '"depends_on": ["UOS-DOC-999"],', 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_unknown_dependency.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["UOS-DOC-001: depends_on references unknown gate UOS-DOC-999"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+needle = '"depends_on": [],'
+Path("work/bad_gate_registry_self_dependency.md").write_text(
+    source.replace(needle, '"depends_on": ["UOS-DOC-001"],', 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_self_dependency.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["UOS-DOC-001: gate cannot depend on itself"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+needle = '"depends_on": ["UOS-DOC-001"],'
+if source.count(needle) < 1:
+    raise SystemExit("expected a documentation dependency")
+Path("work/bad_gate_registry_duplicate_dependency.md").write_text(
+    source.replace(
+        needle,
+        '"depends_on": ["UOS-DOC-001", "UOS-DOC-001"],',
+        1,
+    ),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_duplicate_dependency.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["UOS-CLI-001: duplicate dependency UOS-DOC-001"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+needle = '"depends_on": [],'
+Path("work/bad_gate_registry_cycle.md").write_text(
+    source.replace(needle, '"depends_on": ["UOS-CLI-001"],', 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_cycle.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["dependency cycle detected: UOS-DOC-001 -> UOS-CLI-001 -> UOS-DOC-001"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+needle = '"status": "experimental",'
+if source.count(needle) < 1:
+    raise SystemExit("expected an experimental root gate")
+Path("work/bad_gate_registry_status_rank.md").write_text(
+    source.replace(needle, '"status": "planned",', 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_status_rank.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["UOS-CLI-001: status experimental outranks dependency UOS-DOC-001 status planned"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+source = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+needle = '      "depends_on": [],\n'
+if source.count(needle) != 1:
+    raise SystemExit(f"expected one root dependency declaration, found {source.count(needle)}")
+Path("work/bad_gate_registry_missing_dependencies.md").write_text(
+    source.replace(needle, "", 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root "$NEBULA_REPO_ROOT" --registry work/bad_gate_registry_missing_dependencies.md
+'''
+expect_rc = 1
+expect_stdout_contains = ["UOS-DOC-001: depends_on must be a list"]
+
+[[steps]]
+kind = "shell"
+run = '''
+mkdir -p work/support-matrix-repo/tests
+cp -R "$NEBULA_REPO_ROOT/docs" work/support-matrix-repo/docs
+cp -R "$NEBULA_REPO_ROOT/spec" work/support-matrix-repo/spec
+cp -R "$NEBULA_REPO_ROOT/rfcs" work/support-matrix-repo/rfcs
+cp -R "$NEBULA_REPO_ROOT/tests/cases" work/support-matrix-repo/tests/cases
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path("work/support-matrix-repo/docs/support_matrix.md")
+source = path.read_text(encoding="utf-8")
+row = "| `UOS-BE-002` | `planned` | future-only, not supported; no direct production backend or reproducible independent compiler bootstrap |\n"
+if source.count(row) != 1:
+    raise SystemExit(f"expected one support row, found {source.count(row)}")
+path.write_text(source.replace(row, "", 1), encoding="utf-8")
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root work/support-matrix-repo
+'''
+expect_rc = 1
+expect_stdout_contains = ["registry lists UOS-BE-002 but docs/support_matrix.md does not"]
+
+[[steps]]
+kind = "shell"
+run = '''
+cp "$NEBULA_REPO_ROOT/docs/support_matrix.md" work/support-matrix-repo/docs/support_matrix.md
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path("work/support-matrix-repo/docs/universeos/gates.md")
+source = path.read_text(encoding="utf-8")
+needle = "Depends on: `UOS-ABI-002`, `UOS-BE-001`."
+if source.count(needle) != 1:
+    raise SystemExit(f"expected one backend dependency declaration, found {source.count(needle)}")
+path.write_text(
+    source.replace(needle, "Depends on: `UOS-BE-001`.", 1),
+    encoding="utf-8",
+)
+PY
+python3 "$NEBULA_REPO_ROOT/scripts/check_universeos_gate_docs.py" --repo-root work/support-matrix-repo
+'''
+expect_rc = 1
+expect_stdout_contains = ["docs/universeos/gates.md dependencies for UOS-BE-002 do not match registry"]

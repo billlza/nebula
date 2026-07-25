@@ -1,0 +1,75 @@
+id = "CHK-228-uos-library-layer-imports-unavailable"
+suite = "check"
+timeout = 60
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/uos_core_import_unavailable.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["package import alias not found: core"]
+forbid_stdout_contains = ["ok: check passed"]
+
+[[steps.expect_diag]]
+code = "NBL-CLI-PKG-IMPORT"
+severity = "error"
+stage = "build"
+category = "cli"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/uos_system_import_unavailable.nb"
+args = ["--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["package import alias not found: system"]
+forbid_stdout_contains = ["ok: check passed"]
+
+[[steps.expect_diag]]
+code = "NBL-CLI-PKG-IMPORT"
+severity = "error"
+stage = "build"
+category = "cli"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/uos_core_import_unavailable.nb"
+args = ["--target", "system", "--no-std", "--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["package import alias not found: core"]
+forbid_stdout_contains = ["ok: check passed"]
+
+[[steps.expect_diag]]
+code = "NBL-CLI-PKG-IMPORT"
+severity = "error"
+stage = "build"
+category = "cli"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+
+[[steps]]
+kind = "nebula"
+command = "check"
+source = "fixtures/uos_system_import_unavailable.nb"
+args = ["--target", "system", "--no-std", "--diag-format", "json"]
+expect_rc = 1
+expect_stdout_contains = ["package import alias not found: system"]
+forbid_stdout_contains = ["ok: check passed"]
+
+[[steps.expect_diag]]
+code = "NBL-CLI-PKG-IMPORT"
+severity = "error"
+stage = "build"
+category = "cli"
+
+[[steps.forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"

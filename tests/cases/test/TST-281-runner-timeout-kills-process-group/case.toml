@@ -3,40 +3,158 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-timeout = 1
+timeout = 5
 expect_rc = 124
-run = '''
-python3 - <<'PY'
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-marker = Path('work/timeout-leak-marker.txt')
-marker.parent.mkdir(parents=True, exist_ok=True)
-if marker.exists():
-    marker.unlink()
-
-script = "import time; from pathlib import Path; time.sleep(3); Path('work/timeout-leak-marker.txt').write_text('leaked', encoding='utf-8')"
-subprocess.Popen([sys.executable, '-c', script])
-print('timeout-cleanup-child-started', flush=True)
-time.sleep(30)
-PY
-'''
-expect_stdout_contains = ["[nebula-test-timeout] command timed out after 1s"]
+run = "python3 fixtures/runner_process_tree_probe.py timeout-start"
+expect_stdout_contains = [
+  "timeout-cleanup-child-started",
+  "[nebula-test-timeout] command timed out after 5s",
+]
 
 [[steps]]
 kind = "shell"
-run = '''
-python3 - <<'PY'
-import time
-from pathlib import Path
-
-marker = Path('work/timeout-leak-marker.txt')
-time.sleep(4)
-if marker.exists():
-    raise SystemExit('timeout child survived process-group termination')
-print('timeout-cleanup-ok')
-PY
-'''
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py timeout-verify"
 expect_stdout_contains = ["timeout-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 5
+expect_rc = 124
+run = "python3 fixtures/runner_process_tree_probe.py nested-session-timeout-start"
+expect_stdout_contains = [
+  "nested-session-cleanup-child-started",
+  "[nebula-test-timeout] command timed out after 5s",
+]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py nested-session-timeout-verify"
+expect_stdout_contains = ["nested-session-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py nested-session-success-start"
+expect_stdout_contains = [
+  "nested-session-success-cleanup-child-started",
+  "[nebula-test-cleanup] sealed",
+]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py nested-session-success-verify"
+expect_stdout_contains = ["nested-session-success-detached-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+expect_rc = 7
+run = "python3 fixtures/runner_process_tree_probe.py nested-session-nonzero-start"
+expect_stdout_contains = [
+  "nested-session-nonzero-cleanup-child-started",
+  "[nebula-test-cleanup] sealed",
+]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py nested-session-nonzero-verify"
+expect_stdout_contains = ["nested-session-nonzero-detached-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 20
+run = "python3 fixtures/runner_process_tree_probe.py immediate-detached-oracle"
+expect_stdout_contains = ["immediate-detached-exit-containment-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 20
+run = "python3 fixtures/runner_process_tree_probe.py native-anchor-oracle"
+expect_stdout_contains = ["native-apple-anchor-containment-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 20
+run = "python3 fixtures/runner_process_tree_probe.py long-lived-immediate-detached-oracle"
+expect_stdout_contains = ["long-lived-immediate-detached-containment-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 20
+run = "python3 fixtures/runner_process_tree_probe.py long-lived-retry-oracle"
+expect_stdout_contains = ["long-lived-containment-retry-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 20
+run = "python3 fixtures/runner_process_tree_probe.py sigterm-late-spawn-oracle"
+expect_stdout_contains = ["sigterm-late-spawn-containment-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py pid-reuse-guard"
+expect_stdout_contains = ["pid-reuse-guard-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 5
+expect_rc = 124
+run = "python3 fixtures/runner_process_tree_probe.py service-timeout-start"
+expect_stdout_contains = [
+  "service-timeout-cleanup-child-started",
+  "[nebula-test-timeout] command timed out after 5s",
+]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py service-timeout-verify"
+expect_stdout_contains = ["service-timeout-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py success-start"
+expect_stdout_contains = [
+  "success-cleanup-child-started",
+  "[nebula-test-cleanup] sealed",
+]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py success-verify"
+expect_stdout_contains = ["success-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+expect_rc = 7
+run = "python3 fixtures/runner_process_tree_probe.py nonzero-start"
+expect_stdout_contains = [
+  "nonzero-cleanup-child-started",
+  "[nebula-test-cleanup] sealed",
+]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py nonzero-verify"
+expect_stdout_contains = ["nonzero-cleanup-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py structured-infrastructure-failure"
+expect_stdout_contains = ["structured-infrastructure-failure-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 10
+run = "python3 fixtures/runner_process_tree_probe.py windows-shell-adapter"
+expect_stdout_contains = ["windows-shell-adapter-ok"]

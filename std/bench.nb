@@ -1,0 +1,9 @@
+module bench
+
+// black_box(x) is an optimization barrier for benchmarks: it forces the value
+// `x` to be materialized and treated as used, so neither Nebula's dead-code
+// elimination nor the C++ optimizer can delete the work that produced it.
+// Codegen lowers this to an inline-assembly barrier in the runtime; the body
+// here is only a declaration for type checking and is never emitted.
+fn black_box<T>(x: T) -> Void {
+}

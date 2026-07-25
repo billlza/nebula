@@ -188,6 +188,10 @@ private:
   bool in_mapped_method_fn_ = false;
   bool mapped_method_self_is_ref_ = false;
   bool suppress_borrow_read_checks_ = false;
+  // When set, diagnostics are dropped — used for speculative "probe" typechecks
+  // (e.g. inferring generic type arguments) whose results are re-checked, with
+  // real diagnostics, in a subsequent pass.
+  bool suppress_diags_ = false;
   bool in_async_context_ = false;
   bool current_async_fn_ = false;
   bool current_fn_has_ref_param_ = false;
@@ -215,6 +219,7 @@ private:
   enum class BorrowAccessKind : std::uint8_t { Read, Write, RefBorrow };
 
   void add_diag(Severity sev, std::string code, std::string msg, Span span) {
+    if (suppress_diags_) return;
     Diagnostic d;
     d.severity = sev;
     d.code = std::move(code);
@@ -1185,6 +1190,24 @@ private:
                                              matched->variant_index,
                                              std::move(args)};
                 return out;
+              }
+            }
+            // Empty generic construction: take the type arguments from the
+            // expected type (e.g. `Vec()` whose element type is fixed by
+            // `-> Vec<Int>`). Without this the constructor cannot infer its type
+            // arguments and errors. Restricted to the no-argument case so no
+            // argument diagnostics are suppressed; the probe only hides the
+            // would-be "cannot infer type arguments" error.
+            if (n.args.empty() && !expected->type_args.empty() &&
+                (expected->kind == Ty::Kind::Struct || expected->kind == Ty::Kind::Enum)) {
+              const bool prev_suppress = suppress_diags_;
+              suppress_diags_ = true;
+              auto probe = typecheck_expr(e);
+              suppress_diags_ = prev_suppress;
+              if (std::holds_alternative<TExpr::Construct>(probe->node) &&
+                  probe->ty.kind == expected->kind && probe->ty.name == expected->name) {
+                probe->ty = *expected;
+                return probe;
               }
             }
             return typecheck_expr(e);
@@ -3491,8 +3514,14 @@ private:
 
             const std::string temp_name = fresh_synthetic_name("__nebula_try_");
             const BindingId temp_binding_id = fresh_binding_id();
+            // Read inner.value->ty into a local BEFORE moving inner.value: the
+            // argument evaluation order is unsequenced, so passing both
+            // `inner.value->ty` and `std::move(inner.value)` to one call lets a
+            // right-to-left compiler (GCC) null out the unique_ptr before the
+            // type read, dereferencing null. Sequencing the read fixes it.
+            Ty inner_value_ty = inner.value->ty;
             result.prefix.push_back(
-                make_let_stmt(temp_name, inner.value->ty, std::move(inner.value), span, temp_binding_id));
+                make_let_stmt(temp_name, inner_value_ty, std::move(inner.value), span, temp_binding_id));
 
             TBlock then_body;
             then_body.span = span;
@@ -4267,11 +4296,19 @@ private:
             std::unordered_map<std::string, Ty> inferred;
             if (!sig.type_params.empty()) {
               const std::unordered_set<std::string> type_param_set(sig.type_params.begin(), sig.type_params.end());
+              // Speculative probe to infer type arguments; an argument that
+              // cannot stand alone (e.g. a bare zero-payload variant like `Nil`)
+              // contributes nothing here and is resolved in the real pass below
+              // against its instantiated parameter type — so probe diagnostics
+              // are suppressed.
               const std::size_t infer_count = std::min(n.args.size(), sig.params.size());
+              const bool prev_suppress = suppress_diags_;
+              suppress_diags_ = true;
               for (std::size_t i = 0; i < infer_count; ++i) {
                 auto probe = typecheck_expr(*n.args[i]);
                 (void)infer_type_args(sig.params[i], probe->ty, type_param_set, inferred);
               }
+              suppress_diags_ = prev_suppress;
               if (!all_type_params_inferred(sig.type_params, inferred)) {
                 error("NBL-T123", "cannot infer type arguments for function: " + n.callee, e.span);
               }

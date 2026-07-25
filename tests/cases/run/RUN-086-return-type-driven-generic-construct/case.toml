@@ -1,0 +1,13 @@
+id = "RUN-086-return-type-driven-generic-construct"
+suite = "run"
+
+# Return-type-driven generic construction: an empty generic constructor (no
+# arguments to infer from) takes its type arguments from the expected type, e.g.
+# `fn f() -> Holder<Int> { return Holder() }`. Previously this failed with
+# "cannot infer type arguments for constructor".
+
+command = "run"
+source = "fixtures/generic_empty_construct.nb"
+args = ["--run-gate", "none"]
+expect_rc = 0
+expect_stdout_contains = ["empty-generic-ok"]

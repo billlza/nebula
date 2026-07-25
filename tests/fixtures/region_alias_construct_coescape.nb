@@ -1,0 +1,31 @@
+struct Foo {
+  v: Int
+}
+struct Pair {
+  fst: Foo
+  snd: Foo
+}
+
+// Two aliases (`a`, `b`) of the same region object `x` are SIMULTANEOUSLY live
+// inside the returned Pair, so `x` must be promoted to Heap *Shared*. Inferring
+// Unique here would emit two independent owners of one object -> double free.
+//
+// Soundness guard for the alias-fanout analysis: this case is byte-identical in
+// every datum the rep/owner pass computes to the mutually-exclusive-branch case
+// (region_alias_mutex_branch), yet this one MUST stay Shared. Any future attempt
+// to relax alias-fanout to Unique for the mutually-exclusive case must keep this
+// one Shared, or it reintroduces a use-after-free / double-free.
+fn coescape() -> Pair {
+  region R {
+    let x = Foo(1)
+    let a = x
+    let b = x
+    return Pair(a, b)
+  }
+}
+
+fn main() -> Void {
+  let p = coescape()
+  expect_eq(p.fst.v, 1)
+  print("coescape-ok")
+}

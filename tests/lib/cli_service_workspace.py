@@ -9,7 +9,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from service_probe import fail_with_output, wait_for_listener_bound
+from process_containment import LongLivedProcess
+from service_probe import (
+    ServiceProbeOutput,
+    fail_with_output,
+    start_process as start_captured_process,
+    terminate_process as terminate_captured_process,
+    wait_for_listener_bound,
+)
 
 
 def print_completed(result: subprocess.CompletedProcess[str]) -> None:
@@ -24,7 +31,10 @@ def require_success(result: subprocess.CompletedProcess[str], context: str) -> N
 
 
 def copy_example(repo_root: Path, dest: Path) -> None:
-    shutil.rmtree(dest, ignore_errors=True)
+    if dest.is_symlink():
+        dest.unlink()
+    elif dest.exists():
+        shutil.rmtree(dest)
     shutil.copytree(repo_root / "examples" / "cli_service_workspace", dest)
     ctl_manifest = dest / "apps" / "ctl" / "nebula.toml"
     if ctl_manifest.exists():
@@ -65,9 +75,11 @@ def build_service_binary(binary: str, root: Path) -> Path:
     return out_dir / "main.out"
 
 
-def start_service(binary: str,
-                  root: Path,
-                  extra_env: dict[str, str] | None = None) -> tuple[subprocess.Popen[str], list[str], int]:
+def start_service(
+    binary: str,
+    root: Path,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[LongLivedProcess, ServiceProbeOutput, int]:
     service_binary = build_service_binary(binary, root)
     env = {
         **os.environ,
@@ -76,65 +88,76 @@ def start_service(binary: str,
     }
     if extra_env is not None:
         env.update(extra_env)
-    proc = subprocess.Popen(
+    proc, service_output = start_captured_process(
         [str(service_binary)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+        "listener_bound",
         env=env,
     )
-    stderr_lines: list[str] = []
-    _, port = wait_for_listener_bound(proc, stderr_lines)
-    return proc, stderr_lines, port
+    _, port = wait_for_listener_bound(proc, service_output)
+    return proc, service_output, port
 
 
-def terminate_process(proc: subprocess.Popen[str]) -> None:
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+def terminate_process(
+    proc: LongLivedProcess,
+    service_output: ServiceProbeOutput,
+) -> None:
+    terminate_captured_process(proc, service_output)
 
 
-def wait_until_health_ok(proc: subprocess.Popen[str],
-                         stderr_lines: list[str],
-                         port: int,
-                         timeout: float = 20.0) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+def wait_until_health_ok(
+    proc: LongLivedProcess,
+    service_output: ServiceProbeOutput,
+    port: int,
+    timeout: float = 20.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if proc.poll() is not None:
-            fail_with_output(proc, stderr_lines, f"service exited before /healthz became ready: rc={proc.returncode}")
+            fail_with_output(
+                proc,
+                service_output,
+                f"service exited before /healthz became ready: rc={proc.returncode}",
+            )
         try:
             status, body, _ = http_request("127.0.0.1", port, "GET", "/healthz")
             if status == 200:
                 payload = json.loads(body)
                 if payload.get("status") == "ok":
                     return
-        except Exception:
+        except (OSError, http.client.HTTPException, json.JSONDecodeError):
             time.sleep(0.1)
-    fail_with_output(proc, stderr_lines, "service did not become healthy in time")
+    fail_with_output(proc, service_output, "service did not become healthy in time")
 
 
-def wait_until_ready_status(proc: subprocess.Popen[str],
-                            stderr_lines: list[str],
-                            port: int,
-                            expected_status: int,
-                            expected_state: str,
-                            timeout: float = 10.0) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+def wait_until_ready_status(
+    proc: LongLivedProcess,
+    service_output: ServiceProbeOutput,
+    port: int,
+    expected_status: int,
+    expected_state: str,
+    timeout: float = 10.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if proc.poll() is not None:
-            fail_with_output(proc, stderr_lines, f"service exited before /readyz became {expected_status}: rc={proc.returncode}")
+            fail_with_output(
+                proc,
+                service_output,
+                "service exited before /readyz became "
+                f"{expected_status}: rc={proc.returncode}",
+            )
         try:
             status, body, _ = http_request("127.0.0.1", port, "GET", "/readyz")
             payload = json.loads(body)
             if status == expected_status and payload.get("status") == expected_state:
                 return
-        except Exception:
+        except (OSError, http.client.HTTPException, json.JSONDecodeError):
             time.sleep(0.1)
-    fail_with_output(proc, stderr_lines, f"service did not reach /readyz={expected_status}/{expected_state}")
+    fail_with_output(
+        proc,
+        service_output,
+        f"service did not reach /readyz={expected_status}/{expected_state}",
+    )
 
 
 def http_request(host: str,

@@ -7,7 +7,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from service_probe import wait_for_observe_event_in_file
+from service_probe import start_process, terminate_process, wait_for_listener_bound
 
 
 def rewrite_server_manifest(server_project: Path, repo_root: Path) -> None:
@@ -178,8 +178,6 @@ def main() -> int:
         stderr=subprocess.DEVNULL,
     )
 
-    server_stdout = root / "server.stdout"
-    server_stderr = root / "server.stderr"
     server_env = os.environ.copy()
     server_env.update(
         {
@@ -193,69 +191,65 @@ def main() -> int:
         }
     )
 
-    with server_stdout.open("w") as stdout_handle, server_stderr.open("w") as stderr_handle:
-        server = subprocess.Popen(
-            [nebula, "run", str(server_project), "--run-gate", "none"],
-            stdout=stdout_handle,
-            stderr=stderr_handle,
-            env=server_env,
+    server, server_output = start_process(
+        [nebula, "run", str(server_project), "--run-gate", "none"],
+        "listener_bound",
+        env=server_env,
+        thread_name_prefix="nebula-pqc-secure-service",
+    )
+    try:
+        _, port = wait_for_listener_bound(server, server_output, 20)
+
+        deadline = time.monotonic() + 30
+        ready = False
+        while time.monotonic() < deadline:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            try:
+                conn.request("GET", "/healthz")
+                resp = conn.getresponse()
+                resp.read()
+                if resp.status == 200:
+                    ready = True
+                    break
+            except (OSError, http.client.HTTPException):
+                if server.poll() is not None:
+                    raise SystemExit(
+                        f"secure service example exited before ready: rc={server.returncode}"
+                    )
+                time.sleep(0.2)
+            finally:
+                conn.close()
+        if not ready:
+            raise SystemExit("secure service example did not become ready")
+
+        write_client_project(
+            root,
+            repo_root,
+            port,
+            client_sign_public_key_hex,
+            client_sign_secret_key_hex,
+        )
+        subprocess.run(
+            [nebula, "fetch", str(root / "client")],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        client = subprocess.run(
+            [nebula, "run", str(root / "client"), "--run-gate", "none"],
+            check=True,
+            capture_output=True,
             text=True,
         )
-        try:
-            bound = wait_for_observe_event_in_file(server_stderr, "listener_bound", 20, server)
-            port = bound.get("port")
-            if not isinstance(port, int) or port <= 0:
-                raise SystemExit(f"invalid listener_bound payload: {bound!r}")
-
-            deadline = time.time() + 30
-            ready = False
-            while time.time() < deadline:
-                try:
-                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-                    conn.request("GET", "/healthz")
-                    resp = conn.getresponse()
-                    resp.read()
-                    conn.close()
-                    if resp.status == 200:
-                        ready = True
-                        break
-                except Exception:
-                    if server.poll() is not None:
-                        raise SystemExit(
-                            f"secure service example exited before ready: rc={server.returncode}"
-                        )
-                    time.sleep(0.2)
-            if not ready:
-                raise SystemExit("secure service example did not become ready")
-
-            write_client_project(root, repo_root, port, client_sign_public_key_hex, client_sign_secret_key_hex)
-            subprocess.run(
-                [nebula, "fetch", str(root / "client")],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            client = subprocess.run(
-                [nebula, "run", str(root / "client"), "--run-gate", "none"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            request_body_text, response_body_text, status = extract_client_lines(client)
-            if status != "pqc-secure-service-ok":
-                raise SystemExit(f"unexpected client status: {status!r}")
-            if "hello-preview-secure-service" in request_body_text:
-                raise SystemExit("plaintext leaked into request body payload")
-            if "hello-preview-secure-service" in response_body_text:
-                raise SystemExit("plaintext leaked into response body payload")
-        finally:
-            if server.poll() is None:
-                server.terminate()
-                try:
-                    server.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    server.kill()
-                    server.wait(timeout=5)
+        request_body_text, response_body_text, status = extract_client_lines(client)
+        if status != "pqc-secure-service-ok":
+            raise SystemExit(f"unexpected client status: {status!r}")
+        if "hello-preview-secure-service" in request_body_text:
+            raise SystemExit("plaintext leaked into request body payload")
+        if "hello-preview-secure-service" in response_body_text:
+            raise SystemExit("plaintext leaked into response body payload")
+    finally:
+        terminate_process(server, server_output)
     return 0
 
 

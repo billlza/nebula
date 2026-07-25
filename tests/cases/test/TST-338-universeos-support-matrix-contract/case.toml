@@ -1,0 +1,134 @@
+id = "TST-338-universeos-support-matrix-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = '''
+python3 - <<'PY'
+import json
+import os
+import re
+from pathlib import Path
+
+repo = Path(os.environ["NEBULA_REPO_ROOT"])
+support = (repo / "docs" / "support_matrix.md").read_text(encoding="utf-8")
+toolchain = (repo / "docs" / "toolchain_profile.md").read_text(encoding="utf-8")
+release_contract = (repo / "docs" / "release_contract.md").read_text(encoding="utf-8")
+release_verification = (repo / "docs" / "release_verification.md").read_text(encoding="utf-8")
+registry_text = (repo / "docs" / "universeos" / "gate_registry.md").read_text(encoding="utf-8")
+normalized_support = " ".join(support.split())
+normalized_toolchain = " ".join(toolchain.split())
+normalized_release_contract = " ".join(release_contract.split())
+normalized_release_verification = " ".join(release_verification.split())
+
+blocks = re.findall(r"```json\s*\n(.*?)\n```", registry_text, flags=re.DOTALL)
+payload = None
+for block in blocks:
+    parsed = json.loads(block)
+    if isinstance(parsed, dict) and "gates" in parsed:
+        payload = parsed
+        break
+if payload is None:
+    raise SystemExit("gate registry JSON block not found")
+
+required_support_text = [
+    "UniverseOS gate support posture",
+    "No UniverseOS gate is accepted in this support matrix.",
+    "release documentation and contract-test evidence only",
+    "they do not create a supported OS/runtime surface",
+    "docs/universeos_convergence.md",
+    "docs/system_profile.md",
+    "--target system|freestanding|<triple>",
+    "--profile system",
+    "--no-std",
+    "--panic abort|trap",
+    "do not yet provide a freestanding runtime or kernel/driver support",
+]
+for needle in required_support_text:
+    if needle not in normalized_support:
+        raise SystemExit(f"support matrix missing UniverseOS posture text: {needle}")
+
+rows = {}
+for line in support.splitlines():
+    if not line.startswith("| `UOS-"):
+        continue
+    parts = [part.strip() for part in line.strip().strip("|").split("|")]
+    if len(parts) != 3:
+        raise SystemExit(f"malformed UniverseOS support row: {line}")
+    gate_id = parts[0].strip("`")
+    status = parts[1].strip("`")
+    posture = parts[2]
+    rows[gate_id] = (status, posture)
+
+registry_statuses = {gate["id"]: gate["status"] for gate in payload["gates"]}
+if set(rows) != set(registry_statuses):
+    missing = sorted(set(registry_statuses) - set(rows))
+    extra = sorted(set(rows) - set(registry_statuses))
+    raise SystemExit(f"support matrix gate mismatch missing={missing} extra={extra}")
+
+for gate_id, status in sorted(registry_statuses.items()):
+    row_status, posture = rows[gate_id]
+    if row_status != status:
+        raise SystemExit(f"{gate_id} support matrix status {row_status!r} != registry {status!r}")
+    if status == "planned" and "future-only, not supported" not in posture:
+        raise SystemExit(f"{gate_id} planned row must be future-only and not supported")
+    if status == "experimental" and "contract evidence only" not in posture:
+        raise SystemExit(f"{gate_id} experimental row must stay evidence-only")
+    if status in {"candidate", "accepted"}:
+        raise SystemExit(f"{gate_id} unexpectedly promoted to {status} without release-policy review")
+
+toolchain_needles = [
+    "Installing those files does not promote any",
+    "planned or experimental UniverseOS gate",
+    "supported kernel, boot, driver, object-backend, or",
+    "freestanding runtime behavior",
+]
+for needle in toolchain_needles:
+    if needle not in normalized_toolchain:
+        raise SystemExit(f"toolchain profile missing UniverseOS install non-claim: {needle}")
+
+release_doc_needles = [
+    "share/doc/nebula/docs/universeos",
+    "share/doc/nebula/spec",
+    "share/doc/nebula/rfcs",
+    "documentation-only",
+    "do not implement or promote kernel, boot, driver, object-backend, or freestanding runtime support",
+]
+for needle in release_doc_needles:
+    if needle not in normalized_release_contract:
+        raise SystemExit(f"release contract missing UniverseOS documentation-only payload text: {needle}")
+
+release_verification_needles = [
+    "UniverseOS claim gates ship under `share/doc/nebula/docs/universeos`",
+    "language/compiler specifications ship under `share/doc/nebula/spec`",
+    "RFCs ship under `share/doc/nebula/rfcs`",
+    "verification and claim-boundary documents only",
+    "does not provide kernel, boot, driver, object-backend, or freestanding runtime support",
+]
+for needle in release_verification_needles:
+    if needle not in normalized_release_verification:
+        raise SystemExit(f"release verification missing UniverseOS documentation-only payload text: {needle}")
+
+unsupported_claims = [
+    "UniverseOS is supported",
+    "kernel support is supported",
+    "driver support is supported",
+    "freestanding runtime is supported",
+    "object backend is supported",
+    "bootable UniverseOS",
+]
+claim_surfaces = {
+    "support matrix": support,
+    "toolchain profile": toolchain,
+    "release contract": release_contract,
+    "release verification": release_verification,
+}
+for label, surface in claim_surfaces.items():
+    for claim in unsupported_claims:
+        if claim in surface:
+            raise SystemExit(f"unsupported UniverseOS support claim found in {label}: {claim}")
+
+print("universeos-support-matrix-ok")
+PY
+'''
+expect_stdout_contains = ["universeos-support-matrix-ok"]

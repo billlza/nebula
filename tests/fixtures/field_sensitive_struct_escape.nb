@@ -1,0 +1,32 @@
+struct Inner {
+  v: Int
+}
+struct Outer {
+  inner: Inner
+}
+
+// Nested struct construction inside a region must compile (the nested value is
+// a by-value field initializer, not a region pointer).
+fn build_in_region() -> Int {
+  region R {
+    let o = Outer(Inner(42))
+    return o.inner.v
+  }
+}
+
+// Returning a struct field of a region allocation copies the value out; the
+// base does not escape, so it stays region-local and the copy is valid after
+// the region closes (field-sensitive escape; a soundness bug would be a UAF).
+fn extract() -> Inner {
+  region R {
+    let o = Outer(Inner(7))
+    return o.inner
+  }
+}
+
+fn main() -> Void {
+  expect_eq(build_in_region(), 42)
+  let r = extract()
+  expect_eq(r.v, 7)
+  print("field-struct-ok")
+}

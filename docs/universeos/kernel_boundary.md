@@ -17,6 +17,11 @@ Current Nebula support remains hosted:
   contract gates.
 - System/no-std checks may reject hosted imports and expose target/runtime/panic markers, but current
   builds still use the hosted C++23 backend and bundled runtime headers.
+- A separate exact `freestanding-object` request can emit an audited primitive-only ELF relocatable
+  object through generated C++ and an explicitly rooted immutable clang snapshot; it has no
+  startup/runtime/link/boot behavior.
+- A strict Limine v12.3.2 protocol/ABI candidate fixes image/payload entry ownership and protocol
+  bytes, but complete compiler/linker/image-tool closure is absent and `UOS-BOOT-001` remains planned.
 - No direct object backend, linker-script flow, boot image, QEMU boot, syscall ABI, driver ABI,
   scheduler, interrupt model, MMU model, or kernel entry path exists.
 
@@ -30,31 +35,32 @@ Current Nebula support remains hosted:
 | ABI and layout | `UOS-ABI-001` | Syscalls, entry symbols, context frames, and driver payloads need stable layout rules. |
 | No-std smoke boundary | `UOS-CORE-001` | Kernel code requires no-std-safe primitives before runtime work can begin. |
 | Backend boundary | `UOS-BE-001` | Future object output must attach behind a backend boundary without changing hosted behavior. |
-| Boot plan | `UOS-BOOT-001` | Boot work needs a documented target, entry, artifact, and rollback plan. |
-| Freestanding object output | `UOS-BOOT-002` | Kernel code cannot be built from hosted C++ artifacts. |
-| Linker script and boot artifact | `UOS-BOOT-003` | Kernel sections, entry symbols, and bootloader artifacts must be deterministic. |
-| QEMU serial hello | `UOS-BOOT-004` | Bootability must be proven by a bounded smoke before any kernel milestone is claimed. |
+| Boot protocol, ABI, and toolchain | `UOS-BOOT-001` | Boot work needs pinned target, entry, protocol, memory-layout, toolchain, provenance, and rollback contracts. |
+| Freestanding object output | `UOS-BOOT-002` | The primitive prerequisite exists, but kernel-capable types, ABI, runtime, and hardware operations remain unavailable. |
+| Linked kernel ELF | `UOS-BOOT-003` | Kernel segments, sections, entry, protocol markers, and provenance must be deterministic and audited. |
+| Boot-media assembly | `UOS-BOOT-004` | A linked ELF must be assembled with pinned bootloader inputs before it is called a boot medium. |
+| QEMU serial hello | `UOS-BOOT-005` | Bootability must be proven by a bounded smoke before any kernel milestone is claimed. |
 
 These gates are prerequisites, not sufficient proof of production kernel support. Driver,
 interrupt, scheduler, MMU, syscall-stability, process-isolation, and security-hardening gates are
-future registry work after `UOS-BOOT-004`.
+future registry work after `UOS-BOOT-005`.
 
 ## Kernel Responsibilities
 
 All kernel responsibilities are future work and require at least `UOS-DOC-001`, `UOS-ABI-001`,
-`UOS-CORE-001`, `UOS-BE-001`, and `UOS-BOOT-002` through `UOS-BOOT-004` before implementation can
+`UOS-CORE-001`, `UOS-BE-001`, and `UOS-BOOT-001` through `UOS-BOOT-005` before implementation can
 be claimed.
 
 | Future responsibility | Boundary | Gate dependency |
 | --- | --- | --- |
-| Boot handoff | Receive control from the selected boot path, validate entry assumptions, establish early stack and runtime invariants. | `UOS-BOOT-001`, `UOS-BOOT-003`, `UOS-BOOT-004` |
+| Boot handoff | Receive control from the selected boot path, validate entry assumptions, establish early stack and runtime invariants. | `UOS-BOOT-001`, `UOS-BOOT-003`, `UOS-BOOT-004`, `UOS-BOOT-005` |
 | Panic path | Provide `abort` or `trap` behavior without hosted unwind, exception, or C++ standard library dependencies. | `UOS-CLI-001`, `UOS-CORE-001`, `UOS-BOOT-002` |
 | Memory ownership | Own physical and virtual memory policy once those policies exist; reject implicit hosted allocation assumptions. | `UOS-ABI-001`, `UOS-CORE-001`, future MMU gate |
 | Trap and interrupt dispatch | Own trap/interrupt entry, masking, dispatch, and return contracts after a future interrupt gate exists. | `UOS-DOC-001`, `UOS-ABI-001`, future interrupt gate |
 | Syscall dispatch | Validate syscall numbers, ABI version, argument layout, capability handles, and error returns. | `UOS-ABI-001`, `UOS-BOOT-002`, future syscall gate |
 | Capability enforcement | Mediate access to kernel objects, drivers, memory regions, and privileged operations. | `UOS-DOC-001`, `UOS-ABI-001`, future security gate |
-| Driver coordination | Own hardware-facing registration, interrupt routing, DMA policy, and device capability grants after future driver gates exist. | `UOS-BOOT-004`, future driver gate |
-| Scheduling | Own execution-context selection only after timer/context-switch assumptions are specified and tested. | `UOS-ABI-001`, `UOS-BOOT-004`, future scheduler gate |
+| Driver coordination | Own hardware-facing registration, interrupt routing, DMA policy, and device capability grants after future driver gates exist. | `UOS-BOOT-005`, future driver gate |
+| Scheduling | Own execution-context selection only after timer/context-switch assumptions are specified and tested. | `UOS-ABI-001`, `UOS-BOOT-005`, future scheduler gate |
 
 No row above is implemented today.
 
@@ -106,8 +112,9 @@ Gate ties:
 | --- | --- |
 | "Syscall layout is specified" | `UOS-ABI-001` |
 | "Syscall code can be emitted into a freestanding artifact" | `UOS-BE-001`, `UOS-BOOT-002` |
-| "Syscall artifact can be linked into a boot image" | `UOS-BOOT-003` |
-| "Syscall path can be smoke-tested under QEMU" | `UOS-BOOT-004`, plus a future syscall gate |
+| "Syscall artifact can be linked into a kernel ELF" | `UOS-BOOT-003` |
+| "Syscall kernel ELF can participate in a boot medium" | `UOS-BOOT-004` |
+| "Syscall path can be smoke-tested under QEMU" | `UOS-BOOT-005`, plus a future syscall gate |
 
 Until those gates exist and pass, any syscall examples must be pseudocode only.
 
@@ -131,8 +138,9 @@ Gate ties:
 | "Driver-facing types have stable layout" | `UOS-ABI-001` |
 | "Driver code is no-std-safe" | `UOS-CLI-001`, `UOS-CORE-001` |
 | "Driver code can be emitted without hosted runtime dependency" | `UOS-BE-001`, `UOS-BOOT-002` |
-| "Driver artifact participates in a boot image" | `UOS-BOOT-003` |
-| "Driver path has boot smoke evidence" | `UOS-BOOT-004`, plus future driver/interrupt gates |
+| "Driver artifact participates in a linked kernel ELF" | `UOS-BOOT-003` |
+| "Driver kernel ELF participates in a boot medium" | `UOS-BOOT-004` |
+| "Driver path has boot smoke evidence" | `UOS-BOOT-005`, plus future driver/interrupt gates |
 
 The current gate registry has no positive driver-support gate. Therefore, no document should claim
 driver support until new driver, interrupt, and hardware-safety gates are registered and pass.
@@ -157,7 +165,7 @@ Gate ties:
 | --- | --- |
 | "Capability handle layout is stable" | `UOS-ABI-001` |
 | "Capability checks run in a freestanding artifact" | `UOS-CORE-001`, `UOS-BOOT-002` |
-| "Capability failures are tested at boot/runtime boundary" | `UOS-BOOT-004`, plus future security gate |
+| "Capability failures are tested at boot/runtime boundary" | `UOS-BOOT-005`, plus future security gate |
 | "Hosted native/bridge code cannot bypass system profile" | `UOS-CLI-001`, `UOS-CLI-002` |
 
 Security hardening is not implied by a QEMU hello. It requires separate threat-model, negative-test,
@@ -182,8 +190,9 @@ Gate ties:
 | --- | --- |
 | "Context frame layout is specified" | `UOS-ABI-001` |
 | "Scheduler code can be emitted freestanding" | `UOS-BE-001`, `UOS-BOOT-002` |
-| "Scheduler is present in a boot artifact" | `UOS-BOOT-003` |
-| "Scheduler behavior is smoke-tested" | `UOS-BOOT-004`, plus future scheduler/interrupt gates |
+| "Scheduler is present in a linked kernel ELF" | `UOS-BOOT-003` |
+| "Scheduler kernel ELF participates in a boot medium" | `UOS-BOOT-004` |
+| "Scheduler behavior is smoke-tested" | `UOS-BOOT-005`, plus future scheduler/interrupt gates |
 
 No scheduler claim is current.
 
@@ -210,14 +219,17 @@ Gate ties:
 | "Primitive and aggregate layout is stable enough for memory structures" | `UOS-ABI-001` |
 | "No hosted allocation/runtime dependency is present" | `UOS-CORE-001`, `UOS-BOOT-002` |
 | "Memory-manager sections are placed by a linker script" | `UOS-BOOT-003` |
-| "Memory-manager smoke reaches QEMU serial output" | `UOS-BOOT-004`, plus future memory/MMU gates |
+| "Memory-manager-linked ELF participates in a boot medium" | `UOS-BOOT-004` |
+| "Memory-manager smoke reaches QEMU serial output" | `UOS-BOOT-005`, plus future memory/MMU gates |
 
 No MMU, page-table, allocator, or kernel heap support is current.
 
 ## Implementation Boundary
 
 Do not add kernel code until the gate registry has positive implementation gates for the target
-slice. The current acceptable work is documentation, design review, and contract-test planning.
+slice. Current acceptable work includes the isolated primitive object prerequisite, documentation,
+design review, and contract-test planning; linker/runtime/boot work must receive its own positive
+gate before it is presented as kernel progress.
 
 Future implementation work must remain reversible:
 
@@ -235,13 +247,13 @@ gates are promoted and the claim is tied to passing evidence:
 
 | Unsupported wording today | Minimum gates before reconsidering |
 | --- | --- |
-| "Nebula kernel runtime" | `UOS-DOC-001`, `UOS-CORE-001`, `UOS-BE-001`, `UOS-BOOT-002`, `UOS-BOOT-003`, `UOS-BOOT-004`, plus future runtime gate |
-| "UniverseOS driver framework" | `UOS-ABI-001`, `UOS-CORE-001`, `UOS-BOOT-004`, plus future driver and interrupt gates |
-| "bootable OS" | `UOS-BOOT-002`, `UOS-BOOT-003`, `UOS-BOOT-004`, plus release-support review |
+| "Nebula kernel runtime" | `UOS-DOC-001`, `UOS-CORE-001`, `UOS-BE-001`, `UOS-BOOT-001` through `UOS-BOOT-005`, plus future runtime gate |
+| "UniverseOS driver framework" | `UOS-ABI-001`, `UOS-CORE-001`, `UOS-BOOT-005`, plus future driver and interrupt gates |
+| "bootable OS" | `UOS-BOOT-001` through `UOS-BOOT-005`, plus release-support review |
 | "syscall ABI support" | `UOS-ABI-001`, `UOS-BOOT-002`, plus future syscall gate |
 | "direct object backend" | `UOS-BE-001`, `UOS-BOOT-002`, plus backend-specific contract tests |
-| "scheduler support" | `UOS-ABI-001`, `UOS-BOOT-004`, plus future scheduler and interrupt gates |
-| "MMU or page-table support" | `UOS-ABI-001`, `UOS-BOOT-004`, plus future memory/MMU gates |
+| "scheduler support" | `UOS-ABI-001`, `UOS-BOOT-005`, plus future scheduler and interrupt gates |
+| "MMU or page-table support" | `UOS-ABI-001`, `UOS-BOOT-005`, plus future memory/MMU gates |
 
 ## Non-Goals
 

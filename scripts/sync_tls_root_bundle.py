@@ -68,7 +68,10 @@ def render_header(bundle_text: str, source_asset: str, bundle_sha256: str) -> st
 
 
 def rewrite_pinned_sha256(third_party_text: str, bundle_sha256: str) -> str:
-    return PINNED_SHA_RE.sub(rf"\1{bundle_sha256}\3", third_party_text, count=1)
+    # Use unambiguous \g<N> group references: a bare \1 immediately followed by a
+    # digit of the SHA (e.g. "4...") is parsed as group 14, which raises on
+    # Python 3.12+ ("invalid group reference 14"). \g<1> delimits the group.
+    return PINNED_SHA_RE.sub(rf"\g<1>{bundle_sha256}\g<3>", third_party_text, count=1)
 
 
 def main() -> int:

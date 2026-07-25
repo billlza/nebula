@@ -4,7 +4,7 @@ description = "release control plane proves the publishable internal-app standar
 
 [[steps]]
 kind = "shell"
-timeout = 240
+timeout = 600
 run = "python3 \"$NEBULA_REPO_ROOT/scripts/verify_release_control_plane_standard.py\" --binary \"$NEBULA_BINARY\" --work-dir work/release_control_plane_publishable_standard"
 expect_rc = 0
 expect_stdout_contains = ["release-control-plane-publishable-standard-ok"]

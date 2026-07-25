@@ -16,6 +16,6 @@ source = "fixtures/smoke.nb"
 args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "--mode", "release", "-o", "artifacts/custom_priority.out"]
 expect_rc = 0
 forbid_stdout_contains = ["NBL-CLI-REUSE"]
-expect_stdout_contains = ['-o "artifacts/custom_priority.out"']
+expect_stdout_contains = ['wrote artifact: "artifacts/custom_priority.out"']
 must_exist = ["artifacts/custom_priority.out"]
 must_not_exist = ["generated_cpp/smoke.out"]

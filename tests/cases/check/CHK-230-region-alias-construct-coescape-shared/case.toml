@@ -1,0 +1,23 @@
+id = "CHK-230-region-alias-construct-coescape-shared"
+suite = "check"
+
+# Soundness guard for alias-fanout: two aliases of the same region object are
+# simultaneously live inside a returned Construct (Pair(a, b)), so the object
+# MUST be promoted to Heap Shared. Inferring Unique would emit two owners of one
+# object -> double free. This case is byte-identical, in every value the
+# rep/owner pass computes, to the mutually-exclusive-branch case (CHK-231) which
+# is merely over-conservative; this one is load-bearing for memory safety and
+# must never be relaxed to Unique.
+
+command = "check"
+source = "fixtures/region_alias_construct_coescape.nb"
+args = ["--dump-ownership"]
+expect_rc = 0
+expect_stdout_contains = [
+  "ownership: fn region_alias_construct_coescape::region_alias_construct_coescape::coescape"
+]
+expect_stdout_regex = [
+  "v[0-9]+ x -> rep=Heap owner=Shared region=-",
+  "v[0-9]+ a -> rep=Heap owner=Shared region=-",
+  "v[0-9]+ b -> rep=Heap owner=Shared region=-"
+]

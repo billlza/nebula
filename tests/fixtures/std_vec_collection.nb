@@ -1,0 +1,39 @@
+import std::vec
+
+// A contiguous, growable vector backed by the runtime. Construction uses the
+// empty generic constructor `Vec()` in return position, where the element type
+// is fixed by the function's return type.
+fn ints() -> Vec<Int> {
+  return Vec()
+}
+fn strs() -> Vec<String> {
+  return Vec()
+}
+
+fn main() -> Void {
+  let v = ints()
+  push(v, 10)
+  push(v, 20)
+  push(v, 30)
+  expect_eq(len(v), 3)
+  expect_eq(get_or(v, 0, 0 - 1), 10)
+  expect_eq(get_or(v, 2, 0 - 1), 30)
+  expect_eq(get_or(v, 9, 0 - 1), 0 - 1)
+
+  // Value semantics: a copy owns an independent backing store.
+  let w = v
+  push(w, 40)
+  expect_eq(len(v), 3)
+  expect_eq(len(w), 4)
+
+  // A different element type and emptiness.
+  let s = strs()
+  push(s, "x")
+  expect_eq(len(s), 1)
+  let e = ints()
+  if is_empty(e) {
+    print("std-vec-ok")
+  } else {
+    print("std-vec-bad")
+  }
+}

@@ -67,9 +67,9 @@ if bad_name.returncode == 0 or 'service name must not be . or ..' not in bad_nam
     raise SystemExit('reserved service name was not rejected')
 
 proc = None
-stderr_lines = []
+service_output = None
 try:
-    proc, stderr_lines, port = start_service(binary, root, extra_env={'UNIVERSE_STATE_PATH': str(state_file)})
+    proc, service_output, port = start_service(binary, root, extra_env={'UNIVERSE_STATE_PATH': str(state_file)})
     status_code, body, _ = http_request('127.0.0.1', port, 'GET', '/v1/status')
     if status_code != 200:
         raise SystemExit(f'/v1/status returned {status_code}: {body}')
@@ -83,8 +83,8 @@ try:
     if '"state":"desired_running"' not in payload.get('registry', ''):
         raise SystemExit('status endpoint registry did not include desired state')
 finally:
-    if proc is not None:
-        terminate_process(proc)
+    if proc is not None and service_output is not None:
+        terminate_process(proc, service_output)
 
 print('example-universe-control-plane-ok')
 PY

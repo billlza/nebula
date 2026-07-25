@@ -17,6 +17,28 @@ private:
   std::vector<Token> toks_;
   std::size_t i_ = 0;
 
+  // Bounds recursive-descent nesting (parenthesized/unary expressions and
+  // nested blocks) so a pathologically deep input yields a diagnostic instead
+  // of exhausting the C++ stack and crashing. The limit is far beyond any
+  // hand-written or realistically generated source.
+  // Sized for the worst-case path (statement/block nesting, whose frames are
+  // large): 512 levels stays comfortably within an 8MB — or even a 4MB — stack
+  // while exceeding any realistic source by an order of magnitude (clang's
+  // default bracket depth is 256).
+  std::size_t depth_ = 0;
+  static constexpr std::size_t kMaxRecursionDepth = 512;
+
+  class RecursionGuard {
+  public:
+    RecursionGuard(Parser& parser, Span span);
+    ~RecursionGuard();
+    RecursionGuard(const RecursionGuard&) = delete;
+    RecursionGuard& operator=(const RecursionGuard&) = delete;
+
+  private:
+    Parser& parser_;
+  };
+
   const Token& peek(std::size_t lookahead = 0) const;
   bool eof() const;
   bool at(TokenKind k) const;

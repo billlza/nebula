@@ -6,17 +6,31 @@ yet a Swift/Rust/C++23-scale language ecosystem or an operating-system implement
 
 ## Current Readiness
 
-Current estimated readiness, based on the repo-local state and documented support matrix:
+The auditable snapshot is `docs/universeos/readiness_assessment.md`. It replaces percentage ranges
+that had no stable denominator, weighting, revision binding, or gate-to-score calculation.
 
-- Swift/Rust/C++23-class general language ecosystem: 15% to 25%
-- CLI, system tools, and internal backend/control-plane work: 45% to 60%
-- upper-layer universeOS platform language for tools, services, and app-core logic: 25% to 40%
-- kernel, driver, or freestanding runtime implementation language: 3% to 8%
+As of 2026-07-15, the strongest repository-local hosted language/tooling rows score 2 on the
+documented 0-to-5 ordinal rubric. Safety, the hosted ABI prototype, ecosystem breadth, and hosted
+UniverseOS-adjacent assets score 1. Backend/bootstrap/toolchain independence, the freestanding
+runtime, linked/bootable artifact chain, kernel subsystems, and actual UniverseOS userspace all
+score 0. Hosted services and control-plane examples do not raise the userspace score. No row is a
+release candidate at score 3.
+
+These row scores are not additive and are not a delivery estimate. One passing object gate cannot
+be interpreted as a fraction of an operating system. A complete usable UniverseOS still lacks its
+freestanding runtime, boot chain, kernel subsystems, drivers, userspace isolation, storage,
+networking, recovery, and operating ecosystem.
 
 The strongest Nebula-owned assets today are:
 
 - explicit regions, Rep x Owner inference, and unsafe boundaries
 - a working compiler pipeline through C++23 codegen and `clang++`
+- an experimental primitive-only, clang-backed `x86_64-unknown-none` object path with a fail-closed
+  NIR allowlist, ELF audit, content digest, explicit immutable toolchain snapshot, and transactional
+  publication
+- a strict Limine v12.3.2 protocol/ABI candidate with content-addressed vendored protocol bytes and
+  separate image `_start` / versioned payload entry ownership; full toolchain/link/boot closure is
+  still missing
 - project/workspace/package tooling, formatter, explain, LSP, and contract tests
 - narrow but real `std` slices for CLI, async, TCP, HTTP, JSON, files, process, and logging
 - backend-first official packages for service, observe, data, auth, jobs, TLS, crypto, and UI
@@ -43,12 +57,15 @@ C++23-class gaps:
 
 - direct language support for concepts/templates/constexpr/modules/ranges/allocator-level control
 - mature RAII and low-level systems-control breadth
-- independent native/object backend; current production path still depends on C++23 codegen
+- independent native/object backend; production remains hosted C++23, while the experimental
+  primitive object slice still bootstraps through generated C++ and fixed `clang++`
 
-UniverseOS substrate gaps:
+UniverseOS substrate gaps after the primitive object slice and protocol/ABI candidate:
 
 - freestanding/no-std runtime profile
-- target triples, cross compilation, linker scripts, boot/runtime ABI, and syscall ABI
+- general target specification, aggregate layout, broader calling conventions, linker scripts,
+  complete boot-tool provenance, runtime ABI, and syscall ABI; only the exact primitive object and
+  narrow boot-entry ABI candidate exist
 - panic/unwind policy, atomics, volatile memory, intrinsics, inline assembly, and hardware-facing APIs
 - driver, interrupt, MMU, scheduler, sandbox, capability, and process-isolation models
 
@@ -91,5 +108,7 @@ Public universeOS positioning should stay behind these gates:
   and ABI behavior; see `docs/system_profile.md`
 - experimental `--target system` / `--no-std` gates remain green and keep rejecting hosted `std`
   imports instead of silently falling back to the hosted runtime
-- direct OS-substrate claims have a no-std/freestanding prototype instead of relying on host OS,
-  C++ standard library, and `clang++`
+- the experimental primitive object gate remains green without being presented as a no-std runtime,
+  direct object backend, linked image, QEMU boot, kernel, or supported OS substrate
+- direct OS-substrate claims still require a no-std/freestanding runtime prototype and boot evidence
+  rather than relying on the host compiler process or the primitive object gate alone

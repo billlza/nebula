@@ -1,0 +1,263 @@
+id = "BLD-019-freestanding-nir-allowlist"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    root="work/freestanding-nir-windows"
+    rm -rf "$root"
+    mkdir -p "$root"
+    set +e
+    "$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/freestanding_entry.nb" \
+      --emit freestanding-object --target x86_64-unknown-none --panic trap \
+      --freestanding-toolchain-root "$NEBULA_REPO_ROOT" \
+      --diag-format json --out-dir "$root" >"$root/build.log" 2>&1
+    rc=$?
+    set -e
+    test "$rc" -ne 0
+    grep -F '"code":"NBL-CLI-FS-HOST-UNSUPPORTED"' "$root/build.log"
+    echo freestanding-nir-allowlist-ok
+    exit 0
+    ;;
+esac
+root="work/freestanding-nir-allowlist"
+rm -rf "$root"
+mkdir -p "$root/src"
+toolchain_root=$(sh "$NEBULA_REPO_ROOT/tests/lib/resolve_freestanding_toolchain_root.sh")
+
+cat >"$root/src/missing.nb" <<'NB'
+fn main() -> Void {
+}
+NB
+cat >"$root/src/duplicate.nb" <<'NB'
+@entry
+fn first() -> Void {
+}
+@entry
+fn second() -> Void {
+}
+NB
+cat >"$root/src/bad_signature.nb" <<'NB'
+@entry
+fn kernel_entry(value: Int) -> Int {
+  return value
+}
+NB
+cat >"$root/src/string.nb" <<'NB'
+@entry
+fn kernel_entry() -> Void {
+  let message = "hosted"
+  if message == "hosted" {
+  }
+}
+NB
+cat >"$root/src/float.nb" <<'NB'
+@entry
+fn kernel_entry() -> Void {
+  let value = 1.5
+  if value > 0.0 {
+  }
+}
+NB
+cat >"$root/src/builtin.nb" <<'NB'
+@entry
+fn kernel_entry() -> Void {
+  expect_eq(1, 1)
+}
+NB
+cat >"$root/src/extern.nb" <<'NB'
+extern fn host_value() -> Int
+
+@entry
+fn kernel_entry() -> Void {
+  let value = host_value()
+  if value == 0 {
+  }
+}
+NB
+cat >"$root/src/unsafe.nb" <<'NB'
+@entry
+fn kernel_entry() -> Void {
+  unsafe {
+    let value = 1
+    if value == 1 {
+    }
+  }
+}
+NB
+cat >"$root/src/checked_for.nb" <<'NB'
+@entry
+fn kernel_entry() -> Void {
+  for i in 0..1 {
+    i = 9223372036854775807
+  }
+}
+NB
+
+expect_backend_failure() {
+  name="$1"
+  code="$2"
+  out="$root/out-$name"
+  set +e
+  "$NEBULA_BINARY" build "$root/src/$name.nb" \
+    --emit freestanding-object --target x86_64-unknown-none --panic trap \
+    --freestanding-toolchain-root "$toolchain_root" \
+    --diag-format json --out-dir "$out" >"$root/$name.log" 2>&1
+  rc=$?
+  set -e
+  test "$rc" -ne 0
+  grep -F "\"code\":\"$code\"" "$root/$name.log"
+  if [ -d "$out" ]; then
+    test -z "$(find "$out" -type f \( -name '*.o' -o -name '*.cpp' -o -name '*.out' -o -name '*.nebmeta' \) -print -quit)"
+  fi
+}
+
+expect_backend_failure missing NBL-BE-FS-ENTRY-MISSING
+expect_backend_failure duplicate NBL-BE-FS-ENTRY-DUPLICATE
+expect_backend_failure bad_signature NBL-BE-FS-ENTRY-SIGNATURE
+expect_backend_failure string NBL-BE-FS-TYPE
+expect_backend_failure float NBL-BE-FS-TYPE
+expect_backend_failure builtin NBL-BE-FS-CALL
+expect_backend_failure extern NBL-BE-FS-CALL
+expect_backend_failure unsafe NBL-BE-FS-FEATURE
+
+"$NEBULA_BINARY" build "$root/src/checked_for.nb" \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root "$toolchain_root" \
+  --out-dir "$root/checked-for-out" >"$root/checked-for.log" 2>&1
+grep -F '= __nebula_checked_add(' "$root/checked-for-out/checked_for.freestanding.cpp"
+! grep -F '++__nebula_v_' "$root/checked-for-out/checked_for.freestanding.cpp"
+
+python3 - "$root/src/long_identifier.nb" <<'PY'
+from pathlib import Path
+import sys
+
+name = "reachable_helper_" + "x" * 300
+Path(sys.argv[1]).write_text(
+    f"fn {name}(value: Int) -> Int {{\n"
+    "  return value + 1\n"
+    "}\n\n"
+    "@entry\n"
+    "fn kernel_entry() -> Void {\n"
+    f"  let value = {name}(41)\n"
+    "  if value != 42 {\n"
+    "    while true {\n"
+    "    }\n"
+    "  }\n"
+    "}\n",
+    encoding="utf-8",
+)
+PY
+"$NEBULA_BINARY" build "$root/src/long_identifier.nb" \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root "$toolchain_root" \
+  --out-dir "$root/long-identifier-out" >"$root/long-identifier.log" 2>&1
+test -f "$root/long-identifier-out/long_identifier.o"
+
+mkdir -p "$root/host-cxx/src"
+cat >"$root/host-cxx/nebula.toml" <<'TOML'
+schema_version = 1
+[package]
+name = "freestanding-host-cxx-rejected"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+host_cxx = ["host.cpp"]
+TOML
+cat >"$root/host-cxx/src/main.nb" <<'NB'
+@entry
+fn kernel_entry() -> Void {
+}
+NB
+cat >"$root/host-cxx/host.cpp" <<'CPP'
+int hosted_helper() { return 7; }
+CPP
+set +e
+"$NEBULA_BINARY" build "$root/host-cxx" \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root "$toolchain_root" \
+  --diag-format json --out-dir "$root/host-cxx-out" >"$root/host-cxx.log" 2>&1
+host_cxx_rc=$?
+set -e
+test "$host_cxx_rc" -ne 0
+grep -F '"code":"NBL-CLI-SYSTEM-NATIVE"' "$root/host-cxx.log"
+if [ -d "$root/host-cxx-out" ]; then
+  test -z "$(find "$root/host-cxx-out" -type f -print -quit)"
+fi
+
+mkdir -p "$root/root-selection/dep/src" "$root/root-selection/app/src"
+cat >"$root/root-selection/dep/nebula.toml" <<'TOML'
+schema_version = 1
+[package]
+name = "entry-dep"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+TOML
+cat >"$root/root-selection/dep/src/main.nb" <<'NB'
+@entry
+fn dependency_entry() -> Void {
+}
+
+fn dependency_value() -> Int {
+  return 7
+}
+NB
+cat >"$root/root-selection/app/nebula.toml" <<'TOML'
+schema_version = 1
+[package]
+name = "entry-root"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+[dependencies]
+dep = { path = "../dep" }
+TOML
+cat >"$root/root-selection/app/src/main.nb" <<'NB'
+import dep::main
+
+@entry
+fn root_entry() -> Void {
+  let value = dependency_value()
+  if value != 7 {
+    while true {
+    }
+  }
+}
+NB
+"$NEBULA_BINARY" fetch "$root/root-selection/app" >/dev/null
+"$NEBULA_BINARY" build "$root/root-selection/app" \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root "$toolchain_root" \
+  --out-dir "$root/root-selection/out" >"$root/root-selection.log" 2>&1
+grep -F 'dependency_value' "$root/root-selection/out/main.freestanding.cpp"
+! grep -F 'dependency_entry' "$root/root-selection/out/main.freestanding.cpp"
+test "$(grep -c ' void __nebula_uos_payload_entry_v1()' "$root/root-selection/out/main.freestanding.cpp")" -eq 1
+
+cat >"$root/root-selection/app/src/main.nb" <<'NB'
+import dep::main
+
+@entry
+fn root_entry() -> Void {
+  dependency_entry()
+}
+NB
+"$NEBULA_BINARY" fetch "$root/root-selection/app" >/dev/null
+set +e
+"$NEBULA_BINARY" build "$root/root-selection/app" \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root "$toolchain_root" \
+  --diag-format json --out-dir "$root/root-selection/reachable-dependency-entry" \
+  >"$root/root-selection-reachable-entry.log" 2>&1
+reachable_entry_rc=$?
+set -e
+test "$reachable_entry_rc" -ne 0
+grep -F '"code":"NBL-BE-FS-FEATURE"' "$root/root-selection-reachable-entry.log"
+test ! -e "$root/root-selection/reachable-dependency-entry/main.o"
+echo freestanding-nir-allowlist-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["freestanding-nir-allowlist-ok"]

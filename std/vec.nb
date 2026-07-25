@@ -1,0 +1,31 @@
+module vec
+
+// A contiguous, growable vector backed by the runtime (std::vector). Construct
+// an empty vector with `Vec()`; the element type is supplied by the surrounding
+// type, e.g. `fn ints() -> Vec<Int> { return Vec() }`.
+//
+// The operations below are declared for type checking only. Their calls are
+// lowered directly to the runtime (nebula::rt::vec_*), so the stub bodies here
+// are never emitted -- mirroring std::bench::black_box.
+struct Vec<T> {
+}
+
+// Append a value, growing the vector.
+fn push<T>(ref v: Vec<T>, value: T) -> Void {
+}
+
+// Number of elements.
+fn len<T>(ref v: Vec<T>) -> Int {
+  return 0
+}
+
+// Whether the vector has no elements.
+fn is_empty<T>(ref v: Vec<T>) -> Bool {
+  return true
+}
+
+// The element at `index`, or `fallback` when `index` is out of bounds (so there
+// is no out-of-bounds undefined behaviour).
+fn get_or<T>(ref v: Vec<T>, index: Int, fallback: T) -> T {
+  return fallback
+}

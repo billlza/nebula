@@ -4,6 +4,9 @@ description = "release control plane deploy alias validates targets and drives s
 
 [[steps]]
 kind = "shell"
+# Builds a release-control-plane workspace incl. vendored crypto native C; the
+# 120s default per-step timeout was exceeded (rc=124) on the slower CI runner.
+timeout = 400
 run = """
 python3 - <<'PY'
 import json
@@ -68,9 +71,9 @@ service_env = {
     "APP_WORKER_TOKEN": worker_token,
 }
 
-proc, stderr_lines, port = start_service(binary, root, service_env)
+proc, service_output, port = start_service(binary, root, service_env)
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
     require_success(run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out), "prewarm ctl")
 
@@ -115,7 +118,7 @@ try:
     if payload_out.get("kind") != "shell_task_result" or payload_out.get("stdout") != "deploy local\\n" or payload_out.get("exit_code") != 0:
         raise SystemExit(f"unexpected deploy result payload: {payload_out!r}")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 service_binary = root / ".service-out" / "main.out"
 missing_env = {

@@ -1,0 +1,14 @@
+id = "CHK-226-hosted-allows-system-forbidden-std-import"
+suite = "check"
+command = "check"
+source = "fixtures/system_forbidden_std.nb"
+args = ["--profile", "hosted", "--diag-format", "json"]
+expect_rc = 0
+forbid_stdout_contains = [
+  "NBL-CLI-SYSTEM-STD",
+  "hosted bundled std is unavailable in the system/no-std profile",
+]
+
+[[forbid_diag]]
+code = "NBL-CLI-SYSTEM-STD"
+severity = "error"

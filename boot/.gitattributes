@@ -1,0 +1,3 @@
+uos-x86_64-limine-v1/contract.manifest -text
+uos-x86_64-limine-v1/protocol/limine.h -text
+uos-x86_64-limine-v1/protocol/LICENSE -text
