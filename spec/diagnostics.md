@@ -207,6 +207,8 @@ Example: a warning can still be high-risk.
 - `NBL-CLI-SYSTEM-STD`: system/no-std project loading rejects bundled `std::...` imports
 - `NBL-CLI-SYSTEM-NATIVE`: system/no-std project loading rejects reachable `host_cxx` or
   `[native]` sources because they target the hosted bridge/toolchain profile
+- `NBL-CLI-FS-HOST-UNSUPPORTED`: the exact experimental freestanding-object publication request
+  was made on a Windows host; its identity-safe implementation is currently macOS/Linux-only
 - `NBL-CLI-CABI-HOSTCXX`: library build rejects `host_cxx` sources because the current public ABI
   contract is limited to Nebula-defined exported wrappers
 - `NBL-CLI-CABI-NATIVE`: library build rejects reachable `[native]` package sources because the

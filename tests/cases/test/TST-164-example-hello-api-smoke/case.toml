@@ -15,7 +15,7 @@ from pathlib import Path
 
 repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
 sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
-from service_probe import fail_with_output, service_start_timeout, wait_for_listener_bound
+from service_probe import start_process, terminate_process, fail_with_output, service_start_timeout, wait_for_listener_bound
 
 root = Path('work/example_hello_api')
 shutil.rmtree(root, ignore_errors=True)
@@ -34,11 +34,9 @@ service = {{ path = "{(repo_root / 'official' / 'nebula-service').resolve()}" }}
 subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 drain_file = root / 'hello-api.draining'
-proc = subprocess.Popen(
+proc, service_output = start_process(
     [os.environ['NEBULA_BINARY'], 'run', str(root), '--run-gate', 'none'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    text=True,
+    'listener_bound',
     env={
         **os.environ,
         'NEBULA_BIND_HOST': '127.0.0.1',
@@ -47,14 +45,13 @@ proc = subprocess.Popen(
         'NEBULA_DRAIN_POLL_MS': '100',
     },
 )
-stderr_lines = []
-_, port = wait_for_listener_bound(proc, stderr_lines, timeout=30)
+_, port = wait_for_listener_bound(proc, service_output, timeout=30)
 try:
     deadline = time.time() + service_start_timeout(20)
     ready = False
     while time.time() < deadline:
         if proc.poll() is not None:
-            fail_with_output(proc, stderr_lines, f'hello_api exited before ready: rc={proc.returncode}')
+            fail_with_output(proc, service_output, f'hello_api exited before ready: rc={proc.returncode}')
         try:
             conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
             conn.request('GET', '/healthz')
@@ -67,7 +64,7 @@ try:
         except Exception:
             time.sleep(0.1)
     if not ready:
-        fail_with_output(proc, stderr_lines, 'hello_api did not become ready')
+        fail_with_output(proc, service_output, 'hello_api did not become ready')
 
     conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
     conn.request('GET', '/hello/nebula')
@@ -82,7 +79,7 @@ try:
     deadline = time.time() + service_start_timeout(20)
     while time.time() < deadline:
         if proc.poll() is not None:
-            fail_with_output(proc, stderr_lines, f'hello_api exited before draining readiness: rc={proc.returncode}')
+            fail_with_output(proc, service_output, f'hello_api exited before draining readiness: rc={proc.returncode}')
         try:
             conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
             conn.request('GET', '/readyz')
@@ -95,7 +92,7 @@ try:
         except Exception:
             time.sleep(0.1)
     if not draining:
-        fail_with_output(proc, stderr_lines, 'hello_api did not report draining readiness')
+        fail_with_output(proc, service_output, 'hello_api did not report draining readiness')
 
     try:
         proc.wait(timeout=service_start_timeout(20))
@@ -103,13 +100,7 @@ try:
         raise SystemExit('hello_api did not exit after draining quiesced')
     print('example-hello-api-ok')
 finally:
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+    terminate_process(proc, service_output)
 PY
 """
 expect_rc = 0

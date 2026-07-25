@@ -1,0 +1,91 @@
+id = "BLD-018-freestanding-request-state-machine"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    root="work/freestanding-request-windows"
+    rm -rf "$root"
+    mkdir -p "$root"
+    set +e
+    "$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/freestanding_entry.nb" \
+      --emit freestanding-object --target x86_64-unknown-none --panic trap \
+      --freestanding-toolchain-root "$NEBULA_REPO_ROOT" \
+      --diag-format json --out-dir "$root" >"$root/build.log" 2>&1
+    rc=$?
+    set -e
+    test "$rc" -ne 0
+    grep -F '"code":"NBL-CLI-FS-HOST-UNSUPPORTED"' "$root/build.log"
+    echo freestanding-request-matrix-ok
+    exit 0
+    ;;
+esac
+root="work/freestanding-request-matrix"
+rm -rf "$root"
+mkdir -p "$root"
+source="$NEBULA_REPO_ROOT/tests/fixtures/freestanding_entry.nb"
+
+expect_failure() {
+  name="$1"
+  expected="$2"
+  shift 2
+  out="$root/$name"
+  mkdir -p "$out"
+  set +e
+  "$NEBULA_BINARY" build "$source" "$@" --out-dir "$out" >"$out.log" 2>&1
+  rc=$?
+  set -e
+  test "$rc" -ne 0
+  grep -F -- "$expected" "$out.log"
+  test -z "$(find "$out" -type f \( -name '*.o' -o -name '*.cpp' -o -name '*.out' -o -name '*.nebmeta' \) -print -quit)"
+}
+
+expect_failure missing-target \
+  '--emit freestanding-object requires explicit --target x86_64-unknown-none' \
+  --emit freestanding-object --panic trap
+expect_failure alias-target \
+  '--emit freestanding-object supports only --target x86_64-unknown-none' \
+  --emit freestanding-object --target system --panic trap
+expect_failure near-target \
+  '--emit freestanding-object supports only --target x86_64-unknown-none' \
+  --emit freestanding-object --target x86_64-unknown-none-suffix --panic trap
+expect_failure other-target \
+  '--emit freestanding-object supports only --target x86_64-unknown-none' \
+  --emit freestanding-object --target aarch64-unknown-none --panic trap
+expect_failure missing-panic \
+  '--emit freestanding-object requires explicit --panic trap' \
+  --emit freestanding-object --target x86_64-unknown-none
+expect_failure abort-panic \
+  '--emit freestanding-object supports only --panic trap' \
+  --emit freestanding-object --target x86_64-unknown-none --panic abort
+expect_failure hosted-before-target \
+  '--emit freestanding-object conflicts with an explicit hosted runtime profile' \
+  --emit freestanding-object --runtime-profile hosted --target x86_64-unknown-none --panic trap
+expect_failure hosted-after-target \
+  '--emit freestanding-object conflicts with an explicit hosted runtime profile' \
+  --emit freestanding-object --target x86_64-unknown-none --runtime-profile hosted --panic trap
+expect_failure missing-toolchain-root \
+  '--emit freestanding-object requires explicit --freestanding-toolchain-root' \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap
+expect_failure toolchain-root-with-hosted-artifact \
+  '--freestanding-toolchain-root requires --emit freestanding-object' \
+  --freestanding-toolchain-root "$NEBULA_REPO_ROOT"
+expect_failure duplicate-toolchain-root \
+  'duplicate option: --freestanding-toolchain-root' \
+  --emit freestanding-object --target x86_64-unknown-none --panic trap \
+  --freestanding-toolchain-root "$NEBULA_REPO_ROOT" \
+  --freestanding-toolchain-root "$NEBULA_REPO_ROOT"
+
+set +e
+"$NEBULA_BINARY" run "$source" --emit freestanding-object >"$root/run.log" 2>&1
+run_rc=$?
+set -e
+test "$run_rc" -ne 0
+grep -F 'unknown option: --emit' "$root/run.log"
+echo freestanding-request-matrix-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["freestanding-request-matrix-ok"]

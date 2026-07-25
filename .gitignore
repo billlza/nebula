@@ -20,6 +20,7 @@ benchmark_results/
 __pycache__/
 *.py[cod]
 node_modules/
+.hypothesis/
 
 # macOS debug symbols
 *.dSYM/

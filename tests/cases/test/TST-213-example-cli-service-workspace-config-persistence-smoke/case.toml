@@ -31,10 +31,10 @@ ctl_out_dir = root / '.ctl-out'
 copy_example(repo_root, root)
 fetch_workspace(binary, root)
 
-proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+proc, service_output, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
 base_url = f'http://127.0.0.1:{port}'
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     prewarm = run_ctl(binary, root, 'config-validate', '--url', base_url, out_dir=ctl_out_dir)
     require_success(prewarm, 'prewarm ctl binary')
 
@@ -60,12 +60,12 @@ try:
     beta_payload = json.loads(beta_put.stdout)
     beta_revision = beta_payload['entry']['revision_id']
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
-proc, stderr_lines, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
+proc, service_output, port = start_service(binary, root, {'APP_STATE_DIR': str(state_dir)})
 base_url = f'http://127.0.0.1:{port}'
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
 
     alpha_get = run_ctl(binary, root, 'config', 'get', '--project', 'proj', '--env', 'prod', '--key', 'alpha', '--json', '--url', base_url, out_dir=ctl_out_dir, no_build=True)
     require_success(alpha_get, 'config get after restart')
@@ -89,7 +89,7 @@ try:
 
     print('example-cli-service-workspace-config-persistence-ok')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 PY
 """
 expect_rc = 0

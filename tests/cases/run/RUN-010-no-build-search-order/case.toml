@@ -23,4 +23,4 @@ source = "fixtures/smoke.nb"
 args = ["--diag-format", "json", "--no-build"]
 expect_rc = 0
 forbid_diag = [{ code = "NBL-CLI-NOBUILD-MISSING" }]
-expect_stdout_regex = ["\\[cmd\\] \".*smoke\\.out\""]
+expect_stdout_contains = ["[cmd] launching verified host process with 1 arguments"]

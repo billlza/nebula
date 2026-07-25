@@ -31,7 +31,7 @@ ctl_out_dir = root / ".ctl-out"
 
 copy_example(repo_root, root)
 fetch_workspace(binary, root)
-proc, stderr_lines, port = start_service(
+proc, service_output, port = start_service(
     binary,
     root,
     {
@@ -56,7 +56,7 @@ def require_denied(result, role_text: str, permission_text: str, label: str) -> 
         raise SystemExit(f"{label} missing authz detail: expected {role_text!r} and {permission_text!r}")
 
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
     prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out_dir)
     require_success(prewarm, "prewarm ctl")
@@ -147,7 +147,7 @@ try:
     )
     require_denied(worker_broker_get, "required role: reader", "permission=jobs.outbox.read", "worker broker get")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 print("release-control-plane-policy-authz-ok")
 PY

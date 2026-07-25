@@ -14,7 +14,7 @@ from pathlib import Path
 
 repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
 sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
-from service_probe import fail_with_output, finish_process_output, wait_for_listener_bound
+from service_probe import start_process, terminate_process, fail_with_output, finish_process_output, wait_for_listener_bound
 
 root = Path('work/official_service_connection_lifecycle')
 shutil.rmtree(root, ignore_errors=True)
@@ -66,33 +66,30 @@ subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)],
                check=True,
                stdout=subprocess.DEVNULL,
                stderr=subprocess.DEVNULL)
-proc = subprocess.Popen([
+proc, service_output = start_process([
     os.environ['NEBULA_BINARY'],
     'run',
     str(root),
     '--run-gate',
     'none',
-], stdout=subprocess.PIPE,
-   stderr=subprocess.PIPE,
-   text=True,
+], 'listener_bound',
    env={**os.environ, 'NEBULA_BIND_HOST': '127.0.0.1', 'NEBULA_PORT': '0'})
-stderr_lines = []
-_, port = wait_for_listener_bound(proc, stderr_lines, timeout=45.0)
+_, port = wait_for_listener_bound(proc, service_output, timeout=45.0)
 client = None
 
 def read_more(sock: socket.socket, deadline: float, label: str) -> bytes:
     while time.time() < deadline:
         if proc.poll() is not None:
-            fail_with_output(proc, stderr_lines, f'connection-lifecycle service exited while reading {label}: rc={proc.returncode}')
+            fail_with_output(proc, service_output, f'connection-lifecycle service exited while reading {label}: rc={proc.returncode}')
         sock.settimeout(max(0.05, min(1.0, deadline - time.time())))
         try:
             chunk = sock.recv(4096)
         except socket.timeout:
             continue
         if not chunk:
-            fail_with_output(proc, stderr_lines, f'connection closed before reading {label}')
+            fail_with_output(proc, service_output, f'connection closed before reading {label}')
         return chunk
-    fail_with_output(proc, stderr_lines, f'timed out reading {label}')
+    fail_with_output(proc, service_output, f'timed out reading {label}')
     raise AssertionError('unreachable')
 
 def read_http_response(sock: socket.socket) -> bytes:
@@ -107,7 +104,7 @@ def read_http_response(sock: socket.socket) -> bytes:
             content_length = int(raw_line.split(b':', 1)[1].strip())
             break
     if content_length is None:
-        fail_with_output(proc, stderr_lines, f'first response missing Content-Length: {data!r}')
+        fail_with_output(proc, service_output, f'first response missing Content-Length: {data!r}')
     while len(body) < content_length:
         body += read_more(sock, deadline, 'response body')
     return header + b'\r\n\r\n' + body[:content_length]
@@ -133,24 +130,24 @@ try:
             break
         except OSError:
             if proc.poll() is not None:
-                fail_with_output(proc, stderr_lines, f'connection-lifecycle service exited before accepting: rc={proc.returncode}')
+                fail_with_output(proc, service_output, f'connection-lifecycle service exited before accepting: rc={proc.returncode}')
             time.sleep(0.05)
     if client is None:
-        fail_with_output(proc, stderr_lines, 'connection-lifecycle service did not accept a socket in time')
+        fail_with_output(proc, service_output, 'connection-lifecycle service did not accept a socket in time')
 
     first = b'GET /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n'
     client.sendall(first)
     response = read_http_response(client)
     if b'200 OK' not in response or not response.endswith(b'one-shot'):
-        fail_with_output(proc, stderr_lines, f'unexpected first response bytes: {response!r}')
+        fail_with_output(proc, service_output, f'unexpected first response bytes: {response!r}')
     if not wait_for_peer_close(client):
-        fail_with_output(proc, stderr_lines, 'connection remained reusable after first response')
+        fail_with_output(proc, service_output, 'connection remained reusable after first response')
 
     try:
         proc.wait(timeout=20)
     except subprocess.TimeoutExpired:
-        fail_with_output(proc, stderr_lines, 'connection-lifecycle service did not exit after first request')
-    stdout, stderr = finish_process_output(proc, stderr_lines)
+        fail_with_output(proc, service_output, 'connection-lifecycle service did not exit after first request')
+    stdout, stderr = finish_process_output(proc, service_output)
     print(stdout, end='')
     print(stderr, end='')
     if proc.returncode != 0:
@@ -159,13 +156,7 @@ try:
 finally:
     if client is not None:
         client.close()
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+    terminate_process(proc, service_output)
 PY
 '''
 expect_rc = 0

@@ -159,6 +159,18 @@ def run_nebula(binary: str, args: list[str], *, cwd: Path | None = None, env: di
     return subprocess.run([binary, *args], cwd=cwd, env=env, text=True, capture_output=True)
 
 
+def nebula_child_environment(**overrides: str) -> dict[str, str]:
+    """Build the least-privilege environment for the local Nebula child.
+
+    The registry credential is consumed by this HTTP client and must not be delegated to the
+    compiler/package subprocess that only needs the mirrored registry root.
+    """
+    env = dict(os.environ)
+    env.pop("NEBULA_REGISTRY_TOKEN", None)
+    env.update(overrides)
+    return env
+
+
 def command_list(args: argparse.Namespace) -> int:
     url = f"{args.server.rstrip('/')}/v1/packages"
     if args.query:
@@ -193,8 +205,7 @@ def command_push(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="nebula-registry-push-") as tmp_dir:
         temp_root = Path(tmp_dir) / "registry"
         temp_root.mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ)
-        env["NEBULA_REGISTRY_ROOT"] = str(temp_root)
+        env = nebula_child_environment(NEBULA_REGISTRY_ROOT=str(temp_root))
         result = run_nebula(binary, ["publish", str(project), *(["--force"] if args.force else [])], cwd=project.parent, env=env)
         if result.returncode != 0:
             print(result.stdout, end="")
@@ -222,8 +233,7 @@ def command_fetch(args: argparse.Namespace) -> int:
     manifest_path = manifest_path_for(project)
     mirror_dependency_closure(args.server, args.token, manifest_path, registry_root, args.timeout_seconds)
 
-    env = dict(os.environ)
-    env["NEBULA_REGISTRY_ROOT"] = str(registry_root)
+    env = nebula_child_environment(NEBULA_REGISTRY_ROOT=str(registry_root))
     result = run_nebula(binary, ["fetch", str(project)], cwd=project.parent if project.is_file() else project, env=env)
     print(result.stdout, end="")
     print(result.stderr, end="")

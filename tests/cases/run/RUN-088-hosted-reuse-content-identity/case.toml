@@ -1,0 +1,43 @@
+id = "RUN-088-hosted-reuse-content-identity"
+suite = "run"
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "-o", "artifacts/content_identity.out"]
+expect_rc = 0
+must_exist = ["artifacts/content_identity.out", "artifacts/content_identity.out.nebmeta"]
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\n\nartifact = Path('artifacts/content_identity.out')\ndata = bytearray(artifact.read_bytes())\nif not data:\n    raise SystemExit('hosted artifact is unexpectedly empty')\nsize = len(data)\ndata[0] ^= 0xFF\nartifact.write_bytes(data)\nif artifact.stat().st_size != size:\n    raise SystemExit('same-size mutation changed the artifact size')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "artifacts/content_identity.out"]
+expect_rc = 0
+forbid_stdout_contains = ["NBL-CLI-REUSE"]
+expect_stdout_contains = ['wrote: "generated_cpp/smoke.cpp"']
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nimport hashlib\nfrom pathlib import Path\n\nartifact = Path('artifacts/content_identity.out')\nmetadata_path = Path(str(artifact) + '.nebmeta')\nlines = metadata_path.read_text(encoding='ascii').splitlines()\nif len(lines) != 15 or lines[0] != 'version=6':\n    raise SystemExit(f'expected canonical v6 metadata, got: {lines!r}')\nfields = dict(line.split('=', 1) for line in lines)\nif fields['artifact_size'] != str(artifact.stat().st_size):\n    raise SystemExit('metadata size is not bound to the rebuilt artifact')\nif fields['artifact_sha256'] != hashlib.sha256(artifact.read_bytes()).hexdigest():\n    raise SystemExit('metadata digest is not bound to the rebuilt artifact')\nif len(fields['build_inputs_sha256']) != 64 or fields['build_inputs_sha256'].lower() != fields['build_inputs_sha256']:\n    raise SystemExit('build input identity is not a lowercase SHA-256')\nmetadata_path.write_text(metadata_path.read_text(encoding='ascii').replace('version=6\\n', 'version=5\\n', 1), encoding='ascii')\nPY"
+expect_rc = 0
+
+[[steps]]
+kind = "nebula"
+command = "run"
+source = "fixtures/smoke.nb"
+args = ["--diag-format", "json", "--run-gate", "none", "--reuse", "-o", "artifacts/content_identity.out"]
+expect_rc = 0
+forbid_stdout_contains = ["NBL-CLI-REUSE"]
+expect_stdout_contains = ['wrote: "generated_cpp/smoke.cpp"']
+
+[[steps]]
+kind = "shell"
+run = "python3 - <<'PY'\nfrom pathlib import Path\n\nmetadata = Path('artifacts/content_identity.out.nebmeta').read_text(encoding='ascii')\nif not metadata.startswith('version=6\\n'):\n    raise SystemExit('v5 metadata was not rebuilt and replaced by canonical v6 metadata')\nPY"
+expect_rc = 0

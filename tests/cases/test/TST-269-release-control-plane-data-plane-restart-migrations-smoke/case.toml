@@ -29,16 +29,16 @@ copy_example(repo_root, root)
 fetch_workspace(binary, root)
 
 def assert_restart_ok(name, env):
-    first, first_lines, first_port = start_service(binary, root, env)
+    first, first_output, first_port = start_service(binary, root, env)
     try:
-        wait_until_health_ok(first, first_lines, first_port)
+        wait_until_health_ok(first, first_output, first_port)
     finally:
-        terminate_process(first)
-    second, second_lines, second_port = start_service(binary, root, env)
+        terminate_process(first, first_output)
+    second, second_output, second_port = start_service(binary, root, env)
     try:
-        wait_until_health_ok(second, second_lines, second_port)
+        wait_until_health_ok(second, second_output, second_port)
     finally:
-        terminate_process(second)
+        terminate_process(second, second_output)
     print(f"{name}-restart-ok")
 
 assert_restart_ok("sqlite", {

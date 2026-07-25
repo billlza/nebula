@@ -94,7 +94,7 @@ if validate.returncode != 0 or "base_url=http://127.0.0.1:40480" not in validate
 jwt_paths = write_jwt_fixture_files(root / "jwt")
 state_dir = root / "state"
 ctl_out_dir = root / ".ctl-out"
-proc, stderr_lines, port = start_service(
+proc, service_output, port = start_service(
     binary,
     workspace,
     {
@@ -109,7 +109,7 @@ proc, stderr_lines, port = start_service(
     build_env=sdk_env,
 )
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
     reader_token = jwt_paths["reader"].read_text(encoding="utf-8").strip()
     writer_token = jwt_paths["writer"].read_text(encoding="utf-8").strip()
@@ -155,7 +155,7 @@ try:
         print_completed(reader_put)
         raise SystemExit("reader unexpectedly wrote config")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 print("control-plane-installed-preview-platform-proof-ok")
 PY

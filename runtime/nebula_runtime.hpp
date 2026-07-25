@@ -302,9 +302,15 @@ inline typename Result<T, E>::Ok result_ok_variant_move(Result<T, E>& result) {
   return std::get<typename Result<T, E>::Ok>(std::move(result.data));
 }
 
+template <typename E> inline void validate_void_result_ok_variant(const Result<void, E> &result) {
+  if (!std::holds_alternative<typename Result<void, E>::Ok>(result.data)) {
+    throw std::bad_variant_access{};
+  }
+}
+
 template <typename E>
 inline void result_ok_move(Result<void, E>& result) {
-  std::get<typename Result<void, E>::Ok>(result.data);
+  validate_void_result_ok_variant(result);
 }
 
 template <typename E>
@@ -314,12 +320,12 @@ inline typename Result<void, E>::Ok result_ok_variant_move(Result<void, E>& resu
 
 template <typename E>
 inline void result_ok_ref(Result<void, E>& result) {
-  std::get<typename Result<void, E>::Ok>(result.data);
+  validate_void_result_ok_variant(result);
 }
 
 template <typename E>
 inline void result_ok_ref(const Result<void, E>& result) {
-  std::get<typename Result<void, E>::Ok>(result.data);
+  validate_void_result_ok_variant(result);
 }
 
 template <typename T, typename E>

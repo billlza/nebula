@@ -1,5 +1,7 @@
 #include "cli_shared.hpp"
 
+#include "boot/protocol_abi_contract.hpp"
+
 #include <charconv>
 #include <iostream>
 
@@ -37,7 +39,8 @@ USAGE:
                      [--root-cause-top-k N] [--root-cause-min-covered N]
                      [--cache-report on|off] [--cache-report-format text|json]
                      [-o|--out PATH] [--out-dir DIR] [--emit-cpp]
-                     [--emit executable|staticlib|sharedlib]
+                     [--emit executable|staticlib|sharedlib|freestanding-object]
+                     [--freestanding-toolchain-root ABSOLUTE_PATH]
   nebula run <path> [--mode debug|release] [--profile auto|fast|deep|hosted|system] [--diag-format text|json]
                    [--target host|freestanding|<triple>] [--no-std] [--panic abort|trap|unwind]
                    [--analysis-tier basic|smart|deep] [--smart on|off]
@@ -327,6 +330,10 @@ static bool parse_build_artifact_kind(std::string_view s, BuildArtifactKind& out
     out = BuildArtifactKind::SharedLib;
     return true;
   }
+  if (s == "freestanding-object") {
+    out = BuildArtifactKind::FreestandingObject;
+    return true;
+  }
   return false;
 }
 
@@ -436,6 +443,19 @@ bool parse_cli_options(const std::vector<std::string>& args,
         err = "invalid --emit value: " + *value;
         return false;
       }
+    } else if (tok == "--freestanding-toolchain-root") {
+      if (cmd != "build") {
+        err = "unknown option: " + tok;
+        return false;
+      }
+      if (opt.freestanding_toolchain_root.has_value()) {
+        err = "duplicate option: --freestanding-toolchain-root";
+        return false;
+      }
+      auto value = next_value("--freestanding-toolchain-root");
+      if (!value.has_value())
+        return false;
+      opt.freestanding_toolchain_root = fs::path(*value);
     } else if (tok == "--reuse") {
       if (!run_only_options_allowed) {
         err = "unknown option: " + tok;
@@ -462,6 +482,9 @@ bool parse_cli_options(const std::vector<std::string>& args,
         opt.profile_explicit = true;
       } else if (parse_runtime_profile(*value, opt.runtime_profile)) {
         opt.runtime_profile_explicit = true;
+        if (opt.runtime_profile == RuntimeProfile::Hosted) {
+          opt.hosted_runtime_profile_requested = true;
+        }
         if (opt.runtime_profile == RuntimeProfile::System) opt.no_std = true;
       } else {
         err = "invalid --profile value: " + *value;
@@ -475,6 +498,9 @@ bool parse_cli_options(const std::vector<std::string>& args,
         return false;
       }
       opt.runtime_profile_explicit = true;
+      if (opt.runtime_profile == RuntimeProfile::Hosted) {
+        opt.hosted_runtime_profile_requested = true;
+      }
       if (opt.runtime_profile == RuntimeProfile::System) opt.no_std = true;
     } else if (tok == "--target") {
       auto value = next_value("--target");
@@ -764,6 +790,42 @@ bool parse_cli_options(const std::vector<std::string>& args,
       err = "unexpected positional argument: " + tok;
       return false;
     }
+  }
+
+  if (opt.artifact_kind == BuildArtifactKind::FreestandingObject) {
+    if (!opt.target_explicit) {
+      err = "--emit freestanding-object requires explicit --target x86_64-unknown-none";
+      return false;
+    }
+    if (opt.target != nebula::boot::kUosX86_64TargetTriple) {
+      err = "--emit freestanding-object supports only --target x86_64-unknown-none";
+      return false;
+    }
+    if (!opt.panic_policy_explicit) {
+      err = "--emit freestanding-object requires explicit --panic trap";
+      return false;
+    }
+    if (opt.panic_policy != PanicPolicy::Trap) {
+      err = "--emit freestanding-object supports only --panic trap";
+      return false;
+    }
+    if (opt.hosted_runtime_profile_requested) {
+      err = "--emit freestanding-object conflicts with an explicit hosted runtime profile";
+      return false;
+    }
+    if (!opt.freestanding_toolchain_root.has_value()) {
+      err = "--emit freestanding-object requires explicit --freestanding-toolchain-root";
+      return false;
+    }
+    opt.runtime_profile = RuntimeProfile::System;
+    opt.no_std = true;
+    opt.strict_region = true;
+  }
+
+  if (opt.artifact_kind != BuildArtifactKind::FreestandingObject &&
+      opt.freestanding_toolchain_root.has_value()) {
+    err = "--freestanding-toolchain-root requires --emit freestanding-object";
+    return false;
   }
 
   if (effective_no_std(opt.runtime_profile, opt.no_std) &&

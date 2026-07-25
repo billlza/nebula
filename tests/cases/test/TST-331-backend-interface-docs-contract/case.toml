@@ -88,7 +88,11 @@ for rel, line_no, line in emission_sites:
         continue
     if "backend.emit_translation_unit(" in line:
         text = (repo / rel).read_text(encoding="utf-8")
-        if "const auto& backend = nebula::codegen::default_backend();" in text:
+        backend_binding = re.compile(
+            r"\bconst\s+auto\s*&\s*backend\s*=\s*"
+            r"nebula::codegen::default_backend\(\)\s*;"
+        )
+        if backend_binding.search(text):
             continue
     raise SystemExit(f"{rel}:{line_no}: emission does not use default_backend(): {line}")
 

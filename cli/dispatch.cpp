@@ -2,7 +2,10 @@
 
 #include <iostream>
 #include <optional>
+#include <cstdio>
 #include <cstdlib>
+#include <csignal>
+#include <exception>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -54,9 +57,27 @@ std::optional<fs::path> self_executable_path(const char* argv0) {
   return std::nullopt;
 }
 
+void write_cli_boundary_failure(const char *detail) noexcept {
+  constexpr char prefix[] = "fatal: unhandled internal exception at CLI boundary: ";
+  constexpr char suffix[] = "\n";
+  (void)std::fwrite(prefix, 1U, sizeof(prefix) - 1U, stderr);
+  if (detail != nullptr) {
+    char sanitized[513]{};
+    std::size_t length = 0U;
+    while (length < sizeof(sanitized) - 1U && detail[length] != '\0') {
+      const unsigned char byte = static_cast<unsigned char>(detail[length]);
+      sanitized[length] = byte >= 0x20U && byte < 0x7fU ? static_cast<char>(byte) : '?';
+      ++length;
+    }
+    (void)std::fwrite(sanitized, 1U, length, stderr);
+  }
+  (void)std::fwrite(suffix, 1U, sizeof(suffix) - 1U, stderr);
+  (void)std::fflush(stderr);
+}
+
 } // namespace
 
-int main(int argc, char** argv) {
+static int run_cli(int argc, char **argv) {
   std::vector<std::string> args;
   args.reserve(static_cast<std::size_t>(argc));
   for (int i = 0; i < argc; ++i) args.emplace_back(argv[i]);
@@ -216,10 +237,33 @@ int main(int argc, char** argv) {
   if (is_file_cmd) {
     const fs::path file = args[2];
     if (cmd == "check") return cmd_check(file, opt);
-    if (cmd == "build") return cmd_build(file, opt);
+    if (cmd == "build") {
+      const CliCommandResult result = cmd_build(file, opt);
+      if (result.interrupted_signal != 0) {
+        if (std::raise(result.interrupted_signal) != 0) {
+          std::cerr << "error: failed to restore termination signal " << result.interrupted_signal
+                    << " after build cleanup\n";
+          return 125;
+        }
+        return 128 + result.interrupted_signal;
+      }
+      return result.exit_code;
+    }
     return cmd_run(file, opt);
   }
 
   if (cmd == "test") return cmd_test(opt);
   return cmd_bench(opt);
+}
+
+int main(int argc, char **argv) {
+  try {
+    return run_cli(argc, argv);
+  } catch (const std::exception &error) {
+    write_cli_boundary_failure(error.what());
+    return 125;
+  } catch (...) {
+    write_cli_boundary_failure("non-standard exception");
+    return 125;
+  }
 }

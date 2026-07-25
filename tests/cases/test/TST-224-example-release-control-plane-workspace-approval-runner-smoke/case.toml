@@ -38,8 +38,8 @@ service_env = {
     'APP_WRITE_TOKEN': 'writer-token',
     'APP_ADMIN_TOKEN': 'admin-token',
 }
-proc, stderr_lines, port = start_service(binary, root, extra_env=service_env)
-wait_until_health_ok(proc, stderr_lines, port)
+proc, service_output, port = start_service(binary, root, extra_env=service_env)
+wait_until_health_ok(proc, service_output, port)
 try:
     base_url = f'http://127.0.0.1:{port}'
     ctl_out = root / '.ctl-out'
@@ -505,7 +505,7 @@ try:
 
     print('example-release-control-plane-workspace-approval-runner-ok')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 PY
 """
 expect_rc = 0

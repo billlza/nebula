@@ -5,6 +5,50 @@ suite = "test"
 kind = "shell"
 run = """
 python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import build_service_binary, copy_example, fetch_workspace
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_release')
+copy_example(repo_root, root)
+fetch_workspace(binary, root)
+build_service_binary(binary, root)
+print('release-control-plane-service-prebuilt')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-service-prebuilt"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from release_control_plane_workspace import build_ctl_binary
+
+binary = os.environ['NEBULA_BINARY']
+root = Path('work/example_release_control_plane_workspace_release')
+build_ctl_binary(binary, root, root / '.ctl-out')
+print('release-control-plane-ctl-prebuilt')
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["release-control-plane-ctl-prebuilt"]
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
 import json
 import os
 import sys
@@ -13,20 +57,16 @@ from pathlib import Path
 repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
 sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
 from release_control_plane_workspace import (
-    copy_example,
-    fetch_workspace,
     print_completed,
     require_success,
     run_ctl,
-    start_service,
+    start_prebuilt_service,
     terminate_process,
     wait_until_health_ok,
 )
 
 binary = os.environ['NEBULA_BINARY']
 root = Path('work/example_release_control_plane_workspace_release')
-copy_example(repo_root, root)
-fetch_workspace(binary, root)
 service_env = {
     'APP_STATE_DIR': str((root / 'state').resolve()),
     'APP_AUTH_REQUIRED': '1',
@@ -34,13 +74,16 @@ service_env = {
     'APP_WRITE_TOKEN': 'writer-token',
     'APP_ADMIN_TOKEN': 'admin-token',
 }
-proc, stderr_lines, port = start_service(binary, root, extra_env=service_env)
-wait_until_health_ok(proc, stderr_lines, port)
+proc, service_output, port = start_prebuilt_service(
+    root / '.service-out' / 'main.out',
+    extra_env=service_env,
+)
+wait_until_health_ok(proc, service_output, port)
 try:
     base_url = f'http://127.0.0.1:{port}'
     ctl_out = root / '.ctl-out'
 
-    status_result = run_ctl(binary, root, 'status', '--url', base_url, '--token', 'reader-token', out_dir=ctl_out)
+    status_result = run_ctl(binary, root, 'status', '--url', base_url, '--token', 'reader-token', out_dir=ctl_out, no_build=True)
     require_success(status_result, 'ctl status')
     if 'status=ok' not in status_result.stdout:
         print_completed(status_result)
@@ -274,7 +317,7 @@ try:
 
     print('example-release-control-plane-workspace-release-ok')
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 PY
 """
 expect_rc = 0

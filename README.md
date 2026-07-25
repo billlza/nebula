@@ -29,6 +29,12 @@ Nebula is a minimal language + compiler pipeline focused on:
   `--no-std`, and `--panic abort|trap` make early universeOS-facing constraints explicit by
   forbidding bundled `std` imports and forcing strict region diagnostics before any no-std runtime
   claim is made.
+- **Experimental primitive object gate**: `nebula build <path> --emit freestanding-object --target
+  x86_64-unknown-none --panic trap --freestanding-toolchain-root <absolute-clang-root>` emits a
+  reachable `Int/Bool/Void` subset as an audited ELF64
+  relocatable object on macOS/Linux compiler hosts; Windows explicitly reports
+  `NBL-CLI-FS-HOST-UNSUPPORTED`. It is clang-backed and is not a linker, runtime, boot, kernel, or
+  direct object-backend claim.
 
 This repo implements a practical compiler in **C++**:
 
@@ -57,8 +63,8 @@ Nebula is not yet positioned as:
 - a mature SwiftUI/Qt/Flutter-class UI renderer, layout engine, or native adapter stack
 - a direct native embedding surface for Swift/Rust/JavaScript without a C ABI or process boundary
 - a complete PQC / TLS stack yet; the current official crypto slice is intentionally narrower
-- a freestanding/no-std OS implementation language; the new system-profile CLI gate is a diagnostic
-  and codegen-contract milestone, not a kernel/runtime/backend independence claim
+- a freestanding/no-std OS implementation language; the system-profile CLI gates and primitive
+  object slice are compiler-contract milestones, not kernel/runtime/backend independence claims
 
 ## Backend Service Profile
 
@@ -286,6 +292,10 @@ Host compiler requirement:
   not silently fall back to `g++`.
 - If the compiler is missing, Nebula now reports a dedicated CLI diagnostic instead of only a raw
   process failure.
+- The experimental freestanding-object command is the narrow exception: it requires an explicit
+  owner-controlled root containing `bin/clang++`, binds one immutable compiler snapshot to both
+  provenance and execution, and uses a fixed cross-target invocation independent of `PATH` and
+  `CXX`; it still bootstraps through generated C++ and is not an independent native backend.
 
 Git dependency requirement:
 
@@ -297,7 +307,11 @@ Git dependency requirement:
 
 - `nebula check <path>`: static analysis and diagnostics for a file, project dir, or `nebula.toml`
 - `nebula build <path>`: compile and link
-  - `--emit executable|staticlib|sharedlib` controls the build artifact kind
+  - `--emit executable|staticlib|sharedlib|freestanding-object` controls the build artifact kind;
+    the last form requires exact `--target x86_64-unknown-none --panic trap` plus
+    `--freestanding-toolchain-root <absolute-clang-root>` and only emits an
+    experimental primitive relocatable object on macOS/Linux hosts (Windows fails explicitly as
+    host-unsupported)
 - `nebula run <path> [-- <program-args...>]`: preflight, build, execute
 - `nebula test`: run `@test` harness; `--dir` accepts a raw source dir or a project/workspace root
 - `nebula bench`: run `@bench` harness with stable clock/platform/perf capability output; `--dir`
@@ -332,6 +346,13 @@ Hosted registry flows are available directly from installed binaries and repo ch
 - `nebula publish <project> --registry-url <url> [--registry-token <token>]`
 - `nebula fetch <project> --registry-url <url> [--registry-token <token>]`
 - `nebula update <project> --registry-url <url> [--registry-token <token>]`
+
+`NEBULA_REGISTRY_TOKEN`, injected by a credential manager or CI secret store rather than typed
+inline, is the preferred non-interactive credential input because a token written on the outer
+`nebula` command line may be retained by shell history or exposed through process inspection. Both
+inputs remain supported, but Nebula passes the resolved token to its bundled registry helper only
+as the child process's `NEBULA_REGISTRY_TOKEN`; the token is never forwarded in helper argv or
+included in Nebula's child-process diagnostics.
 
 This hosted path still mirrors remote exact-version packages into a local registry root before the
 core resolver runs; it widens the distribution/install contract, not the core resolver model.

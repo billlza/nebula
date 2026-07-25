@@ -112,9 +112,9 @@ service_env = {
     "APP_WORKER_TOKEN": worker_token,
 }
 
-proc, stderr_lines, port = start_service(binary, root, service_env)
+proc, service_output, port = start_service(binary, root, service_env)
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
     require_success(run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out), "prewarm ctl")
 
@@ -154,7 +154,7 @@ try:
     if len(json.loads(audit.stdout).get("events", [])) <= 0:
         raise SystemExit("postgres audit list was empty")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 print("release-control-plane-postgres-live-ok")
 print("release-control-plane-postgres-data-plane-ok")

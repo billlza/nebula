@@ -1,0 +1,49 @@
+{
+  "artifacts": [
+    {
+      "name": "assessment.json",
+      "sha256": "12fe3c74f92f46e39614bd6c7c7c506cee0083ab83b6b36b737169e680523569",
+      "sizeBytes": 8144274
+    },
+    {
+      "name": "assessment.md",
+      "sha256": "87d173673375417119c475344eac202dedc280cb82c386b83d773cea7fead169",
+      "sizeBytes": 2767197
+    },
+    {
+      "name": "assessment.schema.json",
+      "sha256": "940946329705db209eb85403998e5595c095c904b7888db65b8ed283d300e0e7",
+      "sizeBytes": 3378
+    },
+    {
+      "name": "capability_matrix.csv",
+      "sha256": "3c4190bebce6b556e26e0adcee88e4fdc3c9bd8f3f3a9ff71cf5eadbed34c270",
+      "sizeBytes": 54454
+    },
+    {
+      "name": "capability_matrix.json",
+      "sha256": "d08ff81071b9fdbd6b2d2a9bca743cdb58916e7567e54989930e1b4f0defbaec",
+      "sizeBytes": 103105
+    },
+    {
+      "name": "gap_register.csv",
+      "sha256": "c6f812470027c8d8310dbd6267a370a5034baa0458b58996155c64b920837bc9",
+      "sizeBytes": 182347
+    },
+    {
+      "name": "gap_register.json",
+      "sha256": "c392be6d62d7f11f6153bf448f35b1f522284663f34eade0a91257836abaa351",
+      "sizeBytes": 279350
+    }
+  ],
+  "digestAlgorithm": "sha256",
+  "revision": {
+    "commitId": "0a1429a9a596ce8fc9d6681bdfaac30435059231",
+    "fingerprintAlgorithm": "sha256-length-prefixed-worktree-v1",
+    "repositoryRootId": "repository-root-f7e136ef86a9c010c2e9",
+    "trackedDiffHash": "1fc6a28cbca08d5862366f1a1402b69728f13ffd5c0055751701b388b0bca02b",
+    "untrackedPathSetHash": "67066c4a9533b1522edb03cef4ae60745ebfc85a4c62be51e43d4d8f004669cd",
+    "worktreeFingerprint": "bb43e3033a4a87bd9578a79e23439224c200652fc3cdc84be523a23ae27d53c4"
+  },
+  "schemaVersion": "1.0.0"
+}

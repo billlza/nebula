@@ -14,7 +14,7 @@ from pathlib import Path
 
 repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
 sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
-from service_probe import collect_observe_events, fail_with_output, finish_process_output, wait_for_listener_bound
+from service_probe import start_process, terminate_process, collect_observe_events, fail_with_output, finish_process_output, wait_for_listener_bound
 
 root = Path('work/official_service_lifecycle_classification')
 shutil.rmtree(root, ignore_errors=True)
@@ -73,17 +73,16 @@ async fn main() -> Void {
 """, encoding='utf-8')
 
 subprocess.run([os.environ['NEBULA_BINARY'], 'update', str(root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-proc = subprocess.Popen([
+proc, service_output = start_process([
     os.environ['NEBULA_BINARY'],
     'run',
     str(root),
     '--run-gate',
     'none',
-], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env={**os.environ, 'NEBULA_BIND_HOST': '127.0.0.1', 'NEBULA_PORT': '0', 'NEBULA_DRAIN_FILE': str(drain_file), 'NEBULA_DRAIN_POLL_MS': '100'})
-stderr_lines = []
-_, port = wait_for_listener_bound(proc, stderr_lines, timeout=45.0)
+], 'listener_bound', env={**os.environ, 'NEBULA_BIND_HOST': '127.0.0.1', 'NEBULA_PORT': '0', 'NEBULA_DRAIN_FILE': str(drain_file), 'NEBULA_DRAIN_POLL_MS': '100'})
+_, port = wait_for_listener_bound(proc, service_output, timeout=45.0)
 if not isinstance(port, int) or port <= 0:
-    fail_with_output(proc, stderr_lines, f'invalid listener port: {port!r}')
+    fail_with_output(proc, service_output, f'invalid listener port: {port!r}')
 
 try:
     drain_file.write_text('drain\n', encoding='utf-8')
@@ -91,7 +90,7 @@ try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         raise SystemExit('service did not exit after drain lifecycle request')
-    stdout, stderr = finish_process_output(proc, stderr_lines)
+    stdout, stderr = finish_process_output(proc, service_output)
     print(stdout, end='')
     print(stderr, end='')
     if proc.returncode != 0:
@@ -125,13 +124,7 @@ try:
 
     print('official-service-lifecycle-classification-ok')
 finally:
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+    terminate_process(proc, service_output)
 PY
 '''
 expect_rc = 0

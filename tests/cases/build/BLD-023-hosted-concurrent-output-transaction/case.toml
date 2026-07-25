@@ -1,0 +1,70 @@
+id = "BLD-023-hosted-concurrent-output-transaction"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/hosted-concurrent-output"
+rm -rf "$root"
+mkdir -p "$root"
+
+cat >"$root/a.nb" <<'EOF'
+fn main() -> Void {
+  print("concurrent-a")
+}
+EOF
+cat >"$root/b.nb" <<'EOF'
+fn main() -> Void {
+  print("concurrent-b")
+}
+EOF
+
+set +e
+"$NEBULA_BINARY" build "$root/a.nb" -o "$root/shared.out" \
+  --diag-format json >"$root/a.log" 2>&1 &
+pid_a=$!
+"$NEBULA_BINARY" build "$root/b.nb" -o "$root/shared.out" \
+  --diag-format json >"$root/b.log" 2>&1 &
+pid_b=$!
+wait "$pid_a"
+rc_a=$?
+wait "$pid_b"
+rc_b=$?
+set -e
+
+if test "$rc_a" -ne 0 && test "$rc_b" -ne 0; then
+  echo "both concurrent builds failed" >&2
+  cat "$root/a.log" "$root/b.log" >&2
+  exit 1
+fi
+
+test -f "$root/shared.out"
+test -f "$root/shared.out.nebmeta"
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+artifact = Path("work/hosted-concurrent-output/shared.out")
+metadata = Path(str(artifact) + ".nebmeta")
+lines = metadata.read_text(encoding="ascii").splitlines()
+if len(lines) != 15 or lines[0] != "version=6":
+    raise SystemExit(f"noncanonical concurrent metadata: {lines!r}")
+fields = dict(line.split("=", 1) for line in lines)
+payload = artifact.read_bytes()
+if fields["artifact_size"] != str(len(payload)):
+    raise SystemExit("concurrent artifact/metadata size mismatch")
+if fields["artifact_sha256"] != hashlib.sha256(payload).hexdigest():
+    raise SystemExit("concurrent artifact/metadata digest mismatch")
+PY
+
+output=$("$root/shared.out")
+case "$output" in
+  concurrent-a|concurrent-b) ;;
+  *) echo "unexpected final concurrent artifact output: $output" >&2; exit 1 ;;
+esac
+
+echo "hosted-concurrent-output-ok:$rc_a:$rc_b:$output"
+'''
+expect_rc = 0
+expect_stdout_contains = ["hosted-concurrent-output-ok:"]

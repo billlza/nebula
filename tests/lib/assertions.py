@@ -15,6 +15,15 @@ def _to_bool(v: Any) -> bool:
     return bool(v)
 
 
+def _directory_entry_exists(path: Path) -> bool:
+    """Return whether the lexical directory entry exists, including a dangling symlink."""
+    try:
+        path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
 def _diag_matches(diag: dict[str, Any], spec: dict[str, Any]) -> bool:
     for key, expected in spec.items():
         if key == "confidence_min":
@@ -77,14 +86,14 @@ def evaluate_step_assertions(step: dict[str, Any], step_result: dict[str, Any], 
 
     for rel in step.get("must_exist", []):
         p = sandbox_root / rel
-        if not p.exists():
+        if not _directory_entry_exists(p):
             failures.append(f"expected path to exist: {p}")
         else:
             matched += 1
 
     for rel in step.get("must_not_exist", []):
         p = sandbox_root / rel
-        if p.exists():
+        if _directory_entry_exists(p):
             failures.append(f"expected path not to exist: {p}")
         else:
             matched += 1

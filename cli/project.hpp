@@ -83,6 +83,8 @@ struct PublishPackageResult {
 
 struct LoadedCompileInput {
   bool ok = false;
+  fs::path root_manifest_path;
+  fs::path lockfile_path;
   fs::path manifest_path;
   fs::path project_root;
   fs::path module_root;
@@ -91,6 +93,8 @@ struct LoadedCompileInput {
   std::string cache_key_source;
   std::vector<nebula::frontend::SourceFile> compile_sources;
   std::vector<fs::path> source_files;
+  std::vector<BuildInputFileIdentity> build_input_identities;
+  std::vector<BuildInputDirectoryIdentity> build_input_directory_identities;
   std::vector<fs::path> host_cxx_sources;
   NativeBuildInputs native_inputs;
   std::vector<nebula::frontend::Diagnostic> diags;

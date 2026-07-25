@@ -45,7 +45,7 @@ scope_file.write_text(
     encoding="utf-8",
 )
 fetch_workspace(binary, root)
-proc, stderr_lines, port = start_service(
+proc, service_output, port = start_service(
     binary,
     root,
     {
@@ -69,7 +69,7 @@ def require_denied(result, permission_text: str, scope_text: str, label: str) ->
         raise SystemExit(f"{label} missing scoped denial detail")
 
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
     prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out_dir)
     require_success(prewarm, "prewarm ctl")
@@ -149,7 +149,7 @@ try:
     )
     require_denied(writer_workflow_stage, "permission=jobs.run.trigger", "scope=control-plane/stage", "writer workflow submit stage")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 print("release-control-plane-token-scope-authz-ok")
 PY

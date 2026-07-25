@@ -58,9 +58,9 @@ stage_worker_lease_id = ""
 stage_broker_message_id = 0
 stage_broker_lease_id = ""
 
-proc, stderr_lines, port = start_service(binary, root, base_service_env)
+proc, service_output, port = start_service(binary, root, base_service_env)
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
     prewarm = run_ctl(binary, root, "control-plane-validate", "--url", base_url, out_dir=ctl_out)
     require_success(prewarm, "prewarm ctl binary")
@@ -168,7 +168,7 @@ try:
             if broker_message.get("key") != "control-plane/stage/1":
                 raise SystemExit(f"expected stage broker message before scoped restart: {broker_claim.stdout!r}")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 scope_file.write_text(
     json.dumps(
@@ -185,9 +185,9 @@ scope_file.write_text(
 )
 
 scoped_env = {**base_service_env, "APP_AUTH_SCOPE_FILE": str(scope_file)}
-proc, stderr_lines, port = start_service(binary, root, scoped_env)
+proc, service_output, port = start_service(binary, root, scoped_env)
 try:
-    wait_until_health_ok(proc, stderr_lines, port)
+    wait_until_health_ok(proc, service_output, port)
     base_url = f"http://127.0.0.1:{port}"
 
     prod_worker_claim = run_ctl(
@@ -275,7 +275,7 @@ try:
     )
     require_denied_not_found(stage_broker_complete, "broker outbox message not found", "scoped stage broker complete")
 finally:
-    terminate_process(proc)
+    terminate_process(proc, service_output)
 
 print("release-control-plane-background-scope-authz-ok")
 PY

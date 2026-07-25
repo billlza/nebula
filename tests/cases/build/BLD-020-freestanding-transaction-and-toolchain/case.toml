@@ -1,0 +1,1214 @@
+id = "BLD-020-freestanding-transaction-and-toolchain"
+suite = "build"
+timeout = 180
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    root="work/freestanding-transaction-windows"
+    rm -rf "$root"
+    mkdir -p "$root"
+    set +e
+    "$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/freestanding_entry.nb" \
+      --emit freestanding-object --target x86_64-unknown-none --panic trap \
+      --freestanding-toolchain-root "$NEBULA_REPO_ROOT" \
+      --diag-format json --out-dir "$root" >"$root/build.log" 2>&1
+    rc=$?
+    set -e
+    test "$rc" -ne 0
+    grep -F '"code":"NBL-CLI-FS-HOST-UNSUPPORTED"' "$root/build.log"
+    echo freestanding-transaction-ok
+    exit 0
+    ;;
+esac
+root="$(pwd -P)/work/freestanding-transaction"
+rm -rf "$root"
+mkdir -p "$root/a" "$root/b"
+source="$NEBULA_REPO_ROOT/tests/fixtures/freestanding_entry.nb"
+real_toolchain_root=$(sh "$NEBULA_REPO_ROOT/tests/lib/resolve_freestanding_toolchain_root.sh")
+real_clang="$real_toolchain_root/bin/clang++"
+base_common="--emit freestanding-object --target x86_64-unknown-none --panic trap --mode release"
+common="$base_common --freestanding-toolchain-root $real_toolchain_root"
+
+"$NEBULA_BINARY" build "$source" $common --out-dir "$root/a" >"$root/a.log" 2>&1
+"$NEBULA_BINARY" build "$source" $common --out-dir "$root/b" >"$root/b.log" 2>&1
+cmp "$root/a/freestanding_entry.o" "$root/b/freestanding_entry.o"
+before=$(python3 - "$root/a/freestanding_entry.o" <<'PY'
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)
+set +e
+"$NEBULA_BINARY" build "$source" $common --out-dir "$root/a" >"$root/rebuild.log" 2>&1
+rebuild_rc=$?
+set -e
+test "$rebuild_rc" -ne 0
+grep -F 'NBL-CLI-FS-OUTPUT-EXISTS' "$root/rebuild.log"
+after=$(python3 - "$root/a/freestanding_entry.o" <<'PY'
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)
+test "$before" = "$after"
+
+ln -s "$root/dangling-target.o" "$root/dangling.o"
+set +e
+"$NEBULA_BINARY" build "$source" $common -o "$root/dangling.o" \
+  >"$root/dangling.log" 2>&1
+dangling_rc=$?
+set -e
+test "$dangling_rc" -ne 0
+grep -F 'NBL-CLI-FS-OUTPUT-EXISTS' "$root/dangling.log"
+test -L "$root/dangling.o"
+test ! -e "$root/dangling-target.o"
+
+weird="$root/weird path;literal\$(x).o"
+"$NEBULA_BINARY" build "$source" $common -o "$weird" >"$root/weird.log" 2>&1
+test -f "$weird"
+test -f "$weird.nebmeta"
+test -f "${weird%.o}.freestanding.cpp"
+
+newline_path=$(printf '%s/log-line\ninjection.o' "$root")
+"$NEBULA_BINARY" build "$source" $common -o "$newline_path" >"$root/newline.log" 2>&1
+test -f "$newline_path"
+grep -F '\n' "$root/newline.log"
+! grep -x 'injection.o' "$root/newline.log"
+
+c1_path=$(printf '%s/c1-\302\205.o' "$root")
+"$NEBULA_BINARY" build "$source" $common -o "$c1_path" >"$root/c1.log" 2>&1
+test -f "$c1_path"
+grep -F '\xc2\x85' "$root/c1.log"
+python3 - "$root/c1.log" <<'PY'
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+assert b"\xc2" not in data and b"\x85" not in data
+PY
+
+vanished_cwd="$root/vanished-cwd"
+vanished_log="$root/vanished-cwd.log"
+mkdir -p "$vanished_cwd"
+(
+  cd "$vanished_cwd"
+  rmdir "$vanished_cwd"
+  set +e
+  "$NEBULA_BINARY" build "$source" $common -o relative.o >"$vanished_log" 2>&1
+  vanished_rc=$?
+  set -e
+  test "$vanished_rc" -ne 0
+)
+grep -F 'NBL-CLI-FS-IO' "$vanished_log"
+grep -F 'failed to resolve an absolute freestanding object path' "$vanished_log"
+
+mkdir -p "$root/fake-bad/bin"
+cat >"$root/fake-bad/bin/clang++" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = '--version' ]; then
+  printf '%s\n' 'Nebula malformed-object clang 1.0'
+  exit 0
+fi
+for argument in "$@"; do
+  if [ "$argument" = '-dumpmachine' ]; then
+    printf '%s\n' 'x86_64-unknown-none'
+    exit 0
+  fi
+  if [ "$argument" = '-fsyntax-only' ]; then
+    exit 0
+  fi
+done
+out=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = '-o' ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+test -n "$out"
+printf 'not-an-elf-object' >"$out"
+SH
+chmod +x "$root/fake-bad/bin/clang++"
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-bad" \
+  -o "$root/bad.o" >"$root/bad.log" 2>&1
+bad_rc=$?
+set -e
+test "$bad_rc" -ne 0
+grep -F 'NBL-CLI-FS-OBJECT' "$root/bad.log"
+test ! -e "$root/bad.o"
+test ! -e "$root/bad.o.nebmeta"
+test ! -e "$root/bad.freestanding.cpp"
+
+set +e
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/assign_invalid_target.nb" $base_common \
+  --freestanding-toolchain-root "$root/fake-bad" \
+  -o "$root/analysis-failure.o" >"$root/analysis-failure.log" 2>&1
+analysis_failure_rc=$?
+set -e
+test "$analysis_failure_rc" -eq 1
+grep -F 'invalid assignment target' "$root/analysis-failure.log"
+test ! -e "$root/analysis-failure.o"
+test ! -e "$root/analysis-failure.o.nebmeta"
+test -z "$(find "$root/fake-bad/bin" -name '.nebula-exec-*' -print -quit)"
+
+real_sleep=$(command -v sleep)
+real_shell=$(command -v sh)
+real_ln=$(command -v ln)
+real_python=$(command -v python3)
+
+python3 - "$NEBULA_BINARY" "$source" "$root" "$real_clang" "$real_python" "$real_sleep" <<'PY'
+from __future__ import annotations
+
+from pathlib import Path
+import os
+import shlex
+import subprocess
+import sys
+
+
+binary, source, root_value, real_clang, python, sleep = sys.argv[1:]
+root = Path(root_value)
+base_arguments = [
+    binary,
+    "build",
+    source,
+    "--emit",
+    "freestanding-object",
+    "--target",
+    "x86_64-unknown-none",
+    "--panic",
+    "trap",
+    "--mode",
+    "release",
+]
+
+
+def make_fixture(name: str, body: str) -> tuple[Path, Path]:
+    fixture = root / name
+    compiler = fixture / "bin" / "clang++"
+    compiler.parent.mkdir(parents=True)
+    compiler.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    compiler.chmod(0o755)
+    return fixture, compiler
+
+
+def run_failure(name: str, body: str, expected: str) -> None:
+    fixture, _ = make_fixture(name, body)
+    output = root / f"{name}.o"
+    result = subprocess.run(
+        [
+            *base_arguments,
+            "--freestanding-toolchain-root",
+            str(fixture),
+            "-o",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    log = result.stdout + result.stderr
+    (root / f"{name}.log").write_text(log, encoding="utf-8")
+    if result.returncode != 125 or expected not in log:
+        raise AssertionError(
+            f"{name} did not fail closed as expected: rc={result.returncode} log={log!r}"
+        )
+    if output.exists() or Path(str(output) + ".nebmeta").exists():
+        raise AssertionError(f"{name} published an output")
+    leaked_snapshots = list((fixture / "bin").glob(".nebula-exec-*"))
+    if leaked_snapshots:
+        raise AssertionError(f"{name} left compiler snapshots: {leaked_snapshots!r}")
+
+
+version_prefix = (
+    "if [ \"$#\" -eq 1 ] && [ \"$1\" = '--version' ]; then "
+)
+query_dispatch = (
+    "for argument in \"$@\"; do\n"
+    "  if [ \"$argument\" = '-dumpmachine' ]; then "
+    "printf '%s\\n' 'x86_64-unknown-none'; exit 0; fi\n"
+    "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 0; fi\n"
+    "done\n"
+)
+
+run_failure(
+    "query-overflow",
+    version_prefix
+    + "exec "
+    + shlex.quote(python)
+    + " -c "
+    + shlex.quote("import os; os.write(1, b'v' * 70000)")
+    + "; fi\n"
+    + query_dispatch
+    + "exit 90\n",
+    "stdout capture exceeded its 65536-byte limit",
+)
+run_failure(
+    "query-empty",
+    version_prefix + "exit 0; fi\n" + query_dispatch + "exit 90\n",
+    "version query produced no bounded identity output",
+)
+run_failure(
+    "query-wrong-target",
+    version_prefix
+    + "printf '%s\\n' 'Nebula wrong-target clang 1.0'; exit 0; fi\n"
+    + "for argument in \"$@\"; do\n"
+    + "  if [ \"$argument\" = '-dumpmachine' ]; then "
+    + "printf 'wrong-target\\ninjection\\n'; exit 0; fi\n"
+    + "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 0; fi\n"
+    + "done\nexit 90\n",
+    'unexpected target triple: "wrong-target\\ninjection"',
+)
+run_failure(
+    "query-capability",
+    version_prefix
+    + "printf '%s\\n' 'Nebula incapable clang 1.0'; exit 0; fi\n"
+    + "for argument in \"$@\"; do\n"
+    + "  if [ \"$argument\" = '-dumpmachine' ]; then "
+    + "printf '%s\\n' 'x86_64-unknown-none'; exit 0; fi\n"
+    + "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 87; fi\n"
+    + "done\nexit 90\n",
+    "ABI capability query failed with exit status 87",
+)
+run_failure(
+    "query-timeout",
+    version_prefix
+    + "exec "
+    + shlex.quote(sleep)
+    + " 10; fi\n"
+    + query_dispatch
+    + "exit 90\n",
+    "version query failed after its bounded timeout and confirmed cleanup",
+)
+
+overflow_body = (
+    version_prefix
+    + "printf '%s\\n' 'Nebula output-overflow clang 1.0'; exit 0; fi\n"
+    + query_dispatch
+    + "exec "
+    + shlex.quote(python)
+    + " -c "
+    + shlex.quote("import os; os.write(1, b'o' * 70000); os.write(2, b'e' * 70000)")
+    + "\n"
+)
+run_failure(
+    "compile-output-overflow",
+    overflow_body,
+    "stdout capture exceeded its 65536-byte limit",
+)
+overflow_log = (root / "compile-output-overflow.log").read_text(encoding="utf-8")
+if len(overflow_log.encode("utf-8")) > 8192 or "o" * 1024 in overflow_log:
+    raise AssertionError("oversized compiler bytes were injected into the CLI diagnostic")
+
+mutation_fixture = root / "query-public-mutation"
+public_compiler = mutation_fixture / "bin" / "clang++"
+marker = mutation_fixture / "replacement-executed"
+mutation_code = (
+    "from pathlib import Path; import os; "
+    f"p=Path({str(public_compiler)!r}); m=Path({str(marker)!r}); "
+    "p.write_text('#!/bin/sh\\n: > '+str(m)+'\\nexit 89\\n', encoding='utf-8'); "
+    "os.chmod(p, 0o755)"
+)
+mutation_body = (
+    version_prefix
+    + shlex.quote(python)
+    + " -c "
+    + shlex.quote(mutation_code)
+    + "; printf '%s\\n' 'Nebula mutation clang 1.0'; exit 0; fi\n"
+    + query_dispatch
+    + "exec "
+    + shlex.quote(real_clang)
+    + ' "$@"\n'
+)
+make_fixture("query-public-mutation", mutation_body)
+mutation_output = root / "query-public-mutation.o"
+mutation_result = subprocess.run(
+    [
+        *base_arguments,
+        "--freestanding-toolchain-root",
+        str(mutation_fixture),
+        "-o",
+        str(mutation_output),
+    ],
+    check=False,
+    capture_output=True,
+    text=True,
+    timeout=30,
+)
+(root / "query-public-mutation.log").write_text(
+    mutation_result.stdout + mutation_result.stderr, encoding="utf-8"
+)
+mutation_snapshots = list((mutation_fixture / "bin").glob(".nebula-exec-*"))
+if (
+    mutation_result.returncode != 0
+    or not mutation_output.is_file()
+    or marker.exists()
+    or mutation_snapshots
+):
+    raise AssertionError(
+        "public compiler mutation changed query/compile snapshot execution: "
+        f"rc={mutation_result.returncode} marker={marker.exists()} "
+        f"snapshots={mutation_snapshots!r} "
+        f"log={(mutation_result.stdout + mutation_result.stderr)!r}"
+    )
+PY
+
+mkdir -p "$root/fake-sigchld/bin"
+python3 - "$root/fake-sigchld/bin/clang++" "$root/fake-sigchld/spawned" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, marker = sys.argv[1:]
+Path(script).write_text(
+    "#!/bin/sh\n"
+    + ": > " + shlex.quote(marker) + "\n"
+    + "exit 91\n",
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-sigchld/bin/clang++"
+set +e
+python3 - \
+  "$NEBULA_BINARY" "$source" "$root/sigchld-ignored.o" "$root/fake-sigchld" \
+  >"$root/sigchld-ignored.log" 2>&1 <<'PY'
+import os
+import signal
+import sys
+
+binary, source, output, toolchain_root = sys.argv[1:]
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+arguments = [
+    binary,
+    "build",
+    source,
+    "--emit",
+    "freestanding-object",
+    "--target",
+    "x86_64-unknown-none",
+    "--panic",
+    "trap",
+    "--mode",
+    "release",
+    "--freestanding-toolchain-root",
+    toolchain_root,
+    "-o",
+    output,
+]
+os.execve(binary, arguments, os.environ.copy())
+PY
+sigchld_ignored_rc=$?
+set -e
+test "$sigchld_ignored_rc" -eq 125
+grep -F 'require the default SIGCHLD disposition' "$root/sigchld-ignored.log"
+grep -F 'NBL-CLI-FS-TOOLCHAIN' "$root/sigchld-ignored.log"
+test ! -e "$root/fake-sigchld/spawned"
+test ! -e "$root/sigchld-ignored.o"
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+"$NEBULA_BINARY" build "$source" $common -o "$root/sigchld-ignored.o" \
+  >"$root/sigchld-retry.log" 2>&1
+test -f "$root/sigchld-ignored.o"
+test -f "$root/sigchld-ignored.o.nebmeta"
+test -f "$root/sigchld-ignored.freestanding.cpp"
+
+mkdir -p "$root/fake-slow/bin"
+python3 - "$root/fake-slow/bin/clang++" "$real_clang" "$real_sleep" \
+  "$root/fake-slow/ready" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, clang, sleep, ready = sys.argv[1:]
+Path(script).write_text(
+    "#!/bin/sh\n"
+    + "is_compile=0\n"
+    + "for argument in \"$@\"; do [ \"$argument\" = '-c' ] && is_compile=1; done\n"
+    + "if [ \"$is_compile\" -eq 1 ]; then\n"
+    + "  : > " + shlex.quote(ready) + "\n"
+    + "  " + shlex.quote(sleep) + " 1\n"
+    + "fi\n"
+    + "exec " + shlex.quote(clang) + ' "$@"\n',
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-slow/bin/clang++"
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-slow" -o "$root/concurrent.o" \
+  >"$root/concurrent-first.log" 2>&1 &
+first_pid=$!
+ready_attempt=0
+while [ ! -f "$root/fake-slow/ready" ] && [ "$ready_attempt" -lt 100 ]; do
+  sleep 0.05
+  ready_attempt=$((ready_attempt + 1))
+done
+test -f "$root/fake-slow/ready"
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-slow" -o "$root/concurrent.o" \
+  >"$root/concurrent-second.log" 2>&1
+second_rc=$?
+set -e
+test "$second_rc" -ne 0
+grep -F 'NBL-CLI-FS-BUSY' "$root/concurrent-second.log"
+wait "$first_pid"
+test -f "$root/concurrent.o"
+test -f "$root/concurrent.o.nebmeta"
+test -f "$root/concurrent.freestanding.cpp"
+
+rm -f "$root/fake-slow/ready"
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-slow" -o "$root/rollback.o" \
+  >"$root/rollback.log" 2>&1 &
+rollback_pid=$!
+rollback_ready_attempt=0
+while [ ! -f "$root/fake-slow/ready" ] && [ "$rollback_ready_attempt" -lt 100 ]; do
+  sleep 0.05
+  rollback_ready_attempt=$((rollback_ready_attempt + 1))
+done
+test -f "$root/fake-slow/ready"
+printf '%s' 'metadata-sentinel' >"$root/rollback.o.nebmeta"
+set +e
+wait "$rollback_pid"
+rollback_rc=$?
+set -e
+test "$rollback_rc" -ne 0
+grep -F 'NBL-CLI-FS-PUBLISH' "$root/rollback.log"
+test ! -e "$root/rollback.o"
+test ! -e "$root/rollback.freestanding.cpp"
+test "$(cat "$root/rollback.o.nebmeta")" = 'metadata-sentinel'
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+rm "$root/rollback.o.nebmeta"
+"$NEBULA_BINARY" build "$source" $common -o "$root/rollback.o" \
+  >"$root/rollback-retry.log" 2>&1
+test -f "$root/rollback.o"
+test -f "$root/rollback.o.nebmeta"
+test -f "$root/rollback.freestanding.cpp"
+
+mkdir -p "$root/fake-env/bin"
+python3 - "$root/fake-env/bin/clang++" "$real_clang" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, clang = sys.argv[1:]
+Path(script).write_text(
+    "#!/bin/sh\n"
+    "if [ \"${CPATH+x}\" = x ] || [ \"${CPLUS_INCLUDE_PATH+x}\" = x ] || "
+    "[ \"${SDKROOT+x}\" = x ] || [ \"${CCC_OVERRIDE_OPTIONS+x}\" = x ]; then\n"
+    "  exit 91\n"
+    "fi\n"
+    + "exec " + shlex.quote(clang) + ' "$@"\n',
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-env/bin/clang++"
+CPATH=/poison CPLUS_INCLUDE_PATH=/poison \
+  SDKROOT=/poison CCC_OVERRIDE_OPTIONS=poison \
+  "$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-env" -o "$root/env-isolated.o" \
+  >"$root/env-isolated.log" 2>&1
+test -f "$root/env-isolated.o"
+
+real_mkfifo=$(command -v mkfifo)
+mkdir -p "$root/fake-fifo/bin"
+python3 - "$root/fake-fifo/bin/clang++" "$real_mkfifo" "$root/fake-fifo/ready" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, mkfifo, ready = sys.argv[1:]
+Path(script).write_text(
+    "#!/bin/sh\n"
+    "if [ \"$#\" -eq 1 ] && [ \"$1\" = '--version' ]; then "
+    "printf '%s\\n' 'Nebula fifo clang 1.0'; exit 0; fi\n"
+    "for argument in \"$@\"; do\n"
+    "  if [ \"$argument\" = '-dumpmachine' ]; then "
+    "printf '%s\\n' 'x86_64-unknown-none'; exit 0; fi\n"
+    "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 0; fi\n"
+    "done\n"
+    "out=''\n"
+    "while [ \"$#\" -gt 0 ]; do\n"
+    "  if [ \"$1\" = '-o' ]; then shift; out=\"$1\"; fi\n"
+    "  shift\n"
+    "done\n"
+    "test -n \"$out\"\n"
+    + shlex.quote(mkfifo) + ' "$out"\n'
+    + ": > " + shlex.quote(ready) + "\n",
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-fifo/bin/clang++"
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-fifo" \
+  -o "$root/fifo-compiler-output.o" >"$root/fifo-compiler-output.log" 2>&1 &
+fifo_pid=$!
+fifo_ready_attempt=0
+while [ ! -f "$root/fake-fifo/ready" ] && kill -0 "$fifo_pid" 2>/dev/null && \
+  [ "$fifo_ready_attempt" -lt 100 ]; do
+  sleep 0.05
+  fifo_ready_attempt=$((fifo_ready_attempt + 1))
+done
+test -f "$root/fake-fifo/ready"
+fifo_attempt=0
+while kill -0 "$fifo_pid" 2>/dev/null && [ "$fifo_attempt" -lt 100 ]; do
+  sleep 0.02
+  fifo_attempt=$((fifo_attempt + 1))
+done
+if kill -0 "$fifo_pid" 2>/dev/null; then
+  kill "$fifo_pid"
+  set +e
+  wait "$fifo_pid"
+  set -e
+  echo 'freestanding build hung while opening compiler FIFO' >&2
+  exit 1
+fi
+set +e
+wait "$fifo_pid"
+fifo_output_rc=$?
+set -e
+test "$fifo_output_rc" -ne 0
+grep -F 'NBL-CLI-FS-OBJECT' "$root/fifo-compiler-output.log"
+test ! -e "$root/fifo-compiler-output.o"
+test ! -e "$root/fifo-compiler-output.o.nebmeta"
+test ! -e "$root/fifo-compiler-output.freestanding.cpp"
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+
+mkdir -p "$root/fake-hang/bin"
+python3 - "$root/fake-hang/bin/clang++" "$real_shell" "$real_sleep" \
+  "$root/fake-hang/ready" "$root/fake-hang/child.pid" "$root/fake-hang/term" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, shell, sleep, ready, child_pid, term_marker = sys.argv[1:]
+child_command = "trap '' TERM; exec " + shlex.quote(sleep) + " 300"
+Path(script).write_text(
+    "#!/bin/sh\n"
+    "if [ \"$#\" -eq 1 ] && [ \"$1\" = '--version' ]; then "
+    "printf '%s\\n' 'Nebula hanging clang 1.0'; exit 0; fi\n"
+    "for argument in \"$@\"; do\n"
+    "  if [ \"$argument\" = '-dumpmachine' ]; then "
+    "printf '%s\\n' 'x86_64-unknown-none'; exit 0; fi\n"
+    "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 0; fi\n"
+    "done\n"
+    + "trap " + shlex.quote(": > " + shlex.quote(term_marker) + "; exit 0") + " TERM\n"
+    + shlex.quote(shell) + " -c " + shlex.quote(child_command) + " &\n"
+    + "printf '%s' \"$!\" > " + shlex.quote(child_pid) + "\n"
+    + ": > " + shlex.quote(ready) + "\n"
+    + "wait\n",
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-hang/bin/clang++"
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-hang" \
+  -o "$root/hung-toolchain.o" >"$root/hung-toolchain.log" 2>&1
+hung_toolchain_rc=$?
+set -e
+test "$hung_toolchain_rc" -eq 124
+test -f "$root/fake-hang/ready"
+test -s "$root/fake-hang/child.pid"
+test -f "$root/fake-hang/term"
+grep -F '[cmd] timeout=30s' "$root/hung-toolchain.log"
+grep -F 'NBL-CLI-FS-TOOLCHAIN' "$root/hung-toolchain.log"
+test ! -e "$root/hung-toolchain.o"
+test ! -e "$root/hung-toolchain.o.nebmeta"
+test ! -e "$root/hung-toolchain.freestanding.cpp"
+orphan_pid=$(cat "$root/fake-hang/child.pid")
+orphan_attempt=0
+while kill -0 "$orphan_pid" 2>/dev/null && [ "$orphan_attempt" -lt 500 ]; do
+  orphan_state=$(ps -o state= -p "$orphan_pid" 2>/dev/null || true)
+  case "$orphan_state" in
+    *Z*) break ;;
+  esac
+  sleep 0.01
+  orphan_attempt=$((orphan_attempt + 1))
+done
+if kill -0 "$orphan_pid" 2>/dev/null; then
+  orphan_state=$(ps -o state= -p "$orphan_pid" 2>/dev/null || true)
+  case "$orphan_state" in
+    *Z*) ;;
+    *) echo 'compiler descendant survived timeout containment cleanup' >&2; exit 1 ;;
+  esac
+fi
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+
+mkdir -p "$root/fake-exit-124/bin"
+cat >"$root/fake-exit-124/bin/clang++" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = '--version' ]; then
+  printf '%s\n' 'Nebula exit-124 clang 1.0'
+  exit 0
+fi
+for argument in "$@"; do
+  if [ "$argument" = '-dumpmachine' ]; then
+    printf '%s\n' 'x86_64-unknown-none'
+    exit 0
+  fi
+  if [ "$argument" = '-fsyntax-only' ]; then exit 0; fi
+done
+exit 124
+SH
+chmod +x "$root/fake-exit-124/bin/clang++"
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-exit-124" \
+  -o "$root/exit-124.o" >"$root/exit-124.log" 2>&1
+exit_124_rc=$?
+set -e
+test "$exit_124_rc" -eq 1
+grep -F '[cmd] exit=124' "$root/exit-124.log"
+! grep -F '[cmd] timeout=' "$root/exit-124.log"
+grep -F 'returned a nonzero status' "$root/exit-124.log"
+test ! -e "$root/exit-124.o"
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+
+mkdir -p "$root/fake-exit-descendant/bin"
+python3 - "$root/fake-exit-descendant/bin/clang++" "$real_shell" "$real_sleep" \
+  "$root/fake-exit-descendant/ready" "$root/fake-exit-descendant/child.pid" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, shell, sleep, ready, child_pid = sys.argv[1:]
+child_command = "trap '' TERM; exec " + shlex.quote(sleep) + " 300"
+Path(script).write_text(
+    "#!/bin/sh\n"
+    "if [ \"$#\" -eq 1 ] && [ \"$1\" = '--version' ]; then "
+    "printf '%s\\n' 'Nebula descendant clang 1.0'; exit 0; fi\n"
+    "for argument in \"$@\"; do\n"
+    "  if [ \"$argument\" = '-dumpmachine' ]; then "
+    "printf '%s\\n' 'x86_64-unknown-none'; exit 0; fi\n"
+    "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 0; fi\n"
+    "done\n"
+    + shlex.quote(shell) + " -c " + shlex.quote(child_command) + " &\n"
+    + "printf '%s' \"$!\" > " + shlex.quote(child_pid) + "\n"
+    + ": > " + shlex.quote(ready) + "\n"
+    + "exit 91\n",
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-exit-descendant/bin/clang++"
+cleanup_exit_descendant() {
+  if [ -s "$root/fake-exit-descendant/child.pid" ]; then
+    kill -KILL "$(cat "$root/fake-exit-descendant/child.pid")" 2>/dev/null || true
+  fi
+}
+trap cleanup_exit_descendant EXIT
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-exit-descendant" \
+  -o "$root/exit-descendant.o" >"$root/exit-descendant.log" 2>&1
+exit_descendant_rc=$?
+set -e
+test "$exit_descendant_rc" -ne 0
+test -f "$root/fake-exit-descendant/ready"
+test -s "$root/fake-exit-descendant/child.pid"
+grep -F '[cmd] exit=91' "$root/exit-descendant.log"
+exit_descendant_pid=$(cat "$root/fake-exit-descendant/child.pid")
+exit_descendant_attempt=0
+while kill -0 "$exit_descendant_pid" 2>/dev/null && \
+  [ "$exit_descendant_attempt" -lt 500 ]; do
+  exit_descendant_state=$(ps -o state= -p "$exit_descendant_pid" 2>/dev/null || true)
+  case "$exit_descendant_state" in
+    *Z*) break ;;
+  esac
+  sleep 0.01
+  exit_descendant_attempt=$((exit_descendant_attempt + 1))
+done
+if kill -0 "$exit_descendant_pid" 2>/dev/null; then
+  exit_descendant_state=$(ps -o state= -p "$exit_descendant_pid" 2>/dev/null || true)
+  case "$exit_descendant_state" in
+    *Z*) ;;
+    *) echo 'compiler descendant survived a normal leader exit' >&2; exit 1 ;;
+  esac
+fi
+trap - EXIT
+test ! -e "$root/exit-descendant.o"
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+
+python3 - "$NEBULA_BINARY" "$source" "$root" "$real_shell" "$real_sleep" <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shlex
+import signal
+import subprocess
+import sys
+import time
+
+
+binary, source, root_value, shell, sleep = sys.argv[1:]
+root = Path(root_value).resolve()
+
+
+def process_state(pid: int) -> str | None:
+    result = subprocess.run(
+        ["ps", "-o", "state=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    if result.returncode != 0:
+        return None
+    state = result.stdout.strip()
+    return state or None
+
+
+def wait_for_process_cleanup(pid: int, role: str) -> None:
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        state = process_state(pid)
+        if state is None or state.startswith("Z"):
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"{role} process {pid} survived compiler interruption")
+
+
+def read_pid(path: Path, role: str) -> int:
+    value = int(path.read_text(encoding="utf-8"))
+    if value <= 1:
+        raise AssertionError(f"invalid {role} pid {value}")
+    return value
+
+
+def run_query_signal_case(name: str, escape_capture_writer: bool) -> None:
+    fake = root / f"fake-query-{name}"
+    script = fake / "bin" / "clang++"
+    script.parent.mkdir(parents=True)
+    ready = fake / "ready"
+    leader_path = fake / "leader.pid"
+    escaped_path = fake / "escaped.pid"
+    output = root / f"query-{name}.o"
+    log_path = root / f"query-{name}.log"
+
+    script_body = (
+        f"#!{sys.executable}\n"
+        "from pathlib import Path\n"
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "if sys.argv[1:] != ['--version']:\n"
+        "    raise SystemExit(99)\n"
+        f"Path({str(leader_path)!r}).write_text(str(os.getpid()), encoding='utf-8')\n"
+    )
+    if escape_capture_writer:
+        script_body += (
+            f"child = subprocess.Popen([{sleep!r}, '30'], start_new_session=True)\n"
+            f"Path({str(escaped_path)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        )
+    script_body += f"Path({str(ready)!r}).touch()\n"
+    script_body += "raise SystemExit(0)\n" if escape_capture_writer else "time.sleep(30)\n"
+    script.write_text(script_body, encoding="utf-8")
+    script.chmod(0o755)
+
+    arguments = [
+        binary,
+        "build",
+        source,
+        "--emit",
+        "freestanding-object",
+        "--target",
+        "x86_64-unknown-none",
+        "--panic",
+        "trap",
+        "--mode",
+        "release",
+        "--freestanding-toolchain-root",
+        str(fake),
+        "-o",
+        str(output),
+    ]
+    process: subprocess.Popen[bytes] | None = None
+    leader_pid: int | None = None
+    escaped_pid: int | None = None
+    try:
+        with log_path.open("wb") as log:
+            process = subprocess.Popen(
+                arguments,
+                env=os.environ.copy(),
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+            ready_deadline = time.monotonic() + 5.0
+            while not ready.exists() and time.monotonic() < ready_deadline:
+                if process.poll() is not None:
+                    raise AssertionError(
+                        f"Nebula exited before the {name} query fixture became ready"
+                    )
+                time.sleep(0.01)
+            if not ready.exists():
+                raise AssertionError(f"{name} query fixture did not become ready")
+
+            leader_pid = read_pid(leader_path, "query compiler leader")
+            if not escape_capture_writer and os.getpgid(leader_pid) != leader_pid:
+                raise AssertionError("query compiler does not own its containment group")
+            if escape_capture_writer:
+                escaped_pid = read_pid(escaped_path, "escaped query capture writer")
+                if os.getpgid(escaped_pid) != escaped_pid or os.getsid(escaped_pid) != escaped_pid:
+                    raise AssertionError("query capture writer did not enter its isolated session")
+
+            if not escape_capture_writer:
+                process.send_signal(signal.SIGTERM)
+            try:
+                return_code = process.wait(timeout=12)
+            except subprocess.TimeoutExpired as error:
+                raise AssertionError(f"Nebula did not finish the {name} query cleanup") from error
+
+        log_text = log_path.read_text(encoding="utf-8")
+        if escape_capture_writer:
+            if return_code != 125:
+                raise AssertionError(
+                    f"unconfirmed query returned {return_code}; expected infrastructure rc125"
+                )
+            if "POSIX capture pipes did not close after process-group quiescence" not in log_text:
+                raise AssertionError("unconfirmed query omitted its containment root cause")
+            if "caller termination signal redelivery is disabled because" not in log_text:
+                raise AssertionError("unconfirmed query omitted its redelivery suppression reason")
+        else:
+            if return_code != -signal.SIGTERM:
+                raise AssertionError(
+                    f"confirmed query returned {return_code}; expected {-signal.SIGTERM}"
+                )
+            if "freestanding toolchain resolution was interrupted by signal 15" not in log_text:
+                raise AssertionError("confirmed query omitted its signal handoff diagnostic")
+
+        wait_for_process_cleanup(leader_pid, "query compiler leader")
+        if output.exists() or Path(str(output) + ".nebmeta").exists():
+            raise AssertionError(f"{name} interrupted query published an output")
+        if list((fake / "bin").glob(".nebula-exec-*")):
+            raise AssertionError(f"{name} interrupted query left a compiler snapshot")
+    finally:
+        cleanup_errors: list[str] = []
+        active_exception = sys.exception()
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                cleanup_errors.append(f"query test-session kill failed: {error}")
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                cleanup_errors.append("query test-session reap timed out")
+        if escaped_pid is not None:
+            state = process_state(escaped_pid)
+            if state is not None and not state.startswith("Z"):
+                try:
+                    if os.getpgid(escaped_pid) != escaped_pid or os.getsid(escaped_pid) != escaped_pid:
+                        cleanup_errors.append(
+                            "refused to signal an escaped query writer whose identity changed"
+                        )
+                    else:
+                        os.killpg(escaped_pid, signal.SIGKILL)
+                        wait_for_process_cleanup(escaped_pid, "escaped query capture writer")
+                except ProcessLookupError:
+                    pass
+                except OSError as error:
+                    cleanup_errors.append(f"escaped query writer cleanup failed: {error}")
+        if cleanup_errors:
+            cleanup_message = "; ".join(cleanup_errors)
+            if active_exception is not None:
+                active_exception.add_note(cleanup_message)
+            else:
+                raise AssertionError(cleanup_message)
+
+
+run_query_signal_case("unconfirmed-suppressed", escape_capture_writer=True)
+run_query_signal_case("confirmed-redelivered", escape_capture_writer=False)
+
+
+for signal_number, signal_name in (
+    (signal.SIGINT, "sigint"),
+    (signal.SIGTERM, "sigterm"),
+):
+    fake = root / f"fake-parent-{signal_name}"
+    fake.mkdir()
+    script = fake / "bin" / "clang++"
+    script.parent.mkdir()
+    ready = fake / "ready"
+    leader_path = fake / "leader.pid"
+    child_path = fake / "child.pid"
+    output = root / f"parent-{signal_name}.o"
+    log_path = root / f"parent-{signal_name}.log"
+    child_command = "trap '' HUP INT QUIT TERM; exec " + shlex.quote(sleep) + " 30"
+    script.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$#\" -eq 1 ] && [ \"$1\" = '--version' ]; then "
+        "printf '%s\\n' 'Nebula signal clang 1.0'; exit 0; fi\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$argument\" = '-dumpmachine' ]; then "
+        "printf '%s\\n' 'x86_64-unknown-none'; exit 0; fi\n"
+        "  if [ \"$argument\" = '-fsyntax-only' ]; then exit 0; fi\n"
+        "done\n"
+        "trap '' HUP INT QUIT TERM\n"
+        + shlex.quote(shell)
+        + " -c "
+        + shlex.quote(child_command)
+        + " &\n"
+        + "child=$!\n"
+        + "printf '%s' \"$$\" > "
+        + shlex.quote(str(leader_path))
+        + "\n"
+        + "printf '%s' \"$child\" > "
+        + shlex.quote(str(child_path))
+        + "\n"
+        + ": > "
+        + shlex.quote(str(ready))
+        + "\n"
+        + "wait \"$child\"\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment["PATH"] = str(fake) + os.pathsep + environment["PATH"]
+    arguments = [
+        binary,
+        "build",
+        source,
+        "--emit",
+        "freestanding-object",
+        "--target",
+        "x86_64-unknown-none",
+        "--panic",
+        "trap",
+        "--mode",
+        "release",
+        "--freestanding-toolchain-root",
+        str(fake),
+        "-o",
+        str(output),
+    ]
+
+    process: subprocess.Popen[bytes] | None = None
+    recorded_pids: list[int] = []
+    try:
+        with log_path.open("wb") as log:
+            process = subprocess.Popen(
+                arguments,
+                env=environment,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+            ready_deadline = time.monotonic() + 5.0
+            while not ready.exists() and time.monotonic() < ready_deadline:
+                if process.poll() is not None:
+                    raise AssertionError(
+                        f"Nebula exited before {signal_name} compiler fixture became ready"
+                    )
+                time.sleep(0.01)
+            if not ready.exists():
+                raise AssertionError(f"{signal_name} compiler fixture did not become ready")
+
+            leader_pid = read_pid(leader_path, "compiler leader")
+            child_pid = read_pid(child_path, "compiler descendant")
+            recorded_pids.extend((leader_pid, child_pid))
+            if os.getpgid(leader_pid) != leader_pid:
+                raise AssertionError("compiler fixture leader does not own its process group")
+            if os.getpgid(child_pid) != leader_pid:
+                raise AssertionError("compiler fixture descendant escaped the owned process group")
+            if os.getsid(leader_pid) != process.pid or os.getsid(child_pid) != process.pid:
+                raise AssertionError("compiler fixture escaped the isolated Nebula test session")
+            process.send_signal(signal_number)
+            try:
+                return_code = process.wait(timeout=10)
+            except subprocess.TimeoutExpired as error:
+                raise AssertionError(
+                    f"Nebula did not finish {signal_name} cleanup within 10 seconds"
+                ) from error
+
+        if return_code != -signal_number:
+            raise AssertionError(
+                f"Nebula returned {return_code} after {signal_name}; expected {-signal_number}"
+            )
+        log_text = log_path.read_text(encoding="utf-8")
+        expected_log = f"compiler execution interrupted by signal {signal_number} after process-group cleanup"
+        if expected_log not in log_text:
+            raise AssertionError(f"missing {signal_name} cleanup diagnostic")
+        wait_for_process_cleanup(leader_pid, "compiler leader")
+        wait_for_process_cleanup(child_pid, "compiler descendant")
+        for unpublished in (
+            output,
+            Path(str(output) + ".nebmeta"),
+            output.with_suffix(".freestanding.cpp"),
+        ):
+            if unpublished.exists() or unpublished.is_symlink():
+                raise AssertionError(f"interrupted build published {unpublished}")
+        if any(path.is_dir() for path in root.rglob(".nebula-fs-*")):
+            raise AssertionError("interrupted build left a freestanding staging directory")
+    finally:
+        cleanup_errors: list[str] = []
+        active_exception = sys.exception()
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                cleanup_errors.append(f"Nebula test-session kill failed: {error}")
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                cleanup_errors.append("Nebula test-session reap timed out")
+        if process is not None:
+            leader_candidate: int | None = recorded_pids[0] if recorded_pids else None
+            if leader_candidate is None and leader_path.exists():
+                try:
+                    parsed_leader = int(leader_path.read_text(encoding="utf-8"))
+                    if parsed_leader > 1:
+                        leader_candidate = parsed_leader
+                    else:
+                        cleanup_errors.append(
+                            f"compiler leader identity was invalid: {parsed_leader}"
+                        )
+                except (OSError, UnicodeError, ValueError) as error:
+                    cleanup_errors.append(f"compiler leader identity read failed: {error}")
+            descendant_candidates = list(recorded_pids[1:])
+            if child_path.exists():
+                try:
+                    parsed_child = int(child_path.read_text(encoding="utf-8"))
+                    if parsed_child > 1 and parsed_child not in descendant_candidates:
+                        descendant_candidates.append(parsed_child)
+                    elif parsed_child <= 1:
+                        cleanup_errors.append(
+                            f"compiler descendant identity was invalid: {parsed_child}"
+                        )
+                except (OSError, UnicodeError, ValueError) as error:
+                    cleanup_errors.append(f"compiler descendant identity read failed: {error}")
+            leader_state = (
+                process_state(leader_candidate) if leader_candidate is not None else None
+            )
+            if leader_candidate is not None and leader_state is not None:
+                expected_session = process.pid
+                try:
+                    first_group = os.getpgid(leader_candidate)
+                    candidate_session = os.getsid(leader_candidate)
+                    second_group = os.getpgid(leader_candidate)
+                    if (
+                        first_group != leader_candidate
+                        or second_group != leader_candidate
+                        or candidate_session != expected_session
+                    ):
+                        cleanup_errors.append(
+                            "refused to signal a compiler fixture whose leader identity changed"
+                        )
+                    else:
+                        os.killpg(leader_candidate, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError as error:
+                    cleanup_errors.append(f"compiler fixture group cleanup failed: {error}")
+            else:
+                descendant_without_anchor = False
+                for pid in descendant_candidates:
+                    state = process_state(pid)
+                    if state is not None and not state.startswith("Z"):
+                        descendant_without_anchor = True
+                        break
+                if descendant_without_anchor:
+                    cleanup_errors.append(
+                        "compiler descendant remained without a live group-leader identity anchor"
+                    )
+        if cleanup_errors:
+            cleanup_message = "; ".join(cleanup_errors)
+            if active_exception is not None:
+                active_exception.add_note(cleanup_message)
+            else:
+                raise AssertionError(cleanup_message)
+PY
+
+mkdir -p "$root/fake-hardlink/bin"
+python3 - "$root/fake-hardlink/bin/clang++" "$real_clang" "$real_ln" "$real_python" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+script, clang, link, python = sys.argv[1:]
+mode_check = (
+    "import os,sys; mode=os.stat(os.path.dirname(sys.argv[1])).st_mode & 0o777; "
+    "raise SystemExit(0 if mode == 0o700 else 93)"
+)
+Path(script).write_text(
+    "#!/bin/sh\n"
+    "is_compile=0\n"
+    "for argument in \"$@\"; do [ \"$argument\" = '-c' ] && is_compile=1; done\n"
+    "if [ \"$is_compile\" -ne 1 ]; then exec " + shlex.quote(clang) + ' "$@"; fi\n'
+    + "out=''\n"
+    + "previous=''\n"
+    + "for argument in \"$@\"; do\n"
+    + "  if [ \"$previous\" = '-o' ]; then out=\"$argument\"; fi\n"
+    + "  previous=\"$argument\"\n"
+    + "done\n"
+    + "test -n \"$out\"\n"
+    + shlex.quote(python) + " -c " + shlex.quote(mode_check) + ' "$out"\n'
+    + shlex.quote(clang) + ' "$@"\n'
+    + shlex.quote(link) + ' "$out" "$out.alias"\n',
+    encoding="utf-8",
+)
+PY
+chmod +x "$root/fake-hardlink/bin/clang++"
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-hardlink" \
+  -o "$root/hardlink-compiler-output.o" >"$root/hardlink-compiler-output.log" 2>&1
+hardlink_output_rc=$?
+set -e
+test "$hardlink_output_rc" -ne 0
+grep -F 'NBL-CLI-FS-OBJECT' "$root/hardlink-compiler-output.log"
+test ! -e "$root/hardlink-compiler-output.o"
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+
+mkdir -p "$root/fake-symlink/bin"
+cat >"$root/fake-symlink/bin/clang++" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = '--version' ]; then
+  printf '%s\n' 'Nebula symlink clang 1.0'
+  exit 0
+fi
+for argument in "$@"; do
+  if [ "$argument" = '-dumpmachine' ]; then
+    printf '%s\n' 'x86_64-unknown-none'
+    exit 0
+  fi
+  if [ "$argument" = '-fsyntax-only' ]; then exit 0; fi
+done
+out=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = '-o' ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+test -n "$out"
+/bin/ln -s /dev/null "$out"
+SH
+chmod +x "$root/fake-symlink/bin/clang++"
+set +e
+"$NEBULA_BINARY" build "$source" $base_common \
+  --freestanding-toolchain-root "$root/fake-symlink" \
+  -o "$root/symlink-compiler-output.o" >"$root/symlink-compiler-output.log" 2>&1
+symlink_output_rc=$?
+set -e
+test "$symlink_output_rc" -ne 0
+grep -F 'NBL-CLI-FS-OBJECT' "$root/symlink-compiler-output.log"
+test ! -e "$root/symlink-compiler-output.o"
+test -z "$(find "$root" -type d -name '.nebula-fs-*' -print -quit)"
+echo freestanding-transaction-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["freestanding-transaction-ok"]

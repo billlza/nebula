@@ -39,6 +39,9 @@ Primary gates:
 
 - strict build
 - focused contract tests for touched modules
+- keep hosted `build`/build-enabled `run` publication, dependency identity, signal cancellation,
+  and private execution leases fail-closed; next converge `test`/`bench`, linker-selected inputs,
+  crash recovery, and cross-platform namespace/ACL behavior onto the same lifecycle
 - `python3 scripts/app_platform_bench.py verify`
 - full contract suite before release-facing claims
 
@@ -201,12 +204,27 @@ Goal:
 
 - Keep universeOS as a staged direction, not a current implementation claim.
 
+Current evidence:
+
+- `UOS-BOOT-002` has an experimental primitive-only ELF object slice for the exact
+  `x86_64-unknown-none`/trap request.
+- `UOS-BOOT-001` now has a strict Limine v12.3.2 protocol/ABI candidate, but remains planned because
+  compiler/linker/boot/image-tool provenance and compatibility are incomplete.
+- These remove only narrow object and protocol/ABI prerequisites; they do not satisfy the runtime,
+  complete toolchain closure (`UOS-BOOT-001`), linked-kernel ELF (`UOS-BOOT-003`), boot-media
+  (`UOS-BOOT-004`), QEMU (`UOS-BOOT-005`), direct-backend, or kernel prerequisites below.
+- Readiness is tracked by the non-additive evidence ledger in
+  `docs/universeos/readiness_assessment.md`; product-completion percentages are intentionally not
+  used.
+
 Blocked until:
 
 - system profile has explicit allocation, panic, ABI, unsafe, and hosted-std rejection answers
 - no-std/freestanding runtime prototype exists
 - app/runtime/platform forcing apps have exposed the necessary abstractions
 - direct object backend or LLVM/Cranelift direction has been evaluated
+- a reproducible compiler bootstrap plan has been selected; hardening the hosted C++ boundary does
+  not by itself make Nebula self-hosting or toolchain-independent
 
 ## Module Entry Template
 

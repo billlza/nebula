@@ -1,0 +1,721 @@
+set(_nebula_protocol_snapshot_root "@NEBULA_PROTOCOL_SNAPSHOT_ROOT@")
+set(_nebula_protocol_snapshot_manifest "@NEBULA_PROTOCOL_SNAPSHOT_MANIFEST@")
+set(_nebula_protocol_snapshot_header "@NEBULA_PROTOCOL_SNAPSHOT_HEADER@")
+set(_nebula_protocol_snapshot_license "@NEBULA_PROTOCOL_SNAPSHOT_LICENSE@")
+set(_nebula_protocol_validator "@NEBULA_PROTOCOL_INSTALL_VALIDATOR@")
+set(_nebula_cmake_command "@NEBULA_PROTOCOL_INSTALL_CMAKE_COMMAND@")
+
+function(_nebula_protocol_validate_canonical_manifest output_error manifest)
+  if(IS_SYMLINK "${_nebula_protocol_validator}" OR
+     NOT EXISTS "${_nebula_protocol_validator}" OR
+     IS_DIRECTORY "${_nebula_protocol_validator}")
+    set(${output_error}
+      "native-host protocol ABI validator is missing or unsafe: ${_nebula_protocol_validator}"
+      PARENT_SCOPE
+    )
+    return()
+  endif()
+  execute_process(
+    COMMAND "${_nebula_protocol_validator}" "${manifest}"
+    RESULT_VARIABLE validator_result
+    OUTPUT_VARIABLE validator_stdout
+    ERROR_VARIABLE validator_stderr
+    TIMEOUT 10
+  )
+  if(NOT validator_result STREQUAL "0")
+    string(CONCAT validation_error
+      "production canonical parser rejected ${manifest} (exit ${validator_result}): "
+      "${validator_stdout}${validator_stderr}"
+    )
+    set(${output_error} "${validation_error}" PARENT_SCOPE)
+    return()
+  endif()
+  set(${output_error} "" PARENT_SCOPE)
+endfunction()
+
+function(_nebula_protocol_check_asset output_error label path expected_size expected_sha256)
+  if(IS_SYMLINK "${path}")
+    set(${output_error} "${label} must not be a symbolic link: ${path}" PARENT_SCOPE)
+    return()
+  endif()
+  if(NOT EXISTS "${path}" OR IS_DIRECTORY "${path}")
+    set(${output_error} "${label} is not a regular file: ${path}" PARENT_SCOPE)
+    return()
+  endif()
+  file(SIZE "${path}" actual_size)
+  if(NOT actual_size STREQUAL expected_size)
+    set(${output_error}
+      "${label} integrity check failed: expected ${expected_size} bytes, got ${actual_size} bytes"
+      PARENT_SCOPE
+    )
+    return()
+  endif()
+  file(SHA256 "${path}" actual_sha256)
+  if(NOT actual_sha256 STREQUAL expected_sha256)
+    set(${output_error}
+      "${label} integrity check failed: expected ${expected_sha256}, got ${actual_sha256}"
+      PARENT_SCOPE
+    )
+    return()
+  endif()
+  set(${output_error} "" PARENT_SCOPE)
+endfunction()
+
+function(_nebula_protocol_bundle_status output_status output_error bundle_root)
+  if(IS_SYMLINK "${bundle_root}")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "protocol bundle root must not be a symbolic link: ${bundle_root}" PARENT_SCOPE)
+    return()
+  endif()
+  if(NOT EXISTS "${bundle_root}")
+    set(${output_status} missing PARENT_SCOPE)
+    set(${output_error} "" PARENT_SCOPE)
+    return()
+  endif()
+  if(NOT IS_DIRECTORY "${bundle_root}")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "protocol bundle root is not a directory: ${bundle_root}" PARENT_SCOPE)
+    return()
+  endif()
+  if(IS_SYMLINK "${bundle_root}/protocol" OR
+     NOT IS_DIRECTORY "${bundle_root}/protocol")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "protocol bundle protocol entry is not a real directory" PARENT_SCOPE)
+    return()
+  endif()
+
+  file(GLOB_RECURSE bundle_entries
+    LIST_DIRECTORIES true
+    RELATIVE "${bundle_root}"
+    "${bundle_root}/*"
+  )
+  list(SORT bundle_entries)
+  set(expected_entries
+    contract.manifest
+    protocol
+    protocol/LICENSE
+    protocol/limine.h
+  )
+  if(NOT bundle_entries STREQUAL expected_entries)
+    set(${output_status} conflict PARENT_SCOPE)
+    string(CONCAT bundle_error
+      "protocol bundle must contain exactly contract.manifest, protocol/limine.h, and "
+      "protocol/LICENSE; found: ${bundle_entries}"
+    )
+    set(${output_error} "${bundle_error}" PARENT_SCOPE)
+    return()
+  endif()
+
+  if(IS_SYMLINK "${bundle_root}/contract.manifest" OR
+     NOT EXISTS "${bundle_root}/contract.manifest" OR
+     IS_DIRECTORY "${bundle_root}/contract.manifest")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "protocol contract.manifest is not a real file" PARENT_SCOPE)
+    return()
+  endif()
+
+  _nebula_protocol_validate_canonical_manifest(
+    canonical_error "${bundle_root}/contract.manifest"
+  )
+  if(NOT canonical_error STREQUAL "")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "${canonical_error}" PARENT_SCOPE)
+    return()
+  endif()
+  _nebula_protocol_check_asset(
+    asset_error
+    "protocol contract.manifest"
+    "${bundle_root}/contract.manifest"
+    "@NEBULA_PROTOCOL_SNAPSHOT_MANIFEST_SIZE@"
+    "@NEBULA_PROTOCOL_SNAPSHOT_MANIFEST_SHA256@"
+  )
+  if(NOT asset_error STREQUAL "")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "${asset_error}" PARENT_SCOPE)
+    return()
+  endif()
+  _nebula_protocol_check_asset(
+    asset_error
+    "protocol limine.h"
+    "${bundle_root}/protocol/limine.h"
+    "@NEBULA_PROTOCOL_SNAPSHOT_HEADER_SIZE@"
+    "@NEBULA_PROTOCOL_SNAPSHOT_HEADER_SHA256@"
+  )
+  if(NOT asset_error STREQUAL "")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "${asset_error}" PARENT_SCOPE)
+    return()
+  endif()
+  _nebula_protocol_check_asset(
+    asset_error
+    "protocol LICENSE"
+    "${bundle_root}/protocol/LICENSE"
+    "@NEBULA_PROTOCOL_SNAPSHOT_LICENSE_SIZE@"
+    "@NEBULA_PROTOCOL_SNAPSHOT_LICENSE_SHA256@"
+  )
+  if(NOT asset_error STREQUAL "")
+    set(${output_status} conflict PARENT_SCOPE)
+    set(${output_error} "${asset_error}" PARENT_SCOPE)
+    return()
+  endif()
+  set(${output_status} exact PARENT_SCOPE)
+  set(${output_error} "" PARENT_SCOPE)
+endfunction()
+
+function(_nebula_protocol_cleanup_owned_stage output_error stage_root owner_token)
+  if(NOT EXISTS "${stage_root}" AND NOT IS_SYMLINK "${stage_root}")
+    set(${output_error} "" PARENT_SCOPE)
+    return()
+  endif()
+  if(IS_SYMLINK "${stage_root}" OR NOT IS_DIRECTORY "${stage_root}")
+    set(${output_error} "refusing to clean a replaced protocol stage: ${stage_root}" PARENT_SCOPE)
+    return()
+  endif()
+  set(owner_file "${stage_root}/owner-token")
+  if(IS_SYMLINK "${owner_file}" OR NOT EXISTS "${owner_file}" OR IS_DIRECTORY "${owner_file}")
+    set(${output_error} "refusing to clean an unowned protocol stage: ${stage_root}" PARENT_SCOPE)
+    return()
+  endif()
+  file(SIZE "${owner_file}" owner_size)
+  string(LENGTH "${owner_token}" expected_owner_size)
+  if(NOT owner_size EQUAL expected_owner_size)
+    set(${output_error} "protocol stage ownership token size changed: ${stage_root}" PARENT_SCOPE)
+    return()
+  endif()
+  file(READ "${owner_file}" actual_owner_token LIMIT 64)
+  if(NOT actual_owner_token STREQUAL owner_token)
+    set(${output_error} "protocol stage ownership token changed: ${stage_root}" PARENT_SCOPE)
+    return()
+  endif()
+
+  file(GLOB_RECURSE stage_entries
+    LIST_DIRECTORIES true
+    RELATIVE "${stage_root}"
+    "${stage_root}/*"
+  )
+  set(allowed_entries
+    owner-token
+    bundle
+    bundle/contract.manifest
+    bundle/protocol
+    bundle/protocol/LICENSE
+    bundle/protocol/limine.h
+  )
+  foreach(stage_entry IN LISTS stage_entries)
+    # Avoid IN_LIST here: install(SCRIPT) executes in its own policy scope,
+    # where CMake 3.20 otherwise parses CMP0057 with OLD behavior.
+    list(FIND allowed_entries "${stage_entry}" allowed_entry_index)
+    if(allowed_entry_index EQUAL -1)
+      set(${output_error}
+        "refusing to clean protocol stage with an unexpected entry: ${stage_entry}"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+    if(IS_SYMLINK "${stage_root}/${stage_entry}")
+      set(${output_error}
+        "refusing to clean protocol stage containing a symbolic link: ${stage_entry}"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+  endforeach()
+
+  execute_process(
+    COMMAND "${_nebula_cmake_command}" -E remove_directory "${stage_root}"
+    RESULT_VARIABLE cleanup_result
+    OUTPUT_VARIABLE cleanup_stdout
+    ERROR_VARIABLE cleanup_stderr
+  )
+  if(NOT cleanup_result STREQUAL "0" OR EXISTS "${stage_root}" OR IS_SYMLINK "${stage_root}")
+    string(CONCAT cleanup_error
+      "failed to clean owned protocol stage ${stage_root}: "
+      "${cleanup_stdout}${cleanup_stderr}"
+    )
+    set(${output_error} "${cleanup_error}" PARENT_SCOPE)
+    return()
+  endif()
+  set(${output_error} "" PARENT_SCOPE)
+endfunction()
+
+function(_nebula_protocol_resolve_install_anchor
+    output_error output_normalized_anchor output_canonical_anchor anchor)
+  if(NOT IS_ABSOLUTE "${anchor}")
+    set(${output_error} "trusted protocol install anchor must be absolute: ${anchor}" PARENT_SCOPE)
+    return()
+  endif()
+
+  get_filename_component(normalized_anchor "${anchor}" ABSOLUTE)
+  file(TO_CMAKE_PATH "${normalized_anchor}" normalized_anchor)
+  set(existing_probe "${normalized_anchor}")
+  while(NOT EXISTS "${existing_probe}")
+    if(IS_SYMLINK "${existing_probe}")
+      set(${output_error}
+        "trusted protocol install anchor has a dangling symbolic-link component: ${existing_probe}"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+    get_filename_component(parent "${existing_probe}" DIRECTORY)
+    if(parent STREQUAL existing_probe)
+      set(${output_error}
+        "trusted protocol install anchor has no existing filesystem ancestor: ${anchor}"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+    set(existing_probe "${parent}")
+  endwhile()
+  if(NOT IS_DIRECTORY "${existing_probe}")
+    set(${output_error}
+      "trusted protocol install anchor traverses a non-directory component: ${existing_probe}"
+      PARENT_SCOPE
+    )
+    return()
+  endif()
+
+  file(REAL_PATH "${existing_probe}" canonical_existing_probe)
+  file(TO_CMAKE_PATH "${canonical_existing_probe}" canonical_existing_probe)
+  file(RELATIVE_PATH missing_suffix "${existing_probe}" "${normalized_anchor}")
+  if(missing_suffix STREQUAL "" OR missing_suffix STREQUAL ".")
+    set(canonical_anchor "${canonical_existing_probe}")
+  else()
+    # The suffix is already relative to an existing ancestor. Keep this a
+    # lexical append: CMake 3.20 may rewrite a canonical /private/tmp path back
+    # through the user-facing /tmp symlink when ABSOLUTE is applied again.
+    set(canonical_anchor "${canonical_existing_probe}/${missing_suffix}")
+    file(TO_CMAKE_PATH "${canonical_anchor}" canonical_anchor)
+  endif()
+
+  set(${output_error} "" PARENT_SCOPE)
+  set(${output_normalized_anchor} "${normalized_anchor}" PARENT_SCOPE)
+  set(${output_canonical_anchor} "${canonical_anchor}" PARENT_SCOPE)
+endfunction()
+
+function(_nebula_protocol_validate_install_path
+    output_error normalized_anchor canonical_anchor path phase allow_anchor)
+  if(NOT IS_ABSOLUTE "${path}")
+    set(${output_error} "protocol install path must be absolute: ${path}" PARENT_SCOPE)
+    return()
+  endif()
+  get_filename_component(normalized_path "${path}" ABSOLUTE)
+  file(TO_CMAKE_PATH "${normalized_path}" normalized_path)
+  file(RELATIVE_PATH anchor_relative_path "${normalized_anchor}" "${normalized_path}")
+
+  set(path_is_anchor false)
+  if(anchor_relative_path STREQUAL "" OR anchor_relative_path STREQUAL ".")
+    set(path_is_anchor true)
+    if(NOT allow_anchor)
+      set(${output_error}
+        "protocol install ${phase} path must be a strict descendant of the trusted install anchor"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+  elseif(IS_ABSOLUTE "${anchor_relative_path}" OR
+         anchor_relative_path MATCHES "^\\.\\.(/|$)")
+    set(${output_error}
+      "protocol install ${phase} path escapes the trusted install anchor: ${normalized_path}"
+      PARENT_SCOPE
+    )
+    return()
+  endif()
+
+  if(path_is_anchor)
+    set(expected_canonical_path "${canonical_anchor}")
+  else()
+    # anchor_relative_path was proven to be a strict lexical descendant above;
+    # re-absolutizing would discard the canonical anchor on older CMake.
+    set(expected_canonical_path "${canonical_anchor}/${anchor_relative_path}")
+    file(TO_CMAKE_PATH "${expected_canonical_path}" expected_canonical_path)
+    file(RELATIVE_PATH canonical_relative_path
+      "${canonical_anchor}" "${expected_canonical_path}"
+    )
+    if(canonical_relative_path STREQUAL "" OR
+       canonical_relative_path STREQUAL "." OR
+       IS_ABSOLUTE "${canonical_relative_path}" OR
+       canonical_relative_path MATCHES "^\\.\\.(/|$)")
+      set(${output_error}
+        "protocol install ${phase} canonical path escapes the trusted install anchor"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+  endif()
+
+  set(candidate "${normalized_path}")
+  set(existing_probe "")
+  while(NOT candidate STREQUAL normalized_anchor)
+    if(IS_SYMLINK "${candidate}")
+      string(CONCAT path_error
+        "protocol install ${phase} path contains a symbolic-link ancestor below the trusted "
+        "install anchor: ${candidate}"
+      )
+      set(${output_error} "${path_error}" PARENT_SCOPE)
+      return()
+    endif()
+    if(existing_probe STREQUAL "" AND EXISTS "${candidate}")
+      set(existing_probe "${candidate}")
+    endif()
+    get_filename_component(parent "${candidate}" DIRECTORY)
+    if(parent STREQUAL candidate)
+      set(${output_error}
+        "protocol install ${phase} path traversal escaped the trusted install anchor"
+        PARENT_SCOPE
+      )
+      return()
+    endif()
+    set(candidate "${parent}")
+  endwhile()
+
+  if(NOT existing_probe STREQUAL "")
+    file(REAL_PATH "${existing_probe}" canonical_existing_probe)
+    file(TO_CMAKE_PATH "${canonical_existing_probe}" canonical_existing_probe)
+    file(RELATIVE_PATH existing_relative_path
+      "${normalized_anchor}" "${existing_probe}"
+    )
+    set(expected_canonical_probe "${canonical_anchor}/${existing_relative_path}")
+    file(TO_CMAKE_PATH "${expected_canonical_probe}" expected_canonical_probe)
+    if(NOT canonical_existing_probe STREQUAL expected_canonical_probe)
+      string(CONCAT path_error
+        "protocol install ${phase} path below the trusted install anchor is redirected by a "
+        "symlink, junction, or reparse point: ${existing_probe}"
+      )
+      set(${output_error} "${path_error}" PARENT_SCOPE)
+      return()
+    endif()
+  endif()
+
+  set(${output_error} "" PARENT_SCOPE)
+endfunction()
+
+function(_nebula_protocol_fail_after_cleanup stage_root owner_token error_message)
+  _nebula_protocol_cleanup_owned_stage(cleanup_error "${stage_root}" "${owner_token}")
+  if(NOT cleanup_error STREQUAL "")
+    message(FATAL_ERROR "${error_message}; additionally, ${cleanup_error}")
+  endif()
+  message(FATAL_ERROR "${error_message}")
+endfunction()
+
+function(_nebula_protocol_publish_bundle output_files)
+  if(IS_SYMLINK "${_nebula_protocol_snapshot_root}" OR
+     IS_SYMLINK "${_nebula_protocol_snapshot_root}/protocol")
+    message(FATAL_ERROR "verified protocol snapshot directories must not be symbolic links")
+  endif()
+  _nebula_protocol_bundle_status(
+    snapshot_status snapshot_error "${_nebula_protocol_snapshot_root}"
+  )
+  if(NOT snapshot_status STREQUAL exact)
+    message(FATAL_ERROR "verified protocol snapshot is invalid: ${snapshot_error}")
+  endif()
+
+  set(destdir "$ENV{DESTDIR}")
+  if(NOT destdir STREQUAL "")
+    set(install_anchor "${destdir}")
+  else()
+    set(install_anchor "${CMAKE_INSTALL_PREFIX}")
+  endif()
+  set(install_root "${destdir}${CMAKE_INSTALL_PREFIX}")
+  set(bundle_parent "${install_root}/share/nebula/boot")
+  set(bundle_root "${bundle_parent}/uos-x86_64-limine-v1")
+  set(lock_path "${bundle_parent}/.uos-x86_64-limine-v1.install.lock")
+  set(published_manifest_entries
+    "${lock_path}"
+    "${bundle_root}/contract.manifest"
+    "${bundle_root}/protocol/limine.h"
+    "${bundle_root}/protocol/LICENSE"
+  )
+
+  _nebula_protocol_resolve_install_anchor(
+    install_path_error normalized_anchor canonical_anchor "${install_anchor}"
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${install_root}" "pre-create root" true
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${bundle_parent}" "pre-create parent" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${bundle_root}" "pre-create bundle" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+
+  _nebula_protocol_bundle_status(destination_status destination_error "${bundle_root}")
+  if(destination_status STREQUAL conflict)
+    message(FATAL_ERROR
+      "refusing to modify an existing non-identical protocol bundle: ${destination_error}"
+    )
+  endif()
+
+  execute_process(
+    COMMAND "${_nebula_cmake_command}" -E make_directory "${bundle_parent}"
+    RESULT_VARIABLE parent_result
+    OUTPUT_VARIABLE parent_stdout
+    ERROR_VARIABLE parent_stderr
+  )
+  if(NOT parent_result STREQUAL "0")
+    message(FATAL_ERROR
+      "failed to create protocol bundle parent: ${parent_stdout}${parent_stderr}"
+    )
+  endif()
+  if(IS_SYMLINK "${bundle_parent}" OR NOT IS_DIRECTORY "${bundle_parent}")
+    message(FATAL_ERROR "protocol bundle parent is not a real directory after creation")
+  endif()
+  _nebula_protocol_resolve_install_anchor(
+    install_path_error normalized_anchor canonical_anchor "${install_anchor}"
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${install_root}" "post-create root" true
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${bundle_parent}" "post-create parent" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${bundle_root}" "post-create bundle" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${lock_path}" "pre-lock" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  if(IS_SYMLINK "${lock_path}" OR IS_DIRECTORY "${lock_path}")
+    message(FATAL_ERROR "protocol install coordination lock path is unsafe: ${lock_path}")
+  endif()
+
+  # This fixed parent-local lock serializes only installers that follow this
+  # protocol. It intentionally remains in place so every future process locks
+  # the same filesystem object. A non-cooperating same-UID writer is outside
+  # this CMake 3.20 publisher's threat model.
+  file(LOCK "${lock_path}"
+    GUARD PROCESS
+    TIMEOUT 30
+    RESULT_VARIABLE lock_result
+  )
+  if(NOT lock_result STREQUAL "0")
+    message(FATAL_ERROR
+      "failed to acquire protocol install coordination lock ${lock_path}: ${lock_result}"
+    )
+  endif()
+  if(IS_SYMLINK "${lock_path}" OR
+     NOT EXISTS "${lock_path}" OR
+     IS_DIRECTORY "${lock_path}")
+    message(FATAL_ERROR "protocol install coordination lock is not a real file: ${lock_path}")
+  endif()
+
+  _nebula_protocol_resolve_install_anchor(
+    install_path_error normalized_anchor canonical_anchor "${install_anchor}"
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  foreach(locked_path IN ITEMS
+      "${install_root}"
+      "${bundle_parent}"
+      "${bundle_root}"
+      "${lock_path}")
+    if("${locked_path}" STREQUAL "${install_root}")
+      set(allow_anchor true)
+    else()
+      set(allow_anchor false)
+    endif()
+    _nebula_protocol_validate_install_path(
+      install_path_error
+      "${normalized_anchor}" "${canonical_anchor}" "${locked_path}" "locked preflight"
+      "${allow_anchor}"
+    )
+    if(NOT install_path_error STREQUAL "")
+      message(FATAL_ERROR "${install_path_error}")
+    endif()
+  endforeach()
+
+  _nebula_protocol_bundle_status(destination_status destination_error "${bundle_root}")
+  if(destination_status STREQUAL exact)
+    set(${output_files} "${published_manifest_entries}" PARENT_SCOPE)
+    return()
+  endif()
+  if(destination_status STREQUAL conflict)
+    message(FATAL_ERROR
+      "protocol destination is not identical after acquiring the install lock: ${destination_error}"
+    )
+  endif()
+
+  string(RANDOM LENGTH 32 ALPHABET 0123456789abcdef owner_token)
+  set(stage_root "${bundle_parent}/.uos-x86_64-limine-v1.stage-${owner_token}")
+  set(stage_bundle "${stage_root}/bundle")
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${stage_root}" "pre-create stage" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    message(FATAL_ERROR "${install_path_error}")
+  endif()
+  if(EXISTS "${stage_root}" OR IS_SYMLINK "${stage_root}")
+    message(FATAL_ERROR "protocol stage token collision: ${stage_root}")
+  endif()
+  execute_process(
+    COMMAND "${_nebula_cmake_command}" -E make_directory "${stage_bundle}/protocol"
+    RESULT_VARIABLE stage_result
+    OUTPUT_VARIABLE stage_stdout
+    ERROR_VARIABLE stage_stderr
+  )
+  if(NOT stage_result STREQUAL "0" OR
+     IS_SYMLINK "${stage_root}" OR
+     IS_SYMLINK "${stage_bundle}" OR
+     IS_SYMLINK "${stage_bundle}/protocol")
+    message(FATAL_ERROR "failed to create a private protocol stage: ${stage_stdout}${stage_stderr}")
+  endif()
+  file(WRITE "${stage_root}/owner-token" "${owner_token}")
+  foreach(created_stage_path IN ITEMS
+      "${stage_root}"
+      "${stage_bundle}"
+      "${stage_bundle}/protocol")
+    _nebula_protocol_validate_install_path(
+      install_path_error
+      "${normalized_anchor}" "${canonical_anchor}" "${created_stage_path}" "post-create stage"
+      false
+    )
+    if(NOT install_path_error STREQUAL "")
+      _nebula_protocol_fail_after_cleanup(
+        "${stage_root}" "${owner_token}" "${install_path_error}"
+      )
+    endif()
+  endforeach()
+
+  foreach(copy_pair IN ITEMS
+      "${_nebula_protocol_snapshot_manifest}|${stage_bundle}/contract.manifest"
+      "${_nebula_protocol_snapshot_header}|${stage_bundle}/protocol/limine.h"
+      "${_nebula_protocol_snapshot_license}|${stage_bundle}/protocol/LICENSE")
+    string(REPLACE "|" ";" copy_paths "${copy_pair}")
+    list(GET copy_paths 0 copy_source)
+    list(GET copy_paths 1 copy_destination)
+    execute_process(
+      COMMAND "${_nebula_cmake_command}" -E copy "${copy_source}" "${copy_destination}"
+      RESULT_VARIABLE copy_result
+      OUTPUT_VARIABLE copy_stdout
+      ERROR_VARIABLE copy_stderr
+    )
+    if(NOT copy_result STREQUAL "0")
+      _nebula_protocol_fail_after_cleanup(
+        "${stage_root}" "${owner_token}"
+        "failed to populate protocol stage: ${copy_stdout}${copy_stderr}"
+      )
+    endif()
+  endforeach()
+
+  _nebula_protocol_bundle_status(stage_status stage_error "${stage_bundle}")
+  if(NOT stage_status STREQUAL exact)
+    _nebula_protocol_fail_after_cleanup(
+      "${stage_root}" "${owner_token}" "protocol stage verification failed: ${stage_error}"
+    )
+  endif()
+
+  # CMake 3.20 rename may replace an existing destination. The parent-local
+  # coordination lock makes the final preflight and rename safe for installers
+  # that obey the same lock protocol; it is not a no-replace security primitive
+  # against a non-cooperating same-UID process.
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${bundle_root}" "pre-publish bundle" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    _nebula_protocol_fail_after_cleanup(
+      "${stage_root}" "${owner_token}" "${install_path_error}"
+    )
+  endif()
+  _nebula_protocol_bundle_status(destination_status destination_error "${bundle_root}")
+  if(destination_status STREQUAL exact)
+    _nebula_protocol_cleanup_owned_stage(
+      cleanup_error "${stage_root}" "${owner_token}"
+    )
+    if(NOT cleanup_error STREQUAL "")
+      message(FATAL_ERROR "concurrent protocol bundle is exact, but ${cleanup_error}")
+    endif()
+    set(${output_files} "${published_manifest_entries}" PARENT_SCOPE)
+    return()
+  endif()
+  if(destination_status STREQUAL conflict)
+    _nebula_protocol_fail_after_cleanup(
+      "${stage_root}" "${owner_token}"
+      "protocol destination changed before atomic publish: ${destination_error}"
+    )
+  endif()
+
+  execute_process(
+    COMMAND "${_nebula_cmake_command}" -E rename "${stage_bundle}" "${bundle_root}"
+    RESULT_VARIABLE rename_result
+    OUTPUT_VARIABLE rename_stdout
+    ERROR_VARIABLE rename_stderr
+  )
+  if(NOT rename_result STREQUAL "0")
+    _nebula_protocol_fail_after_cleanup(
+      "${stage_root}" "${owner_token}"
+      "protocol atomic publish failed: ${rename_stdout}${rename_stderr}"
+    )
+  endif()
+
+  _nebula_protocol_bundle_status(destination_status destination_error "${bundle_root}")
+  if(NOT destination_status STREQUAL exact)
+    string(CONCAT publish_error
+      "atomically published protocol bundle failed final verification; it was left in place: "
+      "${destination_error}"
+    )
+    _nebula_protocol_fail_after_cleanup(
+      "${stage_root}" "${owner_token}" "${publish_error}"
+    )
+  endif()
+  _nebula_protocol_validate_install_path(
+    install_path_error
+    "${normalized_anchor}" "${canonical_anchor}" "${bundle_root}" "post-publish bundle" false
+  )
+  if(NOT install_path_error STREQUAL "")
+    string(CONCAT publish_error
+      "atomically published protocol bundle failed path containment; it was left in place: "
+      "${install_path_error}"
+    )
+    _nebula_protocol_fail_after_cleanup(
+      "${stage_root}" "${owner_token}" "${publish_error}"
+    )
+  endif()
+  _nebula_protocol_cleanup_owned_stage(
+    cleanup_error "${stage_root}" "${owner_token}"
+  )
+  if(NOT cleanup_error STREQUAL "")
+    message(FATAL_ERROR "protocol bundle published, but ${cleanup_error}")
+  endif()
+
+  set(${output_files} "${published_manifest_entries}" PARENT_SCOPE)
+endfunction()
+
+_nebula_protocol_publish_bundle(_nebula_installed_protocol_files)
+list(APPEND CMAKE_INSTALL_MANIFEST_FILES ${_nebula_installed_protocol_files})

@@ -1,0 +1,137 @@
+id = "TST-341-hosted-registry-token-process-boundary"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+run = """
+python3 - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path("work/hosted_registry_token_boundary").resolve()
+layout = root / "install"
+helper = layout / "share" / "nebula" / "registry" / "client.py"
+binary = layout / "bin" / ("nebula.exe" if os.name == "nt" else "nebula")
+project = root / "project"
+
+shutil.rmtree(root, ignore_errors=True)
+helper.parent.mkdir(parents=True, exist_ok=True)
+binary.parent.mkdir(parents=True, exist_ok=True)
+project.mkdir(parents=True, exist_ok=True)
+shutil.copy2(Path(os.environ["NEBULA_BINARY"]), binary)
+if os.name != "nt":
+    binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+
+helper.write_text(
+    '''#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+token = os.environ.get("NEBULA_REGISTRY_TOKEN")
+record = {
+    "argv": sys.argv[1:],
+    "token": token,
+    "matching_value_keys": sorted(
+        key for key, value in os.environ.items() if value == token
+    ),
+    "inherited_sentinel": os.environ.get("NEBULA_REGISTRY_INHERITED_SENTINEL"),
+}
+Path(os.environ["NEBULA_REGISTRY_PROBE_RECORD"]).write_text(
+    json.dumps(record, sort_keys=True), encoding="utf-8"
+)
+if os.environ.get("NEBULA_REGISTRY_PROBE_FAIL") == "1":
+    print("registry probe forced failure", file=sys.stderr)
+    raise SystemExit(19)
+raise SystemExit(0)
+''',
+    encoding="utf-8",
+)
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SystemExit(message)
+
+
+def invoke(
+    name: str,
+    secret: str,
+    *,
+    token_from_environment: bool,
+    fail: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+    record = root / f"{name}.json"
+    env = dict(os.environ)
+    env["PYTHON"] = sys.executable
+    env["NEBULA_REGISTRY_PROBE_RECORD"] = str(record)
+    env["NEBULA_REGISTRY_INHERITED_SENTINEL"] = "inherited-ok"
+    env["NEBULA_REGISTRY_PROBE_FAIL"] = "1" if fail else "0"
+    command = [
+        str(binary),
+        "publish",
+        str(project),
+        "--registry-url",
+        "https://registry.invalid.example",
+    ]
+    if token_from_environment:
+        env["NEBULA_REGISTRY_TOKEN"] = secret
+    else:
+        env["NEBULA_REGISTRY_TOKEN"] = "stale-parent-token"
+        command.extend(["--registry-token", secret])
+
+    result = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+    require(record.is_file(), f"{name}: registry probe did not write its record")
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    require(payload["token"] == secret, f"{name}: child token mismatch")
+    require(
+        payload["matching_value_keys"] == ["NEBULA_REGISTRY_TOKEN"],
+        f"{name}: token appeared outside its fixed child environment variable",
+    )
+    require(payload["inherited_sentinel"] == "inherited-ok", f"{name}: environment was not inherited")
+    require("--token" not in payload["argv"], f"{name}: helper received a token option")
+    require(
+        all(secret not in str(argument) for argument in payload["argv"]),
+        f"{name}: helper argv contained the token",
+    )
+    require(secret not in result.stdout, f"{name}: stdout leaked the token")
+    require(secret not in result.stderr, f"{name}: stderr leaked the token")
+    return result, payload
+
+
+cli_result, _ = invoke(
+    "cli-token",
+    "cli-token-boundary-secret-7c61",
+    token_from_environment=False,
+)
+require(cli_result.returncode == 0, "CLI token invocation failed")
+
+env_result, _ = invoke(
+    "environment-token",
+    "environment-token-boundary-secret-28a4",
+    token_from_environment=True,
+)
+require(env_result.returncode == 0, "environment token invocation failed")
+
+error_result, _ = invoke(
+    "error-token",
+    "error-token-boundary-secret-91df",
+    token_from_environment=False,
+    fail=True,
+)
+require(error_result.returncode == 19, "registry helper error status was not propagated")
+require("registry probe forced failure" in error_result.stderr, "expected helper failure was not observable")
+
+print("hosted-registry-token-process-boundary-ok")
+PY
+"""
+expect_rc = 0
+expect_stdout_contains = ["hosted-registry-token-process-boundary-ok"]

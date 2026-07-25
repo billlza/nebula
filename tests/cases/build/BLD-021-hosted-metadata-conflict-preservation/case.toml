@@ -1,0 +1,29 @@
+# A rejected hosted transaction must preserve caller-owned paths.
+id = "BLD-021-hosted-metadata-conflict-preservation"
+suite = "build"
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+root="work/hosted-metadata-failure"
+rm -rf "$root"
+mkdir -p "$root"
+printf 'pre-existing-artifact\n' >"$root/build.out"
+mkdir -p "$root/build.out.nebmeta"
+printf 'pre-existing-metadata-sentinel\n' >"$root/build.out.nebmeta/sentinel"
+
+set +e
+"$NEBULA_BINARY" build "$NEBULA_REPO_ROOT/tests/fixtures/main_exit_code_7.nb" \
+  -o "$root/build.out" --diag-format json >"$root/build.log" 2>&1
+rc=$?
+set -e
+
+test "$rc" -ne 0
+grep -F '"code":"NBL-CLI-ARTIFACT-PATH"' "$root/build.log"
+grep -Fx 'pre-existing-artifact' "$root/build.out"
+grep -Fx 'pre-existing-metadata-sentinel' "$root/build.out.nebmeta/sentinel"
+echo hosted-metadata-conflict-preservation-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["hosted-metadata-conflict-preservation-ok"]

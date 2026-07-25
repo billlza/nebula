@@ -1,0 +1,148 @@
+{
+  "$id": "https://nebula.dev/schemas/universe-os-gap-analysis/assessment-1.0.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assessment": {
+      "required": [
+        "revision",
+        "sourceInventory",
+        "evidenceRecords",
+        "conflicts",
+        "targetLevels",
+        "domains",
+        "assessments",
+        "gaps",
+        "hardGates",
+        "assumptions",
+        "nonClaims",
+        "observedConclusions",
+        "recommendations",
+        "validation"
+      ],
+      "type": "object"
+    },
+    "modelSchemaVersion": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "referenceGraph": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "relation": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "resolved": {
+                "type": "boolean"
+              },
+              "source": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "relation",
+              "target",
+              "resolved"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "schemaVersion": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "validation": {
+      "properties": {
+        "findings": {
+          "items": {
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "objectRefs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "requirementRefs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "severity": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "severity",
+              "code",
+              "requirementRefs",
+              "objectRefs"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "valid",
+        "findings"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "modelSchemaVersion",
+    "assessment",
+    "referenceGraph",
+    "validation"
+  ],
+  "title": "Universe OS Gap Analysis Assessment",
+  "type": "object"
+}

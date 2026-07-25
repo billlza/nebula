@@ -1,0 +1,13 @@
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+namespace nebula::boot {
+
+inline constexpr std::uint64_t kProtocolAbiManifestSize =
+  static_cast<std::uint64_t>(${NEBULA_PROTOCOL_ABI_MANIFEST_SIZE});
+inline constexpr std::string_view kProtocolAbiManifestSha256 =
+  "@NEBULA_PROTOCOL_ABI_MANIFEST_SHA256@";
+
+} // namespace nebula::boot

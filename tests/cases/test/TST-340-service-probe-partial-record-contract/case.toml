@@ -1,0 +1,26 @@
+id = "TST-340-service-probe-partial-record-contract"
+suite = "test"
+
+[[steps]]
+kind = "shell"
+timeout = 15
+run = "python3 fixtures/service_probe_file_probe.py probe"
+expect_stdout_contains = ["service-probe-partial-record-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 15
+run = "python3 fixtures/service_probe_file_probe.py bounded-output-probe"
+expect_stdout_contains = ["service-probe-bounded-output-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 15
+run = "python3 fixtures/service_probe_file_probe.py pipe-probe"
+expect_stdout_contains = ["service-probe-pipe-contract-ok"]
+
+[[steps]]
+kind = "shell"
+timeout = 15
+run = "python3 fixtures/service_probe_file_probe.py signal-owner-probe"
+expect_stdout_contains = ["service-probe-signal-owner-ok"]

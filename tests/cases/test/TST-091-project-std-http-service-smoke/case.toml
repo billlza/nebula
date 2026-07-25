@@ -3,12 +3,209 @@ suite = "test"
 
 [[steps]]
 kind = "shell"
-run = "python3 - <<'PY'\nfrom pathlib import Path\n\nroot = Path('work/httphello')\n(root / 'src').mkdir(parents=True, exist_ok=True)\nport_path = (root / 'port.txt').resolve()\nif port_path.exists():\n    port_path.unlink()\n(root / 'nebula.toml').write_text('schema_version = 1\\n\\n[package]\\nname = \"httphello\"\\nversion = \"0.1.0\"\\nentry = \"src/main.nb\"\\nsrc_dir = \"src\"\\n', encoding='utf-8')\n(root / 'src' / 'server.nb').write_text('module server\\nimport std::http\\nimport std::net\\nimport std::result\\n\\nasync fn handle_request(request: Request) -> Response {\\n  return await dispatch2(\\n    request,\\n    Get,\\n    \"/hello\",\\n    handle_hello,\\n    Post,\\n    \"/echo\",\\n    handle_echo,\\n    not_found_text(\"not-found\")\\n  )\\n}\\n\\nasync fn handle_hello(request: Request) -> Response {\\n  return ok_text(\"hello-http\")\\n}\\n\\nasync fn handle_echo(request: Request) -> Response {\\n  return bad_request_text(\"unsupported\")\\n}\\n\\nasync fn serve_once(listener: TcpListener) -> Void {\\n  match await serve_n(listener, 1, handle_request) {\\n    Ok(_) => {}\\n    Err(msg) => {\\n      print(msg)\\n    }\\n  }\\n}\\n', encoding='utf-8')\n(root / 'src' / 'main.nb').write_text(f'''module main\\nimport server\\nimport std::fs\\nimport std::json\\nimport std::net\\nimport std::result\\nimport std::task\\nimport std::time\\n\\nasync fn main() -> Void {{\\n  match ipv4(\"127.0.0.1\", 0) {{\\n    Ok(addr) => {{\\n      match await bind(addr) {{\\n        Ok(listener) => {{\\n          match listener.local_addr() {{\\n            Ok(bound_addr) => {{\\n              match bound_addr.port() {{\\n                Ok(port) => {{\\n                  match write_string(\"{port_path}\", stringify(int_value(port))) {{\\n                    Ok(_) => {{\\n                      let task = spawn(serve_once(listener))\\n                      await join(task)\\n                      listener.close()\\n                    }}\\n                    Err(msg) => {{ print(msg) }}\\n                  }}\\n                }}\\n                Err(msg) => {{ print(msg) }}\\n              }}\\n            }}\\n            Err(msg) => {{ print(msg) }}\\n          }}\\n        }}\\n        Err(msg) => {{ print(msg) }}\\n      }}\\n    }}\\n    Err(msg) => {{ print(msg) }}\\n  }}\\n}}\\n''', encoding='utf-8')\nPY"
+run = '''
+python3 - <<'PY'
+from pathlib import Path
+
+root = Path('work/httphello')
+(root / 'src').mkdir(parents=True, exist_ok=True)
+port_path = (root / 'port.txt').resolve()
+if port_path.exists():
+    port_path.unlink()
+(root / 'nebula.toml').write_text("""schema_version = 1
+
+[package]
+name = "httphello"
+version = "0.1.0"
+entry = "src/main.nb"
+src_dir = "src"
+""", encoding='utf-8')
+(root / 'src' / 'server.nb').write_text("""module server
+import std::http
+import std::net
+import std::result
+
+async fn handle_request(request: Request) -> Response {
+  return await dispatch2(
+    request,
+    Get,
+    "/hello",
+    handle_hello,
+    Post,
+    "/echo",
+    handle_echo,
+    not_found_text("not-found")
+  )
+}
+
+async fn handle_hello(request: Request) -> Response {
+  return ok_text("hello-http")
+}
+
+async fn handle_echo(request: Request) -> Response {
+  return bad_request_text("unsupported")
+}
+
+async fn serve_once(listener: TcpListener) -> Void {
+  match await serve_n(listener, 1, handle_request) {
+    Ok(_) => {}
+    Err(msg) => {
+      print(msg)
+    }
+  }
+}
+""", encoding='utf-8')
+(root / 'src' / 'main.nb').write_text(f"""module main
+import server
+import std::fs
+import std::json
+import std::net
+import std::result
+import std::task
+import std::time
+
+async fn main() -> Void {{
+  match ipv4("127.0.0.1", 0) {{
+    Ok(addr) => {{
+      match await bind(addr) {{
+        Ok(listener) => {{
+          match listener.local_addr() {{
+            Ok(bound_addr) => {{
+              match bound_addr.port() {{
+                Ok(port) => {{
+                  match write_string("{port_path}", stringify(int_value(port))) {{
+                    Ok(_) => {{
+                      let task = spawn(serve_once(listener))
+                      await join(task)
+                      listener.close()
+                    }}
+                    Err(msg) => {{ print(msg) }}
+                  }}
+                }}
+                Err(msg) => {{ print(msg) }}
+              }}
+            }}
+            Err(msg) => {{ print(msg) }}
+          }}
+        }}
+        Err(msg) => {{ print(msg) }}
+      }}
+    }}
+    Err(msg) => {{ print(msg) }}
+  }}
+}}
+""", encoding='utf-8')
+PY
+'''
 expect_rc = 0
 
 [[steps]]
 kind = "shell"
-run = "python3 - <<'PY'\nimport os\nimport socket\nimport subprocess\nimport time\nfrom pathlib import Path\n\nroot = Path('work/httphello')\nport_path = root / 'port.txt'\nproc = subprocess.Popen([os.environ['NEBULA_BINARY'], 'run', str(root), '--run-gate', 'none'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)\ntry:\n    deadline = time.time() + 8.0\n    port = None\n    while time.time() < deadline:\n        if proc.poll() is not None:\n            raise SystemExit(proc.returncode)\n        try:\n            port = int(port_path.read_text(encoding='utf-8').strip())\n            break\n        except (FileNotFoundError, ValueError):\n            time.sleep(0.05)\n    if port is None:\n        raise SystemExit('server did not publish port in time')\n    deadline = time.time() + 8.0\n    while time.time() < deadline:\n        try:\n            with socket.create_connection(('127.0.0.1', port), timeout=0.3) as sock:\n                sock.sendall(b'GET /hello HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 0\\r\\n\\r\\n')\n                data = b''\n                while True:\n                    chunk = sock.recv(4096)\n                    if not chunk:\n                        break\n                    data += chunk\n                text = data.decode('utf-8')\n                Path('work/httphello_response.txt').write_text(text, encoding='utf-8')\n                break\n        except OSError:\n            if proc.poll() is not None:\n                raise SystemExit(proc.returncode)\n            time.sleep(0.05)\n    else:\n        raise SystemExit('server did not accept connections in time')\nfinally:\n    stdout, stderr = proc.communicate(timeout=10)\n    Path('work/httphello_stdout.txt').write_text(stdout, encoding='utf-8')\n    Path('work/httphello_stderr.txt').write_text(stderr, encoding='utf-8')\n    if proc.returncode != 0:\n        raise SystemExit(proc.returncode)\nPY"
+run = '''
+python3 - <<'PY'
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(os.environ['NEBULA_REPO_ROOT'])
+sys.path.insert(0, str(repo_root / 'tests' / 'lib'))
+from service_probe import fail_with_output, finish_process_output, start_process, terminate_process
+
+root = Path('work/httphello')
+port_path = root / 'port.txt'
+artifact_dir = root / 'build'
+artifact = artifact_dir / 'httphello.out'
+
+build = subprocess.run([
+    os.environ['NEBULA_BINARY'],
+    'build',
+    str(root),
+    '--out-dir',
+    str(artifact_dir),
+    '-o',
+    str(artifact),
+], capture_output=True, text=True, env=os.environ.copy())
+print(build.stdout, end='')
+print(build.stderr, end='')
+if build.returncode != 0:
+    raise SystemExit(build.returncode)
+
+proc, service_output = start_process([
+    os.environ['NEBULA_BINARY'],
+    'run',
+    str(root),
+    '--no-build',
+    '-o',
+    str(artifact),
+    '--run-gate',
+    'none',
+], 'httphello_ready', env=os.environ.copy())
+try:
+    deadline = time.monotonic() + 8.0
+    port = None
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            fail_with_output(
+                proc,
+                service_output,
+                f'http server exited before publishing its port: rc={proc.returncode}',
+            )
+        try:
+            port = int(port_path.read_text(encoding='utf-8').strip())
+            break
+        except (FileNotFoundError, ValueError):
+            time.sleep(0.05)
+    if port is None:
+        fail_with_output(proc, service_output, 'server did not publish port in time')
+
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=0.3) as sock:
+                sock.sendall(
+                    b'GET /hello HTTP/1.1\r\n'
+                    b'Host: localhost\r\n'
+                    b'Content-Length: 0\r\n\r\n'
+                )
+                data = b''
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                Path('work/httphello_response.txt').write_text(
+                    data.decode('utf-8'), encoding='utf-8'
+                )
+                break
+        except OSError:
+            if proc.poll() is not None:
+                fail_with_output(
+                    proc,
+                    service_output,
+                    f'http server exited before accepting a request: rc={proc.returncode}',
+                )
+            time.sleep(0.05)
+    else:
+        fail_with_output(proc, service_output, 'server did not accept connections in time')
+
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        fail_with_output(proc, service_output, 'http server did not exit after serving one request')
+    stdout, stderr = finish_process_output(proc, service_output)
+    Path('work/httphello_stdout.txt').write_text(stdout, encoding='utf-8')
+    Path('work/httphello_stderr.txt').write_text(stderr, encoding='utf-8')
+    print(stdout, end='')
+    print(stderr, end='')
+    if proc.returncode != 0:
+        raise SystemExit(proc.returncode)
+finally:
+    terminate_process(proc, service_output)
+PY
+'''
 expect_rc = 0
 
 [[steps]]

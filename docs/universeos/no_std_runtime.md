@@ -1,6 +1,7 @@
 # No-Std Runtime Entry Criteria
 
-Status: entry criteria only. Nebula does not currently implement a freestanding no-std runtime.
+Status: entry criteria plus one experimental primitive object prerequisite. Nebula does not
+currently implement a freestanding no-std runtime.
 
 This document defines what must be true before Nebula can claim no-std runtime support for
 UniverseOS-facing work. It is intentionally not an implementation plan and does not claim that
@@ -10,8 +11,15 @@ support exists today.
 ## Current Boundary
 
 The current system/no-std CLI gate can reject hosted imports, force strict-region diagnostics, and
-record target/runtime/panic policy in generated hosted C++ artifacts. That is a contract boundary,
-not proof of freestanding execution.
+record target/runtime/panic policy in generated hosted C++ artifacts. That remains a hosted
+contract boundary, not proof of freestanding execution.
+
+`build --emit freestanding-object --target x86_64-unknown-none --panic trap
+--freestanding-toolchain-root <absolute-clang-root>` is a separate
+experimental prerequisite. It emits only a reachable `Int/Bool/Void` subset as an audited ELF64
+relocatable object with no hosted runtime or C++ standard-library references in the artifact. It
+does not supply startup, allocation, strings/bytes, aggregate ABI, linker, serial I/O, or boot
+behavior, and its compiler-side bootstrap still invokes `clang++`.
 
 The current smoke fixture at `examples/system_no_std_smoke` is allowed to exercise:
 
@@ -57,7 +65,8 @@ A real no-std runtime milestone requires all of the following:
 - No kernel or driver API.
 - No interrupt, MMU, scheduler, or syscall ABI.
 - No direct LLVM/object backend support claim.
-- No C++ standard library independence claim.
+- No complete runtime or compiler independence claim; the primitive object artifact avoids the C++
+  standard library, but the bootstrap compiler path still depends on clang.
 
 ## First Acceptable Evidence
 
@@ -68,5 +77,7 @@ needs:
 - `spec/abi_layout.md` to have golden layout tests for current hosted behavior and future
   freestanding expectations.
 - system/no-std smoke tests that separate `check`, hosted C++ build, and true freestanding build.
+- primitive object evidence for the exact target/panic/subset contract (implemented by `BLD-017`
+  through `BLD-020`), followed by separate linker/runtime/boot evidence.
 - diagnostics that reject hosted APIs with stable codes.
 - release/support-matrix text that keeps the profile experimental until the gates pass.

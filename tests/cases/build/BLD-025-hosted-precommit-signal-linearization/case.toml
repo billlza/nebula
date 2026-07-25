@@ -1,0 +1,199 @@
+id = "BLD-025-hosted-precommit-signal-linearization"
+suite = "build"
+timeout = 180
+
+[[steps]]
+kind = "shell"
+run = '''
+set -eu
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo hosted-precommit-signal-linearization-ok-windows-skip
+    exit 0
+    ;;
+esac
+
+root="work/hosted-precommit-signal"
+rm -rf "$root"
+mkdir -p "$root/src" "$root/headers"
+
+cat >"$root/nebula.toml" <<'EOF'
+name = "hosted-precommit-signal"
+entry = "src/main.nb"
+host_cxx = ["host.cpp"]
+EOF
+cat >"$root/src/main.nb" <<'EOF'
+extern fn host_answer() -> Int
+
+fn main() -> Void {
+  let answer = host_answer()
+  if answer == 41 {
+    print("baseline")
+  } else {
+    print("unexpected")
+  }
+}
+EOF
+
+python3 - <<'PY'
+from pathlib import Path
+
+root = Path("work/hosted-precommit-signal")
+include_lines = []
+for index in range(800):
+    name = f"input_{index:04d}.hpp"
+    (root / "headers" / name).write_text(
+        f"#pragma once\n#define NEBULA_INPUT_{index:04d} {index}\n",
+        encoding="ascii",
+    )
+    include_lines.append(f'#include "headers/{name}"')
+(root / "host.cpp").write_text(
+    "\n".join(include_lines)
+    + "\n#include <cstdint>\n"
+      "std::int64_t host_answer() { return 41; }\n",
+    encoding="ascii",
+)
+PY
+
+"$NEBULA_BINARY" build "$root" -o "$root/app" \
+  --diag-format json >"$root/baseline.log" 2>&1
+
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+root = Path("work/hosted-precommit-signal")
+for name in ("app", "app.nebmeta"):
+    payload = (root / name).read_bytes()
+    (root / f"{name}.sha256").write_text(
+        hashlib.sha256(payload).hexdigest() + "\n", encoding="ascii"
+    )
+PY
+
+python3 - <<'PY'
+from pathlib import Path
+
+source = Path("work/hosted-precommit-signal/src/main.nb")
+before = source.read_text(encoding="utf-8")
+after = before.replace('print("baseline")', 'print("replacement")')
+if after == before:
+    raise SystemExit("could not prepare replacement source")
+source.write_text(after, encoding="utf-8")
+PY
+
+wrapper="$PWD/$root/observed-cxx"
+marker="$PWD/$root/link.pid"
+cat >"$wrapper" <<'EOF'
+#!/bin/sh
+set -eu
+is_link=1
+has_object=0
+for argument in "$@"; do
+  case "$argument" in
+    -c|-M|-MM|-E|-fsyntax-only|--version|-print-*) is_link=0 ;;
+  esac
+  case "$argument" in
+    *.o) has_object=1 ;;
+  esac
+done
+if test "$is_link" -eq 1 && test "$has_object" -eq 1; then
+  printf '%s\n' "$$" >"$(dirname "$0")/link.pid"
+fi
+exec c++ "$@"
+EOF
+chmod 700 "$wrapper"
+
+python3 - "$NEBULA_BINARY" "$wrapper" "$marker" "$root" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+binary, wrapper, marker_text, root_text = sys.argv[1:]
+marker = Path(marker_text)
+root = Path(root_text)
+environment = os.environ.copy()
+environment["CXX"] = wrapper
+command = [
+    binary,
+    "build",
+    str(root),
+    "-o",
+    str(root / "app"),
+    "--diag-format",
+    "json",
+]
+with (root / "interrupted.log").open("wb") as log:
+    process = subprocess.Popen(
+        command,
+        env=environment,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    deadline = time.monotonic() + 90.0
+    while not marker.exists() or marker.stat().st_size == 0:
+        if process.poll() is not None:
+            raise SystemExit("Nebula exited before the final host link started")
+        if time.monotonic() >= deadline:
+            process.kill()
+            process.wait()
+            raise SystemExit("host link did not start before the deadline")
+        time.sleep(0.005)
+
+    linker_pid = int(marker.read_text(encoding="ascii").strip())
+    while True:
+        if process.poll() is not None:
+            raise SystemExit("Nebula published before the post-link interrupt was sent")
+        try:
+            os.kill(linker_pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() >= deadline:
+            process.kill()
+            process.wait()
+            raise SystemExit("host link did not finish before the deadline")
+        time.sleep(0.001)
+
+    process.send_signal(signal.SIGINT)
+    try:
+        return_code = process.wait(timeout=30.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise SystemExit("Nebula did not finish pre-commit signal cleanup")
+
+if return_code not in (130, -signal.SIGINT):
+    raise SystemExit(f"interrupted Nebula build returned {return_code}, expected SIGINT/130")
+PY
+
+grep -F '"code":"NBL-CLI-HOSTED-INTERRUPTED"' "$root/interrupted.log"
+
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+root = Path("work/hosted-precommit-signal")
+for name in ("app", "app.nebmeta"):
+    expected = (root / f"{name}.sha256").read_text(encoding="ascii").strip()
+    actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    if actual != expected:
+        raise SystemExit(f"pre-commit interruption changed published {name}")
+PY
+
+if find "$root" -maxdepth 1 \
+    \( -name '.nebula-txn-*' -o -name '.nebula-obj-*' -o -name '.nebula-exec-*' \) \
+    -print | grep -q .; then
+  echo "pre-commit interruption left private transaction state behind" >&2
+  find "$root" -maxdepth 1 \
+    \( -name '.nebula-txn-*' -o -name '.nebula-obj-*' -o -name '.nebula-exec-*' \) \
+    -print >&2
+  exit 1
+fi
+
+echo hosted-precommit-signal-linearization-ok
+'''
+expect_rc = 0
+expect_stdout_contains = ["hosted-precommit-signal-linearization-ok"]

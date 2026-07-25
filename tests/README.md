@@ -97,8 +97,8 @@ expect_rc = 0
 Supported assertion fields per step:
 
 - `expect_rc`
-- `timeout` (per-step override; shell steps are killed as a process group/process tree on timeout
-  so nested Python/`nebula run` children do not survive the failed step)
+- `timeout` (per-step override; Windows uses an OS-enforced Job Object, while POSIX uses the
+  explicit trusted-cooperative contract described below; timed-out steps return `124`)
 - `expect_stdout_contains[]`
 - `forbid_stdout_contains[]`
 - `expect_stdout_regex[]`
@@ -111,6 +111,29 @@ Shell step runtime environment:
 - `NEBULA_BINARY`: resolved nebula binary path from harness
 - `NEBULA_REPO_ROOT`: repository root (`tests/..`)
 - `NEBULA_TESTS_ROOT`: tests directory path
+
+Harness isolation contract:
+
+- command output is drained concurrently and retained up to 8 MiB; a truncation marker is emitted
+  after that bound, while the pipe continues to be drained to prevent backpressure
+- timed-out steps return `124`; test-infrastructure failures return `125`, cannot be accepted by an
+  `expect_rc = 125` assertion, preserve partial output, and stop the remaining suite
+- POSIX commands run with `TRUSTED_COOPERATIVE`: the session leader remains unreaped until stable
+  identities and the bounded pipe-anchor EOF oracle are sealed, preventing numeric PID/PGID reuse
+  during cleanup
+- native Windows commands are created suspended, attached to a kill-on-close Job Object, and only
+  then resumed; `TST-281` covers timeout, success, nonzero-return, inherited-pipe, and structured
+  infrastructure-failure paths
+- every repository-controlled POSIX spawn that may detach or outlive its parent must pass the full
+  fd stack returned by `cooperative_posix_spawn_pass_fds()` and retain those write-only pipe anchors
+  until exit; nested containment preserves verified outer anchors even when the business `env` is
+  empty, and rejects missing, malformed, duplicate, closed, non-pipe, or close-on-exec anchors
+- a descendant that deliberately closes an anchor, sanitizes it from `pass_fds`, or launches outside
+  that adapter violates the trusted contract and is not guaranteed to be found; inherited tokens are
+  supplemental discovery evidence, not authentication or a sandbox
+- POSIX rejects `OS_ENFORCED_RECURSIVE` before launch. Untrusted programs require a real OS sandbox,
+  cgroup, VM, or privileged supervisor; Windows Job Object proof must not be conflated with POSIX
+  cooperative proof
 
 ## Directory layout
 
@@ -166,12 +189,75 @@ tests/
   `TST-036`, `TST-037`, `TST-038`, `TST-039`, `TST-040`
 - install/release smoke coverage:
   `TST-039`, `TST-040`, `TST-041`, `TST-042`
+- protocol install snapshot target: `ctest -R nebula-protocol-install-snapshot-tests` configures
+  native-host isolated fixtures and proves production-parser canonical validation, source-tree
+  mutation isolation, binary-root containment, install-time snapshot revalidation, validator
+  fail-fast behavior, exact/idempotent atomic directory publication, trusted-anchor `DESTDIR`
+  canonicalization (including macOS `/tmp` when it is a system symlink), conflict preservation,
+  below-anchor symbolic-link and extra-entry rejection, bounded lock failure, and concurrent POSIX
+  installation through one persistent parent-local coordination lock without stage residue.
+  Atomic no-overwrite behavior is guaranteed only for installers that obey that fixed lock protocol
+  and for an owner-private build tree with an exclusive/cooperating install anchor; a non-cooperating
+  same-UID writer is outside this CMake 3.20 publisher's threat model. Raising that boundary requires
+  a future evidence gate for a native dirfd/handle-based no-replace publisher. Cross-compiling this
+  host-side install verifier is intentionally rejected rather than silently skipping canonical
+  validation.
+- hosted-registry credential process-boundary coverage: `TST-341`
 - platform/docs/harness stability contracts:
-  `TST-238`, `TST-239`, `TST-280`, `TST-281`, `TST-282`, `TST-329`, `TST-330`
+  `TST-238`, `TST-239`, `TST-280`, `TST-281`, `TST-282`, `TST-329`, `TST-330`, `TST-340`
 - experimental system-profile gates:
   `CHK-204`, `CHK-205`, `CHK-206`, `CHK-207`, `CHK-208`, `CHK-209`, `CHK-210`,
   `CHK-211`, `CHK-212`, `CHK-213`, `CHK-214`, `CHK-215`, `CHK-216`, `CHK-217`,
   `CHK-218`, `BLD-011`, `BLD-012`, `BLD-013`, `RUN-080`
+- UniverseOS gate registry and evidence binding: `TST-329`
+- experimental primitive freestanding object gate:
+  `BLD-017` (ELF/symbol/metadata contract), `BLD-018` (exact request state machine), `BLD-019`
+  (reachable NIR allowlist and entry selection), and `BLD-020` (determinism, fixed toolchain,
+  bounded timeout, normal-exit and timeout process-group sealing, lost-`SIGCHLD` fail-fast,
+  external `SIGINT`/`SIGTERM` cleanup with original signal exit semantics, no-replace transaction,
+  concurrency, log escaping, hostile compiler-output types, rollback, failure cleanup, and the
+  explicit Windows host-unsupported contract)
+- POSIX termination-scope unit target: `ctest -R nebula-termination-signal-tests` proves that a
+  pending signal cannot bypass suppression before the transaction freeze, that later signals are
+  handed to the caller only after cleanup, and that caller-blocked pending signals are preserved
+- POSIX compiler-containment unit target:
+  `ctest -R nebula-compiler-process-containment-tests` deterministically injects group-kill,
+  quiescence-audit, leader-reap, and ownership-loss failures without creating a real child; every
+  unconfirmed path must return infrastructure status `125` with signal redelivery disabled
+- POSIX freestanding-transaction unit target:
+  `ctest -R nebula-freestanding-transaction-tests` injects an unconfirmed compiler result while a
+  real SIGTERM is intercepted and proves suppression, explicit diagnostics, no publication or
+  staging residue, and release of the output lock
+- POSIX freestanding two-phase lifecycle target:
+  `ctest -R nebula-freestanding-toolchain-signal-tests` proves the explicit session-state machine,
+  rejects compiler execution after close preparation, uses a synchronous no-sleep phase barrier to
+  keep post-prepare SIGTERM blocked through staging cleanup, rollback, guard disarm, and output-lock
+  release, and covers committed/rolled-back restore failure plus no-second-retry cleanup guards
+- hosted metadata-path conflict preservation regression: `BLD-021` proves a caller-owned
+  artifact and non-file sidecar survive a rejected transaction unchanged
+- hosted output alias/concurrency/signal regressions: `BLD-022` through `BLD-025`; `BLD-024`
+  proves SIGINT returns 130 only after compiler-group cleanup, while `BLD-025` delivers SIGINT after
+  the final host link and proves the sealed output is aborted before commit. Both preserve the
+  previously published artifact and metadata and leave no private transaction/object/execution
+  state
+- hosted reuse content/native-header/argv0 regressions: `RUN-088`, `RUN-089`, `RUN-090`
+- hosted native-dependency unit target: `ctest -R nebula-hosted-native-dependencies-tests` covers
+  bounded compiler-generated Make dependency parsing, full system/user-header discovery, canonical
+  path and exact digest identity, double-snapshot drift rejection, private depfile cleanup, and
+  malformed/oversized/escaped-path cases
+- hosted execution-lease unit target: `ctest -R nebula-verified-executable-lease-tests` covers exact
+  digest acquisition, logical `argv[0]`, public-path replacement isolation, private-path conflict
+  preservation, failed-acquisition cleanup, retryable cleanup, unsafe-parent rejection, executable
+  permission/platform-origin policy, and actual private-copy execution. Windows builds additionally
+  assert protected ACLs, 128-bit object identity, and rename/delete denial while the lease is active
+- hosted object-workspace unit target: `ctest -R nebula-hosted-object-workspace-tests` covers
+  owner-private creation, identity-bound recursive cleanup, replacement preservation, retry after a
+  non-regular child is removed, and Windows lifetime rename/delete denial
+- freestanding support C++ unit target: `ctest -R nebula-freestanding-support-tests` covers SHA-256,
+  padding/block boundary vectors, bounded ELF validation, malformed ranges, W^X/allocation/
+  relocation policy, escaped untrusted names, undefined symbols, missing/weak payload entry,
+  forbidden payload `_start`, and a
+  deterministic byte-mutation corpus
 - ABI/layout hosted C++23 goldens:
   `ABI-001`, `ABI-002`, `ABI-003`, `ABI-004`, `ABI-005`
 

@@ -122,13 +122,18 @@ documentation and contract-test evidence only; they do not create a supported OS
 | `UOS-DOC-001` | `experimental` | contract evidence only; documents staged claim boundaries |
 | `UOS-CLI-001` | `experimental` | contract evidence only; rejects hosted `std` imports under system/no-std gates |
 | `UOS-CLI-002` | `experimental` | contract evidence only; enforces strict-region diagnostics under system/no-std gates |
+| `UOS-LANG-001` | `planned` | future-only, not supported; low-level move/lifetime/alias/concurrency soundness is not yet specified and proved |
 | `UOS-ABI-001` | `experimental` | contract evidence only; hosted C++23 ABI/layout goldens, not system ABI support |
+| `UOS-ABI-002` | `planned` | future-only, not supported; no freestanding system ABI or compatibility contract |
 | `UOS-CORE-001` | `experimental` | contract evidence only; no-std smoke and library-layer docs, not a no-std runtime |
+| `UOS-CORE-002` | `planned` | future-only, not supported; no freestanding core library, startup, panic, allocation-hook, or target runtime |
 | `UOS-BE-001` | `experimental` | contract evidence only; C++23 backend boundary, not backend independence |
-| `UOS-BOOT-001` | `planned` | future-only, not supported; QEMU hello plan only |
-| `UOS-BOOT-002` | `planned` | future-only, not supported; no freestanding object emission claim |
-| `UOS-BOOT-003` | `planned` | future-only, not supported; no linker-script or boot artifact claim |
-| `UOS-BOOT-004` | `planned` | future-only, not supported; no QEMU serial hello claim |
+| `UOS-BE-002` | `planned` | future-only, not supported; no direct production backend or reproducible independent compiler bootstrap |
+| `UOS-BOOT-001` | `planned` | future-only, not supported; a strict Limine v12.3.2 protocol/ABI candidate is pinned, but complete clang/ld.lld/boot/image-tool provenance and compatibility evidence are still missing |
+| `UOS-BOOT-002` | `experimental` | contract evidence only; macOS/Linux-host primitive `Int/Bool/Void` ELF object slice; clang-backed, not a direct backend, runtime, boot, or support promise |
+| `UOS-BOOT-003` | `planned` | future-only, not supported; no deterministic linked-kernel ELF claim |
+| `UOS-BOOT-004` | `planned` | future-only, not supported; no version-pinned boot-media assembly claim |
+| `UOS-BOOT-005` | `planned` | future-only, not supported; no QEMU serial hello claim |
 
 Important caveat:
 
@@ -158,4 +163,12 @@ Important caveat:
   `--target system|freestanding|<triple>`, `--profile system`, `--no-std`, and
   `--panic abort|trap`; they forbid bundled `std` imports and force strict-region
   diagnostics, but they do not yet provide a freestanding runtime or kernel/driver support
+- an additional exact experimental build request, `--emit freestanding-object --target
+  x86_64-unknown-none --panic trap --freestanding-toolchain-root <absolute-clang-root>`, emits a
+  primitive-only audited ELF relocatable object; it does
+  not accept the broad target aliases above, does not link or boot, and does not create a supported
+  system-profile/runtime surface
+- that experimental publication path is currently available only on macOS/Linux hosts; Windows
+  remains supported for the compiler/tooling GA surface and fails this exact request explicitly
+  with `NBL-CLI-FS-HOST-UNSUPPORTED`
 - `nebula-qcomm-sim` is experimental preview only and is not a security or hardware-support contract.

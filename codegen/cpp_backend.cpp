@@ -1,12 +1,16 @@
 #include "codegen/cpp_backend.hpp"
 
+#include "codegen/symbol_names.hpp"
+
 #include "frontend/types.hpp"
 #include "nir/runtime_ops.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <sstream>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,32 +65,6 @@ static std::string escape_string(const std::string& s) {
   return out;
 }
 
-static std::string stable_symbol_hash(std::string_view text) {
-  std::uint64_t h = 1469598103934665603ULL;
-  for (unsigned char c : text) {
-    h ^= static_cast<std::uint64_t>(c);
-    h *= 1099511628211ULL;
-  }
-  std::ostringstream os;
-  os << std::hex << h;
-  return os.str();
-}
-
-static std::string sanitize_ident_piece(std::string_view text) {
-  std::string out;
-  out.reserve(text.size());
-  for (char ch : text) {
-    if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
-      out.push_back(ch);
-    } else {
-      out.push_back('_');
-    }
-  }
-  if (out.empty()) return "fn";
-  if (std::isdigit(static_cast<unsigned char>(out.front()))) out.insert(out.begin(), '_');
-  return out;
-}
-
 static const char* runtime_profile_name(RuntimeProfile profile) {
   switch (profile) {
   case RuntimeProfile::Hosted: return "hosted";
@@ -127,7 +105,8 @@ static void emit_panic_policy(Cpp& out, const EmitOptions& opt, const std::strin
 static std::string emitted_cpp_type_name_for_identity(std::string_view identity,
                                                       std::string_view fallback_name) {
   if (identity.empty()) return std::string(fallback_name);
-  return "__nebula_ty_" + stable_symbol_hash(identity) + "_" + sanitize_ident_piece(fallback_name);
+  return "__nebula_ty_" + stable_symbol_hash(identity) + "_" +
+         sanitize_cpp_identifier_piece(fallback_name);
 }
 
 static std::string emitted_cpp_type_name_for(const std::optional<nebula::frontend::QualifiedName>& name,
@@ -470,28 +449,22 @@ static const StorageDecision* lookup_decision(const RepOwnerResult& rep_owner, c
 
 using FunctionSymbolMap = std::unordered_map<std::string, std::string>;
 
-static std::string emitted_cpp_name_for(const Function& fn) {
-  if (fn.is_extern) return fn.name;
-  const std::string identity = nebula::nir::function_identity(fn);
-  return "__nebula_fn_" + stable_symbol_hash(identity) + "_" + sanitize_ident_piece(fn.name);
-}
-
 static std::string c_abi_export_name_for(const Function& fn) {
   const auto& q = fn.qualified_name;
   std::string out = "nebula";
   std::string last_piece;
   if (!q.package_name.empty()) {
-    last_piece = sanitize_ident_piece(q.package_name);
+    last_piece = sanitize_cpp_identifier_piece(q.package_name);
     out += "_" + last_piece;
   }
   if (!q.module_name.empty()) {
-    const std::string module_piece = sanitize_ident_piece(q.module_name);
+    const std::string module_piece = sanitize_cpp_identifier_piece(q.module_name);
     if (module_piece != last_piece) {
       out += "_" + module_piece;
       last_piece = module_piece;
     }
   }
-  out += "_" + sanitize_ident_piece(fn.name);
+  out += "_" + sanitize_cpp_identifier_piece(fn.name);
   return out;
 }
 
@@ -2376,7 +2349,7 @@ static void emit_function(Cpp& out,
   }
   if (fn.is_extern) {
     std::ostringstream decl;
-    const std::string fn_name = emitted_cpp_name_for(fn);
+    const std::string fn_name = emitted_cpp_function_name(fn);
     decl << cpp_type(fn.ret) << " " << fn_name << "(";
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
       if (i) decl << ", ";
@@ -2398,7 +2371,7 @@ static void emit_function(Cpp& out,
   const std::string ret_cpp =
       (const_json_return != nullptr) ? ("const " + cpp_type(fn.ret) + "&")
                                      : function_return_cpp_type(fn, rep_owner, opt);
-  sig << "auto " << emitted_cpp_name_for(fn) << "(";
+  sig << "auto " << emitted_cpp_function_name(fn) << "(";
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
     const auto& p = fn.params[i];
@@ -2438,7 +2411,7 @@ static void emit_function_forward_decl(Cpp& out,
   }
   if (fn.is_extern) {
     std::ostringstream decl;
-    const std::string fn_name = emitted_cpp_name_for(fn);
+    const std::string fn_name = emitted_cpp_function_name(fn);
     decl << cpp_type(fn.ret) << " " << fn_name << "(";
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
       if (i) decl << ", ";
@@ -2452,7 +2425,7 @@ static void emit_function_forward_decl(Cpp& out,
   const std::string ret_cpp =
       (const_json_return_stmt(fn) != nullptr) ? ("const " + cpp_type(fn.ret) + "&")
                                               : function_return_cpp_type(fn, rep_owner, opt);
-  sig << "auto " << emitted_cpp_name_for(fn) << "(";
+  sig << "auto " << emitted_cpp_function_name(fn) << "(";
   for (std::size_t i = 0; i < fn.params.size(); ++i) {
     if (i) sig << ", ";
     const auto& p = fn.params[i];
@@ -2546,6 +2519,24 @@ static void emit_type_forward_decl(Cpp& out, const std::vector<std::string>& typ
   out.line("struct " + cpp_name + ";");
 }
 
+std::span<const std::string_view> hosted_cpp_translation_unit_includes() {
+  static constexpr std::array<std::string_view, 12U> includes = {
+    "#include \"runtime/nebula_runtime.hpp\"",
+    "#include <algorithm>",
+    "#include <chrono>",
+    "#include <cmath>",
+    "#include <cstdint>",
+    "#include <cstdlib>",
+    "#include <iostream>",
+    "#include <memory>",
+    "#include <string>",
+    "#include <utility>",
+    "#include <variant>",
+    "#include <vector>",
+  };
+  return includes;
+}
+
 // A boxed payload type is referenced through std::shared_ptr from the enum that
 // boxes it, and may be defined later, so it needs a forward declaration. Only
 // these cyclic types need one; non-recursive types are ordered by topo-sort.
@@ -2594,18 +2585,8 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
     ~BoxedGuard() { g_boxed_variant_payloads = nullptr; }
   } boxed_guard;
 
-  out.line("#include \"runtime/nebula_runtime.hpp\"");
-  out.line("#include <algorithm>");
-  out.line("#include <chrono>");
-  out.line("#include <cmath>");
-  out.line("#include <cstdint>");
-  out.line("#include <cstdlib>");
-  out.line("#include <iostream>");
-  out.line("#include <memory>");
-  out.line("#include <string>");
-  out.line("#include <utility>");
-  out.line("#include <variant>");
-  out.line("#include <vector>");
+  for (const std::string_view include : hosted_cpp_translation_unit_includes())
+    out.line(std::string(include));
   out.blank();
 
   out.line("// nebula-codegen-profile runtime_profile=" +
@@ -2653,7 +2634,7 @@ std::string emit_cpp23(const Program& p, const RepOwnerResult& rep_owner, const 
   FunctionSymbolMap function_symbols;
   function_symbols.reserve(ordered.size());
   for (const auto* fn : ordered) {
-    function_symbols.insert({nebula::nir::function_identity(*fn), emitted_cpp_name_for(*fn)});
+    function_symbols.insert({nebula::nir::function_identity(*fn), emitted_cpp_function_name(*fn)});
   }
   for (const auto* fn : ordered) {
     emit_function_forward_decl(out, rep_owner, opt, *fn);

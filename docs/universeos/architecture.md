@@ -15,6 +15,8 @@ backend-independent object backend.
 - `docs/system_profile.md`: experimental system/no-std CLI gate and explicit non-goals
 - `docs/universeos_convergence.md`: staged UniverseOS positioning and parity gaps
 - `docs/universeos/gate_registry.md`: machine-checkable claim gates
+- `boot/uos-x86_64-limine-v1/contract.manifest`: canonical Limine v12.3.2 protocol/ABI candidate;
+  it is not a complete toolchain or boot gate
 
 ## Product Layers
 
@@ -25,7 +27,7 @@ backend-independent object backend.
 | Universe package/build manager | Workspace/package/build/update flows for hosted projects | `nebula fetch`, `nebula build`, `nebula run`, `nebula test`, `nebula bench`, `nebula.lock`, `spec/tooling_cli.md` | existing compiler/tooling lane |
 | Universe observe/config/state plane | Hosted operator state, config, health, logs, and preview embedded state | `official/nebula-observe`, `official/nebula-config`, `official/nebula-db-sqlite`, `official/nebula-auth`, `official/nebula-jobs`, release-control-plane example | installed-preview/backend-first lane |
 | Thin-host app shell | Nebula owns state transitions and validated snapshots; host owns rendering and platform I/O | `official/nebula-thin-host-bridge`, `official/nebula-ui`, `examples/thin_host_app_core`, `examples/thin_host_gui_host_shell` | preview only |
-| Future no-std/freestanding substrate | Future runtime, ABI, object, linker, boot, and hardware-facing APIs | `docs/system_profile.md`, `docs/universeos/no_std_runtime.md`, `rfcs/0002-freestanding-target.md`, `docs/universeos/qemu_boot_hello.md` | blocked/future |
+| Future no-std/freestanding substrate | Experimental primitive object prerequisite and pinned protocol/ABI candidate; future runtime, general ABI, linker, boot, and hardware-facing APIs | `boot/uos-x86_64-limine-v1/contract.manifest`, `docs/system_profile.md`, `docs/universeos/no_std_runtime.md`, `rfcs/0002-freestanding-target.md`, `docs/universeos/qemu_boot_hello.md` | object slice experimental; protocol/ABI candidate implemented; complete toolchain/link/boot blocked |
 
 ## Hosted MVP Shape
 
@@ -71,8 +73,9 @@ hosted service registry and desired-state transitions. It does not supervise rea
 | Stable hosted ABI/layout statements | `UOS-ABI-001` | experimental hosted golden tests |
 | No-std smoke boundary | `UOS-CORE-001` | experimental smoke only |
 | Backend boundary | `UOS-BE-001` | experimental backend interface boundary |
+| Primitive `x86_64-unknown-none` relocatable object | `UOS-BOOT-002` | experimental `Int/Bool/Void` clang-backed artifact gate only |
 | Object backend or LLVM/Cranelift support | future backend gate beyond `UOS-BE-001` | unsupported |
-| Bootable QEMU hello | `UOS-BOOT-002`, `UOS-BOOT-003`, `UOS-BOOT-004` | future only |
+| Bootable QEMU hello | `UOS-BOOT-001` through `UOS-BOOT-005` | future only |
 | Kernel or driver support | future boot/runtime/driver gates after QEMU hello | blocked |
 
 ## Non-Goals For The Current Release
